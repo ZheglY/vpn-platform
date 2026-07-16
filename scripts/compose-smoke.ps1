@@ -11,8 +11,16 @@ Set-DefaultEnv "POSTGRES_PASSWORD" "local-compose-password"
 Set-DefaultEnv "POSTGRES_DB" "vpn_platform"
 Set-DefaultEnv "REDIS_PASSWORD" "local-compose-redis"
 Set-DefaultEnv "KAFKA_PORT" "9094"
+Set-DefaultEnv "IDENTITY_DB_PASSWORD" "local-compose-identity"
+Set-DefaultEnv "TELEGRAM_WEBHOOK_SECRET" "local-compose-webhook-secret"
+Set-DefaultEnv "TELEGRAM_BOT_TOKEN" "local-compose-fake-bot-token"
 
 try {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-mtls.ps1
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+
     docker compose --profile core --profile app up -d --build
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
@@ -22,7 +30,8 @@ try {
         "vpn-service-postgres-1",
         "vpn-service-redis-1",
         "vpn-service-kafka-1",
-        "vpn-service-identity-service-1"
+        "vpn-service-identity-service-1",
+        "vpn-service-telegram-bot-1"
     )
     foreach ($attempt in 1..60) {
         $statuses = @()
@@ -40,14 +49,15 @@ try {
     }
 
     docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9094 --list | Out-Null
+    docker compose exec -T identity-service /identity-service healthcheck | Out-Null
 
-    $live = Invoke-RestMethod -Uri "http://127.0.0.1:8080/livez" -TimeoutSec 10
-    $ready = Invoke-RestMethod -Uri "http://127.0.0.1:8080/readyz" -TimeoutSec 10
-    $version = Invoke-RestMethod -Uri "http://127.0.0.1:8080/version" -TimeoutSec 10
+    $botLive = Invoke-RestMethod -Uri "http://127.0.0.1:8081/livez" -TimeoutSec 10
+    $botReady = Invoke-RestMethod -Uri "http://127.0.0.1:8081/readyz" -TimeoutSec 10
+    $botVersion = Invoke-RestMethod -Uri "http://127.0.0.1:8081/version" -TimeoutSec 10
 
-    if ($live.status -ne "ok" -or $ready.status -ne "ready" -or $version.service -ne "identity-service") {
-        throw "unexpected smoke response: live=$($live.status), ready=$($ready.status), service=$($version.service)"
+    if ($botLive.status -ne "ok" -or $botReady.status -ne "ready" -or $botVersion.service -ne "telegram-bot") {
+        throw "unexpected bot smoke response: live=$($botLive.status), ready=$($botReady.status), service=$($botVersion.service)"
     }
 } finally {
-    docker compose --profile core --profile app down
+    docker compose --profile core --profile app down -v
 }

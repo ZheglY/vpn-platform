@@ -2,9 +2,9 @@
 
 ## Current Approval
 
-Approved milestone: Stage 1 - Repository/platform foundation.
+Approved milestone: Stage 2 - Identity and Telegram onboarding.
 
-Not approved yet: Stage 2 and later implementation milestones. Do not create Telegram onboarding, identity domain behavior, business migrations, billing, subscription, access, provisioning, notification, or VPN business logic until the relevant milestone is explicitly approved.
+Not approved yet: Stage 3 and later implementation milestones. Do not create catalog, billing, YooKassa, subscription lifecycle, access credential delivery, provisioning, notification, or VPN business logic until the relevant milestone is explicitly approved.
 
 ## Stage 0 Plan
 
@@ -68,7 +68,7 @@ Stage 0 changes are documentation-only. If a decision is wrong, supersede the AD
 
 ### Stage 1 - Repository/platform foundation
 
-Status: implemented after review blocker fixes, pending user acceptance.
+Status: accepted baseline; pushed to GitHub `main`.
 
 Depends on Stage 0 approval. Introduces Go module, platform primitives, local infra Compose, checks, linting, and one template service. Must not add domain entities to shared packages.
 
@@ -97,7 +97,34 @@ Non-goals:
 
 ### Stage 2 - Identity and Telegram onboarding
 
-Depends on Stage 1. Adds identity service, Telegram webhook adapter, update dedupe, Redis FSM, consent versioning, and fake Telegram tests.
+Status: implemented locally, pending final clean-tree `make verify`, commit, push, and user acceptance.
+
+Depends on Stage 1. Adds identity service, Telegram webhook adapter, update dedupe, Redis FSM, consent versioning, local mTLS for bot-to-identity calls, and fake Telegram tests.
+
+Deliverables:
+
+- Identity-service PostgreSQL migration for users, Telegram identities, and consent versions.
+- Identity-service internal endpoints for Telegram identity upsert, user lookup, consent acceptance, and consent status.
+- Telegram-bot service with webhook secret validation, body limits, Redis update dedupe, Redis FSM, `/start`, and consent acceptance.
+- Local Compose migration job, identity-service, telegram-bot, and generated dev-mTLS certificates.
+- Contract updates for implemented Stage 2 HTTP endpoints.
+- Tests for identity handlers, Telegram webhook idempotency/retry behavior, and fake Telegram API client calls.
+
+Non-goals:
+
+- No tariff catalog, orders, YooKassa, payment webhooks, subscription lifecycle, access URLs, Xray provisioning, or notifications.
+
+Verification completed:
+
+- `go test ./...`
+- `make compose-smoke`
+- `make fmt-check tidy-check vet test race lint vuln secret-scan npm-audit contracts docker-build image-scan compose-config`
+- `git diff --check`
+
+Notes:
+
+- `govulncheck` direct network fetch timed out locally and the scripted fallback used a temporary copy of the official Go vulnerability database; result: no vulnerabilities found.
+- `telegram-bot /readyz` checks Redis and an mTLS `identity-service /livez` request.
 
 ### Stage 3 - Catalog, Billing, and YooKassa sandbox
 

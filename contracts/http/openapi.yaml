@@ -42,7 +42,7 @@ paths:
       tags: [Webhooks]
       summary: Receive Telegram Bot API webhook update
       operationId: receiveTelegramWebhook
-      x-contract-status: skeleton
+      x-contract-status: implemented-stage2
       security:
         - TelegramWebhookSecret: []
       requestBody:
@@ -65,7 +65,7 @@ paths:
       tags: [Identity]
       summary: Idempotently register or refresh a Telegram identity
       operationId: upsertTelegramIdentity
-      x-contract-status: skeleton
+      x-contract-status: implemented-stage2
       security:
         - ServiceMTLS: []
       x-allowed-service-identities: [telegram-bot]
@@ -77,6 +77,12 @@ paths:
           schema:
             type: integer
             format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TelegramIdentityUpsertRequest'
       responses:
         '200':
           description: Existing or created identity
@@ -95,7 +101,7 @@ paths:
       tags: [Identity]
       summary: Get user identity by internal user ID
       operationId: getUserIdentity
-      x-contract-status: skeleton
+      x-contract-status: implemented-stage2
       security:
         - ServiceMTLS: []
       parameters:
@@ -111,6 +117,80 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+  /internal/v1/users/{user_id}/consents:
+    post:
+      tags: [Identity]
+      summary: Accept a consent document version for a user
+      operationId: acceptUserConsent
+      x-contract-status: implemented-stage2
+      security:
+        - ServiceMTLS: []
+      x-allowed-service-identities: [telegram-bot]
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcceptConsentRequest'
+      responses:
+        '204':
+          description: Consent already existed or was accepted
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+  /internal/v1/users/{user_id}/consents/{document_type}/{document_version}:
+    get:
+      tags: [Identity]
+      summary: Check whether a user accepted a consent document version
+      operationId: hasUserConsent
+      x-contract-status: implemented-stage2
+      security:
+        - ServiceMTLS: []
+      x-allowed-service-identities: [telegram-bot]
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/UserId'
+        - name: document_type
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+        - name: document_version
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+      responses:
+        '200':
+          description: Consent status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsentStatus'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
           $ref: '#/components/responses/Error'
         default:
           $ref: '#/components/responses/Error'
@@ -505,7 +585,8 @@ components:
       type: mutualTLS
       description: >
         Internal service identity from a trusted platform CA. Authorization is
-        based on the certificate subject/SAN and per-endpoint allowed identities.
+        based on a strict SPIFFE URI from the verified certificate chain and
+        per-endpoint allowed identities.
     ProvisioningMTLS:
       type: mutualTLS
       description: >
@@ -623,6 +704,42 @@ components:
         timezone:
           type: [string, 'null']
           maxLength: 64
+    TelegramIdentityUpsertRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        username:
+          type: [string, 'null']
+          maxLength: 64
+        display_name:
+          type: [string, 'null']
+          maxLength: 256
+        language_code:
+          type: [string, 'null']
+          maxLength: 16
+        locale:
+          type: [string, 'null']
+          maxLength: 32
+    AcceptConsentRequest:
+      type: object
+      required: [document_type, document_version]
+      additionalProperties: false
+      properties:
+        document_type:
+          type: string
+          minLength: 1
+          maxLength: 64
+        document_version:
+          type: string
+          minLength: 1
+          maxLength: 64
+    ConsentStatus:
+      type: object
+      required: [accepted]
+      additionalProperties: false
+      properties:
+        accepted:
+          type: boolean
     PlanSummary:
       type: object
       required: [plan_id, duration_days, currency, amount_minor, region_policy, traffic_policy]

@@ -77,15 +77,18 @@ contracts: openapi asyncapi
 
 docker-build:
 	docker build -f services/identity/Dockerfile -t vpn-service/identity-service:local .
+	docker build -f services/telegram-bot/Dockerfile -t vpn-service/telegram-bot:local .
 
 image-scan:
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/identity-service:local
+	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/telegram-bot:local
 
 compose-config:
 ifeq ($(OS),Windows_NT)
 	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/compose-config.ps1
 else
-	POSTGRES_USER=vpn_local POSTGRES_PASSWORD=local-compose-password REDIS_PASSWORD=local-compose-redis docker compose --profile core --profile app config --quiet
+	bash scripts/dev-mtls.sh
+	POSTGRES_USER=vpn_local POSTGRES_PASSWORD=local-compose-password POSTGRES_DB=vpn_platform REDIS_PASSWORD=local-compose-redis KAFKA_PORT=9094 IDENTITY_DB_PASSWORD=local-compose-identity TELEGRAM_WEBHOOK_SECRET=local-compose-webhook-secret TELEGRAM_BOT_TOKEN=local-compose-fake-bot-token docker compose --profile core --profile app config --quiet
 endif
 
 compose-smoke:
@@ -96,6 +99,11 @@ else
 endif
 
 compose-up:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-mtls.ps1
+else
+	bash scripts/dev-mtls.sh
+endif
 	docker compose --profile core --profile app up --build
 
 compose-down:

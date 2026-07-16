@@ -6,9 +6,14 @@ export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-local-compose-password}"
 export POSTGRES_DB="${POSTGRES_DB:-vpn_platform}"
 export REDIS_PASSWORD="${REDIS_PASSWORD:-local-compose-redis}"
 export KAFKA_PORT="${KAFKA_PORT:-9094}"
+export IDENTITY_DB_PASSWORD="${IDENTITY_DB_PASSWORD:-local-compose-identity}"
+export TELEGRAM_WEBHOOK_SECRET="${TELEGRAM_WEBHOOK_SECRET:-local-compose-webhook-secret}"
+export TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-local-compose-fake-bot-token}"
+
+bash scripts/dev-mtls.sh
 
 cleanup() {
-  docker compose --profile core --profile app down
+  docker compose --profile core --profile app down -v
 }
 trap cleanup EXIT
 
@@ -19,6 +24,7 @@ containers=(
   vpn-service-redis-1
   vpn-service-kafka-1
   vpn-service-identity-service-1
+  vpn-service-telegram-bot-1
 )
 
 for _ in $(seq 1 60); do
@@ -45,14 +51,15 @@ for container in "${containers[@]}"; do
 done
 
 docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9094 --list >/dev/null
+docker compose exec -T identity-service /identity-service healthcheck >/dev/null
 
 for _ in $(seq 1 30); do
-  if curl -fsS http://127.0.0.1:8080/livez >/tmp/vpn-service-livez.json &&
-     curl -fsS http://127.0.0.1:8080/readyz >/tmp/vpn-service-readyz.json &&
-     curl -fsS http://127.0.0.1:8080/version >/tmp/vpn-service-version.json; then
-    grep -q '"status":"ok"' /tmp/vpn-service-livez.json
-    grep -q '"status":"ready"' /tmp/vpn-service-readyz.json
-    grep -q '"service":"identity-service"' /tmp/vpn-service-version.json
+  if curl -fsS http://127.0.0.1:8081/livez >/tmp/vpn-service-bot-livez.json &&
+     curl -fsS http://127.0.0.1:8081/readyz >/tmp/vpn-service-bot-readyz.json &&
+     curl -fsS http://127.0.0.1:8081/version >/tmp/vpn-service-bot-version.json; then
+    grep -q '"status":"ok"' /tmp/vpn-service-bot-livez.json
+    grep -q '"status":"ready"' /tmp/vpn-service-bot-readyz.json
+    grep -q '"service":"telegram-bot"' /tmp/vpn-service-bot-version.json
     exit 0
   fi
   sleep 2

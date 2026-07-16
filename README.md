@@ -2,19 +2,20 @@
 
 Production-grade portfolio project for selling prepaid VPN subscriptions through a Telegram bot and delivering Happ-compatible subscription URLs backed by Xray-core nodes.
 
-Current milestone: Stage 1 repository/platform foundation.
+Current milestone: Stage 2 identity and Telegram onboarding.
 
 ## What Exists Now
 
 - One root Go module.
 - Shared technical platform packages under `internal/platform`.
-- Minimal `identity-service` template with `/livez`, `/readyz`, `/version`, and `/metrics`.
-- Local Compose skeleton for PostgreSQL, Kafka in KRaft mode, Redis, and the identity service.
+- `identity-service` with Telegram identity, consent persistence, health, version, and metrics endpoints.
+- `telegram-bot` with Telegram webhook secret validation, update dedupe, Redis FSM, `/start`, consent prompt, and health/version/metrics endpoints.
+- Local Compose skeleton for PostgreSQL, Kafka in KRaft mode, Redis, identity-service, and telegram-bot.
 - Goose migration runner tool.
 - OpenAPI/AsyncAPI contract linting.
 - Makefile and CI verification workflow, including Go vulnerability checks, secret scan, image build, and image scan.
 
-No business endpoints, payment logic, Telegram logic, VPN provisioning, or service database schema exist yet.
+No payment logic, tariff catalog, VPN provisioning, access credential delivery, or subscription lifecycle exists yet.
 
 ## Requirements
 
@@ -36,11 +37,19 @@ Create a local `.env` from `.env.example` and replace placeholder values before 
 
 ```powershell
 Copy-Item .env.example .env
-docker compose --profile core --profile app up --build
+make compose-up
 ```
 
-The identity service listens on `http://localhost:8080` by default:
+The identity service listens on `https://localhost:8080` in local Compose and requires generated development mTLS certificates. Use `make compose-smoke` or the container healthcheck for routine checks:
 
+- `GET /livez`
+- `GET /readyz`
+- `GET /version`
+- `GET /metrics`
+
+The telegram-bot service listens on `http://localhost:8081` by default:
+
+- `POST /webhooks/telegram`
 - `GET /livez`
 - `GET /readyz`
 - `GET /version`

@@ -21,3 +21,4 @@ ADRs are immutable decision records. If a decision changes after implementation 
 | [0015](0015-internal-authentication.md) | Internal authentication and service identity | Accepted |
 | [0016](0016-one-time-subscription-url-issuance.md) | One-time subscription URL issuance after provisioning | Accepted |
 | [0017](0017-credential-material-and-revoke-lifecycle.md) | Credential material delivery and revoke lifecycle | Accepted |
+| [0018](0018-spiffe-verified-chain-and-local-mtls.md) | SPIFFE verified-chain identity and local mTLS | Accepted |
