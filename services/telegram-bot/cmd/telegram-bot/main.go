@@ -12,17 +12,17 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/yarik/vpn-service/internal/platform/config"
-	platformhttpclient "github.com/yarik/vpn-service/internal/platform/httpclient"
-	"github.com/yarik/vpn-service/internal/platform/httpserver"
-	"github.com/yarik/vpn-service/internal/platform/logging"
-	"github.com/yarik/vpn-service/internal/platform/observability"
-	platformredis "github.com/yarik/vpn-service/internal/platform/redis"
-	"github.com/yarik/vpn-service/internal/platform/version"
-	"github.com/yarik/vpn-service/services/telegram-bot/internal/bot"
-	identityclient "github.com/yarik/vpn-service/services/telegram-bot/internal/identity"
-	"github.com/yarik/vpn-service/services/telegram-bot/internal/redisstore"
-	telegramclient "github.com/yarik/vpn-service/services/telegram-bot/internal/telegram"
+	"github.com/ZheglY/vpn-platform/internal/platform/config"
+	platformhttpclient "github.com/ZheglY/vpn-platform/internal/platform/httpclient"
+	"github.com/ZheglY/vpn-platform/internal/platform/httpserver"
+	"github.com/ZheglY/vpn-platform/internal/platform/logging"
+	"github.com/ZheglY/vpn-platform/internal/platform/observability"
+	platformredis "github.com/ZheglY/vpn-platform/internal/platform/redis"
+	"github.com/ZheglY/vpn-platform/internal/platform/version"
+	"github.com/ZheglY/vpn-platform/services/telegram-bot/internal/bot"
+	identityclient "github.com/ZheglY/vpn-platform/services/telegram-bot/internal/identity"
+	"github.com/ZheglY/vpn-platform/services/telegram-bot/internal/redisstore"
+	telegramclient "github.com/ZheglY/vpn-platform/services/telegram-bot/internal/telegram"
 )
 
 var (
@@ -89,7 +89,8 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	stateStore := redisstore.New(redisClient, "telegram", appCfg.DedupeTTL, appCfg.FSMTTL)
+	stateStore := redisstore.New(redisClient, "telegram", appCfg.DedupeTTL, appCfg.ProcessingTTL, appCfg.FSMTTL)
+	rateLimiter := redisstore.NewRateLimiter(redisClient, "telegram", int64(appCfg.WebhookRateLimit), appCfg.WebhookRateWindow)
 
 	registry := observability.NewRegistry()
 	mux := http.NewServeMux()
@@ -105,7 +106,9 @@ func run(ctx context.Context) error {
 	mux.Handle("POST /webhooks/telegram", bot.NewWebhookHandler(bot.Config{
 		WebhookSecret:  appCfg.WebhookSecret,
 		ConsentVersion: appCfg.ConsentVersion,
-	}, identity, telegram, stateStore, stateStore, logger))
+		TermsURL:       appCfg.TermsURL,
+		CleanupTimeout: appCfg.DedupeCleanupTimeout,
+	}, identity, telegram, stateStore, stateStore, rateLimiter, logger))
 
 	handler := httpserver.Chain(
 		mux,
@@ -135,10 +138,15 @@ type appConfig struct {
 	TelegramBotToken       string
 	WebhookSecret          string
 	ConsentVersion         string
+	TermsURL               string
 	OutboundTimeout        time.Duration
 	DedupeTTL              time.Duration
+	ProcessingTTL          time.Duration
+	DedupeCleanupTimeout   time.Duration
 	FSMTTL                 time.Duration
 	MaxBodyBytes           int64
+	WebhookRateLimit       int
+	WebhookRateWindow      time.Duration
 	HTTP                   httpserver.Config
 }
 
@@ -193,11 +201,17 @@ func loadConfig() (appConfig, error) {
 	fields = config.Append(fields, "TELEGRAM_BOT_TOKEN", err)
 	webhookSecret, err := config.RequiredString("TELEGRAM_WEBHOOK_SECRET")
 	fields = config.Append(fields, "TELEGRAM_WEBHOOK_SECRET", err)
+	termsURL, err := config.RequiredString("TERMS_URL")
+	fields = config.Append(fields, "TERMS_URL", err)
 
 	outboundTimeout, err := config.Duration("OUTBOUND_TIMEOUT", 5*time.Second)
 	fields = config.Append(fields, "OUTBOUND_TIMEOUT", err)
 	dedupeTTL, err := config.Duration("TELEGRAM_DEDUPE_TTL", 7*24*time.Hour)
 	fields = config.Append(fields, "TELEGRAM_DEDUPE_TTL", err)
+	processingTTL, err := config.Duration("TELEGRAM_PROCESSING_TTL", 30*time.Second)
+	fields = config.Append(fields, "TELEGRAM_PROCESSING_TTL", err)
+	dedupeCleanupTimeout, err := config.Duration("TELEGRAM_DEDUPE_CLEANUP_TIMEOUT", 2*time.Second)
+	fields = config.Append(fields, "TELEGRAM_DEDUPE_CLEANUP_TIMEOUT", err)
 	fsmTTL, err := config.Duration("TELEGRAM_FSM_TTL", 24*time.Hour)
 	fields = config.Append(fields, "TELEGRAM_FSM_TTL", err)
 	maxBody, err := config.Int("HTTP_MAX_BODY_BYTES", 1<<20)
@@ -205,6 +219,13 @@ func loadConfig() (appConfig, error) {
 	if maxBody <= 0 {
 		fields = config.Append(fields, "HTTP_MAX_BODY_BYTES", fmt.Errorf("must be positive"))
 	}
+	webhookRateLimit, err := config.Int("TELEGRAM_WEBHOOK_RATE_LIMIT", 60)
+	fields = config.Append(fields, "TELEGRAM_WEBHOOK_RATE_LIMIT", err)
+	if webhookRateLimit <= 0 {
+		fields = config.Append(fields, "TELEGRAM_WEBHOOK_RATE_LIMIT", fmt.Errorf("must be positive"))
+	}
+	webhookRateWindow, err := config.Duration("TELEGRAM_WEBHOOK_RATE_WINDOW", time.Minute)
+	fields = config.Append(fields, "TELEGRAM_WEBHOOK_RATE_WINDOW", err)
 
 	if err := config.Combine(fields); err != nil {
 		return appConfig{}, err
@@ -225,10 +246,15 @@ func loadConfig() (appConfig, error) {
 		TelegramBotToken:       telegramToken,
 		WebhookSecret:          webhookSecret,
 		ConsentVersion:         config.String("CONSENT_VERSION", "terms-v1"),
+		TermsURL:               termsURL,
 		OutboundTimeout:        outboundTimeout,
 		DedupeTTL:              dedupeTTL,
+		ProcessingTTL:          processingTTL,
+		DedupeCleanupTimeout:   dedupeCleanupTimeout,
 		FSMTTL:                 fsmTTL,
 		MaxBodyBytes:           int64(maxBody),
+		WebhookRateLimit:       webhookRateLimit,
+		WebhookRateWindow:      webhookRateWindow,
 		HTTP:                   httpCfg,
 	}, nil
 }

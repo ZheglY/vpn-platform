@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/yarik/vpn-service/services/identity/internal/domain"
+	"github.com/ZheglY/vpn-platform/services/identity/internal/domain"
 )
 
 const testUserID = "00000000-0000-4000-8000-000000000001"
@@ -34,6 +34,34 @@ func TestUpsertTelegramIdentity(t *testing.T) {
 	}
 	if response.UserID != store.user.ID || response.Status != domain.UserStatusActive {
 		t.Fatalf("response = %+v", response)
+	}
+}
+
+func TestUpsertTelegramIdentityRejectsUnknownJSONField(t *testing.T) {
+	store := &fakeStore{}
+	handler := New(store)
+	req := httptest.NewRequest(http.MethodPut, "/internal/v1/telegram-users/42", bytes.NewBufferString(`{"username":"tester","unknown":"value"}`))
+	req.SetPathValue("telegram_id", "42")
+	rec := httptest.NewRecorder()
+
+	handler.UpsertTelegramIdentity(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAcceptConsentRejectsTrailingJSON(t *testing.T) {
+	store := &fakeStore{}
+	handler := New(store)
+	req := httptest.NewRequest(http.MethodPost, "/internal/v1/users/"+testUserID+"/consents", bytes.NewBufferString(`{"document_type":"terms","document_version":"terms-v1"} {}`))
+	req.SetPathValue("user_id", testUserID)
+	rec := httptest.NewRecorder()
+
+	handler.AcceptConsent(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
 }
 

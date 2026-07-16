@@ -22,11 +22,15 @@ tidy-check:
 	go mod tidy -diff
 
 test:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1
+else
 	go test ./...
+endif
 
 race:
 ifeq ($(OS),Windows_NT)
-	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/race.ps1
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Race
 else
 	CGO_ENABLED=1 go test -race ./...
 endif
@@ -88,7 +92,7 @@ ifeq ($(OS),Windows_NT)
 	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/compose-config.ps1
 else
 	bash scripts/dev-mtls.sh
-	POSTGRES_USER=vpn_local POSTGRES_PASSWORD=local-compose-password POSTGRES_DB=vpn_platform REDIS_PASSWORD=local-compose-redis KAFKA_PORT=9094 IDENTITY_DB_PASSWORD=local-compose-identity TELEGRAM_WEBHOOK_SECRET=local-compose-webhook-secret TELEGRAM_BOT_TOKEN=local-compose-fake-bot-token docker compose --profile core --profile app config --quiet
+	POSTGRES_USER=vpn_local POSTGRES_PASSWORD=local-compose-password POSTGRES_DB=vpn_platform REDIS_PASSWORD=local-compose-redis KAFKA_PORT=9094 IDENTITY_DB_PASSWORD=local-compose-identity TELEGRAM_WEBHOOK_SECRET=local-compose-webhook-secret TELEGRAM_BOT_TOKEN=local-compose-fake-bot-token FAKE_TELEGRAM_SEND_DELAY=250ms TERMS_URL=https://example.invalid/terms/terms-v1 docker compose --profile core --profile app config --quiet
 endif
 
 compose-smoke:

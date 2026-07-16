@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/yarik/vpn-service/internal/platform/httpserver"
+	"github.com/ZheglY/vpn-platform/internal/platform/httpserver"
 )
 
 func TestRequireServiceAllowsMatchingVerifiedSPIFFEIdentity(t *testing.T) {

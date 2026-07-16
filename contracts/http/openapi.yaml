@@ -1,13 +1,14 @@
 openapi: 3.1.0
 info:
   title: VPN Subscription Platform API
-  version: 0.0.0-stage0
+  version: 0.2.0-stage2
   license:
     name: UNLICENSED
     identifier: LicenseRef-UNLICENSED
   description: >
-    Stage 0 contract skeleton. These operations document intended surfaces only;
-    no endpoints are implemented in Stage 0.
+    Stage 2 contract. Identity and Telegram onboarding endpoints marked
+    `implemented-stage2` are implemented; other operations remain future
+    skeletons and are not production commitments yet.
 servers:
   - url: https://api.example.invalid
     description: Public API placeholder
@@ -55,10 +56,18 @@ paths:
               description: Raw Telegram update. Must be body-limited and never logged in full.
       responses:
         '200':
-          description: Update accepted or duplicate safely acknowledged
+          description: Update processed or already-completed duplicate safely acknowledged
         '400':
           $ref: '#/components/responses/Error'
         '401':
+          $ref: '#/components/responses/Error'
+        '413':
+          $ref: '#/components/responses/Error'
+        '429':
+          description: Telegram webhook ingress rate limit exceeded
+          $ref: '#/components/responses/Error'
+        '503':
+          description: Dedupe, rate limiter, identity-service, or Telegram API is temporarily unavailable. Concurrent in-flight duplicates also return retryable 503.
           $ref: '#/components/responses/Error'
   /internal/v1/telegram-users/{telegram_id}:
     put:

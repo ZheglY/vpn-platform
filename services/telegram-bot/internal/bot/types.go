@@ -5,7 +5,13 @@ import "context"
 const (
 	StateAwaitingConsent = "awaiting_consent"
 	StateMenu            = "menu"
+
+	DedupeAcquired   = "acquired"
+	DedupeProcessing = "processing"
+	DedupeCompleted  = "completed"
 )
+
+type DedupeStatus = string
 
 type IdentityUser struct {
 	UserID string `json:"user_id"`
@@ -31,8 +37,13 @@ type TelegramClient interface {
 }
 
 type DedupeStore interface {
-	MarkProcessed(ctx context.Context, updateID int64) (firstSeen bool, err error)
-	ForgetProcessed(ctx context.Context, updateID int64) error
+	StartProcessing(ctx context.Context, updateID int64, token string) (DedupeStatus, error)
+	CompleteProcessing(ctx context.Context, updateID int64, token string) error
+	ReleaseProcessing(ctx context.Context, updateID int64, token string) error
+}
+
+type RateLimiter interface {
+	Allow(ctx context.Context, key string) (bool, error)
 }
 
 type FSMStore interface {

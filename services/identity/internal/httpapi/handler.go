@@ -4,12 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
 
-	"github.com/yarik/vpn-service/internal/platform/httperror"
-	"github.com/yarik/vpn-service/services/identity/internal/domain"
+	"github.com/ZheglY/vpn-platform/internal/platform/httperror"
+	"github.com/ZheglY/vpn-platform/services/identity/internal/domain"
 )
 
 type Handler struct {
@@ -28,7 +29,7 @@ func (h *Handler) UpsertTelegramIdentity(w http.ResponseWriter, r *http.Request)
 	}
 
 	var req upsertTelegramRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrictJSON(r.Body, &req); err != nil {
 		httperror.Write(w, r, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
 		return
 	}
@@ -81,7 +82,7 @@ func (h *Handler) AcceptConsent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req acceptConsentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrictJSON(r.Body, &req); err != nil {
 		httperror.Write(w, r, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
 		return
 	}
@@ -203,6 +204,18 @@ func isUUID(value string) bool {
 
 func isHexDigit(r rune) bool {
 	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
+}
+
+func decodeStrictJSON(body io.Reader, out any) error {
+	decoder := json.NewDecoder(body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(out); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("request body must contain one JSON document")
+	}
+	return nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

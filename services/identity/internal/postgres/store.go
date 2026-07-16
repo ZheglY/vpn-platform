@@ -10,8 +10,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	platformpostgres "github.com/yarik/vpn-service/internal/platform/postgres"
-	"github.com/yarik/vpn-service/services/identity/internal/domain"
+	platformpostgres "github.com/ZheglY/vpn-platform/internal/platform/postgres"
+	"github.com/ZheglY/vpn-platform/services/identity/internal/domain"
 )
 
 type Store struct {

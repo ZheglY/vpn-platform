@@ -13,15 +13,15 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/yarik/vpn-service/internal/platform/config"
-	"github.com/yarik/vpn-service/internal/platform/httpauth"
-	platformhttpclient "github.com/yarik/vpn-service/internal/platform/httpclient"
-	"github.com/yarik/vpn-service/internal/platform/httpserver"
-	"github.com/yarik/vpn-service/internal/platform/logging"
-	"github.com/yarik/vpn-service/internal/platform/observability"
-	"github.com/yarik/vpn-service/internal/platform/version"
-	"github.com/yarik/vpn-service/services/identity/internal/httpapi"
-	identitypostgres "github.com/yarik/vpn-service/services/identity/internal/postgres"
+	"github.com/ZheglY/vpn-platform/internal/platform/config"
+	"github.com/ZheglY/vpn-platform/internal/platform/httpauth"
+	platformhttpclient "github.com/ZheglY/vpn-platform/internal/platform/httpclient"
+	"github.com/ZheglY/vpn-platform/internal/platform/httpserver"
+	"github.com/ZheglY/vpn-platform/internal/platform/logging"
+	"github.com/ZheglY/vpn-platform/internal/platform/observability"
+	"github.com/ZheglY/vpn-platform/internal/platform/version"
+	"github.com/ZheglY/vpn-platform/services/identity/internal/httpapi"
+	identitypostgres "github.com/ZheglY/vpn-platform/services/identity/internal/postgres"
 )
 
 var (

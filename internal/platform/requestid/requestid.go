@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/yarik/vpn-service/internal/platform/cryptoutil"
+	"github.com/ZheglY/vpn-platform/internal/platform/cryptoutil"
 )
 
 const Header = "X-Request-Id"

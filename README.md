@@ -10,7 +10,7 @@ Current milestone: Stage 2 identity and Telegram onboarding.
 - Shared technical platform packages under `internal/platform`.
 - `identity-service` with Telegram identity, consent persistence, health, version, and metrics endpoints.
 - `telegram-bot` with Telegram webhook secret validation, update dedupe, Redis FSM, `/start`, consent prompt, and health/version/metrics endpoints.
-- Local Compose skeleton for PostgreSQL, Kafka in KRaft mode, Redis, identity-service, and telegram-bot.
+- Local Compose skeleton for PostgreSQL, Kafka in KRaft mode, Redis, identity-service, telegram-bot, and a fake Telegram Bot API.
 - Goose migration runner tool.
 - OpenAPI/AsyncAPI contract linting.
 - Makefile and CI verification workflow, including Go vulnerability checks, secret scan, image build, and image scan.
@@ -54,6 +54,8 @@ The telegram-bot service listens on `http://localhost:8081` by default:
 - `GET /readyz`
 - `GET /version`
 - `GET /metrics`
+
+`make compose-smoke` sends synthetic Telegram updates through the full local Stage 2 path and verifies identity persistence, consent persistence, duplicate handling, Redis behavior, fake Telegram side effects, and mTLS authorization.
 
 ## Repository Rules
 

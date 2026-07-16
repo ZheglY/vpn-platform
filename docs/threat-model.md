@@ -174,6 +174,29 @@ Mitigation:
 - Reconciliation checks access state against provisioning allocations and node actual state.
 - Terminal failure alerts require operator escalation.
 
+### T10 - Telegram update is acknowledged before durable processing
+
+Risk: webhook dedupe marks an update as processed before the side effect finishes; a concurrent duplicate receives `200`, Telegram stops retrying, and the user-visible effect can be lost if the first attempt fails.
+
+Mitigation:
+
+- Redis dedupe has separate `processing` and `completed` keys.
+- A concurrent duplicate for an in-flight update receives retryable `503`.
+- Only a completed update replay receives `200`.
+- Failed processing releases the short processing lease with a bounded context that ignores request cancellation.
+- Unit and smoke tests cover concurrent duplicate, failed processing cleanup, completed replay, and canceled request context cleanup.
+
+### T11 - Telegram bot token leaks through outbound errors
+
+Risk: HTTP client errors can include a URL containing `/bot{token}/...`, and wrapping the original `url.Error` would expose the token through logs or traces.
+
+Mitigation:
+
+- Telegram client converts transport, decode, HTTP status, API, and rate-limit failures into classified safe errors.
+- Error strings never include request URL, token, or provider response description.
+- Bot API `ok=false` and `parameters.retry_after` are parsed without logging raw response bodies.
+- Redaction tests cover a synthetic `url.Error` containing the bot token.
+
 ## Initial Security Requirements
 
 - TLS everywhere.
@@ -184,6 +207,7 @@ Mitigation:
 - Kafka ACLs per service in production.
 - Secrets via secret mounts or secret manager, never Git or image.
 - Request body limits per public endpoint.
+- Telegram webhook ingress rate limit before business processing.
 - `Idempotency-Key` required for payment/order/token issue/rotation commands.
 - Manual commit after successful Kafka processing and inbox persistence.
 - DLQ is actionable with alert, reason, replay tooling, and runbook.

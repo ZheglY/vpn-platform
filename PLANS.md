@@ -97,7 +97,7 @@ Non-goals:
 
 ### Stage 2 - Identity and Telegram onboarding
 
-Status: implemented locally, pending final clean-tree `make verify`, commit, push, and user acceptance.
+Status: review fixes implemented and verified locally; pending user acceptance.
 
 Depends on Stage 1. Adds identity service, Telegram webhook adapter, update dedupe, Redis FSM, consent versioning, local mTLS for bot-to-identity calls, and fake Telegram tests.
 
@@ -105,10 +105,10 @@ Deliverables:
 
 - Identity-service PostgreSQL migration for users, Telegram identities, and consent versions.
 - Identity-service internal endpoints for Telegram identity upsert, user lookup, consent acceptance, and consent status.
-- Telegram-bot service with webhook secret validation, body limits, Redis update dedupe, Redis FSM, `/start`, and consent acceptance.
-- Local Compose migration job, identity-service, telegram-bot, and generated dev-mTLS certificates.
+- Telegram-bot service with webhook secret validation, body limits, Redis update dedupe using `processing`/`completed` states, Redis FSM, webhook rate limiting, `/start`, and consent acceptance.
+- Local Compose migration job, identity-service, telegram-bot, fake Telegram API, and generated dev-mTLS certificates.
 - Contract updates for implemented Stage 2 HTTP endpoints.
-- Tests for identity handlers, Telegram webhook idempotency/retry behavior, and fake Telegram API client calls.
+- Tests for identity handlers, strict JSON decoding, Telegram webhook idempotency/retry behavior, blocked-user fail-closed behavior, Redis rate limiting, safe Telegram API errors, dev-mTLS permissions, and fake Telegram API client calls.
 
 Non-goals:
 
@@ -117,9 +117,17 @@ Non-goals:
 Verification completed:
 
 - `go test ./...`
+- `go test -race ./...`
 - `make compose-smoke`
 - `make fmt-check tidy-check vet test race lint vuln secret-scan npm-audit contracts docker-build image-scan compose-config`
 - `git diff --check`
+
+Additional Stage 2 smoke acceptance:
+
+- synthetic update flows through telegram-bot, mTLS identity-service, PostgreSQL, Redis, and fake Telegram API
+- concurrent duplicate update has a single side effect and returns retryable status for the in-flight duplicate
+- completed duplicate replay is safely acknowledged without a second side effect
+- wrong SPIFFE identity is rejected by identity-service
 
 Notes:
 

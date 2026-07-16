@@ -1,15 +1,17 @@
 package bot
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"go.uber.org/zap"
 
-	"github.com/yarik/vpn-service/internal/platform/httperror"
+	"github.com/ZheglY/vpn-platform/internal/platform/httperror"
 )
 
 const telegramSecretHeader = "X-Telegram-Bot-Api-Secret-Token"
@@ -17,27 +19,42 @@ const telegramSecretHeader = "X-Telegram-Bot-Api-Secret-Token"
 type WebhookHandler struct {
 	secret         string
 	consentVersion string
+	termsURL       string
 	identity       IdentityClient
 	telegram       TelegramClient
 	dedupe         DedupeStore
 	fsm            FSMStore
+	rateLimiter    RateLimiter
+	rateLimitKey   string
 	logger         *zap.Logger
+	cleanupTimeout time.Duration
 }
 
 type Config struct {
 	WebhookSecret  string
 	ConsentVersion string
+	TermsURL       string
+	CleanupTimeout time.Duration
+	RateLimitKey   string
 }
 
-func NewWebhookHandler(cfg Config, identity IdentityClient, telegram TelegramClient, dedupe DedupeStore, fsm FSMStore, logger *zap.Logger) *WebhookHandler {
+func NewWebhookHandler(cfg Config, identity IdentityClient, telegram TelegramClient, dedupe DedupeStore, fsm FSMStore, rateLimiter RateLimiter, logger *zap.Logger) *WebhookHandler {
+	rateLimitKey := cfg.RateLimitKey
+	if rateLimitKey == "" {
+		rateLimitKey = "telegram-webhook"
+	}
 	return &WebhookHandler{
 		secret:         cfg.WebhookSecret,
 		consentVersion: cfg.ConsentVersion,
+		termsURL:       cfg.TermsURL,
 		identity:       identity,
 		telegram:       telegram,
 		dedupe:         dedupe,
 		fsm:            fsm,
+		rateLimiter:    rateLimiter,
+		rateLimitKey:   rateLimitKey,
 		logger:         logger,
+		cleanupTimeout: cfg.CleanupTimeout,
 	}
 }
 
@@ -45,6 +62,17 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !h.validSecret(r.Header.Get(telegramSecretHeader)) {
 		httperror.Write(w, r, http.StatusUnauthorized, "unauthenticated", "invalid Telegram webhook secret")
 		return
+	}
+	if h.rateLimiter != nil {
+		allowed, err := h.rateLimiter.Allow(r.Context(), h.rateLimitKey)
+		if err != nil {
+			httperror.Write(w, r, http.StatusServiceUnavailable, "rate_limit_unavailable", "rate limit is unavailable")
+			return
+		}
+		if !allowed {
+			httperror.Write(w, r, http.StatusTooManyRequests, "rate_limited", "too many Telegram webhook requests")
+			return
+		}
 	}
 
 	var update Update
@@ -57,18 +85,25 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	firstSeen, err := h.dedupe.MarkProcessed(r.Context(), update.UpdateID)
+	token := fmt.Sprintf("%d:%d", update.UpdateID, time.Now().UnixNano())
+	status, err := h.dedupe.StartProcessing(r.Context(), update.UpdateID, token)
 	if err != nil {
 		httperror.Write(w, r, http.StatusServiceUnavailable, "dedupe_unavailable", "update dedupe is unavailable")
 		return
 	}
-	if !firstSeen {
+	if status == DedupeCompleted {
 		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if status == DedupeProcessing {
+		httperror.Write(w, r, http.StatusServiceUnavailable, "update_processing", "update is already being processed")
 		return
 	}
 
 	if err := h.process(r, update); err != nil {
-		if forgetErr := h.dedupe.ForgetProcessed(r.Context(), update.UpdateID); forgetErr != nil {
+		cleanupCtx, cancel := h.cleanupContext(r.Context())
+		defer cancel()
+		if forgetErr := h.dedupe.ReleaseProcessing(cleanupCtx, update.UpdateID, token); forgetErr != nil {
 			h.logger.Warn("telegram update dedupe release failed",
 				zap.Int64("update_id", update.UpdateID),
 				zap.String("error_type", fmt.Sprintf("%T", forgetErr)),
@@ -82,7 +117,26 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cleanupCtx, cancel := h.cleanupContext(r.Context())
+	defer cancel()
+	if err := h.dedupe.CompleteProcessing(cleanupCtx, update.UpdateID, token); err != nil {
+		h.logger.Warn("telegram update dedupe completion failed",
+			zap.Int64("update_id", update.UpdateID),
+			zap.String("error_type", fmt.Sprintf("%T", err)),
+		)
+		httperror.Write(w, r, http.StatusServiceUnavailable, "dedupe_unavailable", "update dedupe is unavailable")
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
+}
+
+func (h *WebhookHandler) cleanupContext(parent context.Context) (context.Context, context.CancelFunc) {
+	timeout := h.cleanupTimeout
+	if timeout <= 0 {
+		timeout = 2 * time.Second
+	}
+	return context.WithTimeout(context.WithoutCancel(parent), timeout)
 }
 
 func (h *WebhookHandler) process(r *http.Request, update Update) error {
@@ -106,6 +160,9 @@ func (h *WebhookHandler) process(r *http.Request, update Update) error {
 	if err != nil {
 		return err
 	}
+	if user.Status != "active" {
+		return h.telegram.SendMessage(r.Context(), update.Message.Chat.ID, unavailableText())
+	}
 
 	switch normalizedCommand(text) {
 	case "/start":
@@ -117,7 +174,7 @@ func (h *WebhookHandler) process(r *http.Request, update Update) error {
 			if err := h.fsm.SetState(r.Context(), profile.TelegramUserID, StateAwaitingConsent); err != nil {
 				return err
 			}
-			return h.telegram.SendMessage(r.Context(), update.Message.Chat.ID, consentPrompt(h.consentVersion))
+			return h.telegram.SendMessage(r.Context(), update.Message.Chat.ID, consentPrompt(h.consentVersion, h.termsURL))
 		}
 		if err := h.fsm.SetState(r.Context(), profile.TelegramUserID, StateMenu); err != nil {
 			return err
@@ -196,12 +253,16 @@ func isConsentAccept(text string) bool {
 		normalized == "\u043f\u0440\u0438\u043d\u0438\u043c\u0430\u044e"
 }
 
-func consentPrompt(version string) string {
-	return "Please accept the current terms version " + version + " by sending: accept"
+func consentPrompt(version, termsURL string) string {
+	return "Please review terms version " + version + ": " + termsURL + "\nTo accept, send: accept"
 }
 
 func mainMenuText() string {
 	return "Menu: plans, subscription status, help."
+}
+
+func unavailableText() string {
+	return "Account is unavailable. Contact support."
 }
 
 func normalize(value string) *string {

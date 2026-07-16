@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/yarik/vpn-service/internal/platform/httpauth"
+	"github.com/ZheglY/vpn-platform/internal/platform/httpauth"
 )
 
 const (
@@ -47,18 +47,21 @@ func main() {
 }
 
 func run(outDir string) error {
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+	if err := os.MkdirAll(outDir, 0o700); err != nil {
 		return fmt.Errorf("create output directory: %w", err)
+	}
+	if err := os.Chmod(outDir, 0o700); err != nil {
+		return fmt.Errorf("chmod output directory: %w", err)
 	}
 
 	caCert, caKey, caPEM, caKeyPEM, err := newCA()
 	if err != nil {
 		return err
 	}
-	if err := writeFile(filepath.Join(outDir, "ca.crt"), caPEM); err != nil {
+	if err := writeFile(filepath.Join(outDir, "ca.crt"), caPEM, 0o644); err != nil {
 		return err
 	}
-	if err := writeFile(filepath.Join(outDir, "ca.key"), caKeyPEM); err != nil {
+	if err := writeFile(filepath.Join(outDir, "ca.key"), caKeyPEM, 0o600); err != nil {
 		return err
 	}
 
@@ -89,10 +92,10 @@ func run(outDir string) error {
 		if err != nil {
 			return err
 		}
-		if err := writeFile(filepath.Join(outDir, spec.name+".crt"), certPEM); err != nil {
+		if err := writeFile(filepath.Join(outDir, spec.name+".crt"), certPEM, 0o644); err != nil {
 			return err
 		}
-		if err := writeFile(filepath.Join(outDir, spec.name+".key"), keyPEM); err != nil {
+		if err := writeFile(filepath.Join(outDir, spec.name+".key"), keyPEM, 0o600); err != nil {
 			return err
 		}
 	}
@@ -177,9 +180,12 @@ func pemBlock(blockType string, bytes []byte) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: blockType, Bytes: bytes})
 }
 
-func writeFile(path string, contents []byte) error {
-	if err := os.WriteFile(path, contents, 0o644); err != nil {
+func writeFile(path string, contents []byte, mode os.FileMode) error {
+	if err := os.WriteFile(path, contents, mode); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		return fmt.Errorf("chmod %s: %w", path, err)
 	}
 	return nil
 }

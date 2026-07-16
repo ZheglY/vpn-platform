@@ -8,6 +8,8 @@ These sources are used only to shape Stage 0 decisions. Implementation stages mu
 |---|---|---|
 | Codex instructions | https://developers.openai.com/codex/guides/agents-md | Codex reads repository `AGENTS.md` as project guidance, so this repository keeps rules compact and points to detailed docs. |
 | Telegram Bot API | https://core.telegram.org/bots/api | Stage 2 re-checked the official Bot API for webhook `secret_token`, the `X-Telegram-Bot-Api-Secret-Token` header, `Update.update_id`, `Message`, and `sendMessage`. |
+| Telegram Bot API response envelope | https://core.telegram.org/bots/api | Stage 2 re-checked the `ok`, `result`, `error_code`, `description`, and `parameters.retry_after` response shape before classifying Telegram API errors. |
+| Go `net/url` error type | https://pkg.go.dev/net/url#Error | Stage 2 re-checked that `url.Error` carries the request URL, so Telegram client errors must not wrap it when the URL contains the bot token. |
 | YooKassa payment process | https://yookassa.ru/developers/payment-acceptance/getting-started/payment-process | Payment creation uses authentication, `Idempotence-Key`, amount, confirmation data, and status transitions such as `pending`, `succeeded`, and `canceled`. |
 | YooKassa webhooks | https://yookassa.ru/developers/using-api/webhooks | Webhooks report object status changes such as `payment.succeeded`, `payment.canceled`, and `refund.succeeded`; receipt must be acknowledged. |
 | YooKassa response handling | https://yookassa.ru/developers/using-api/response-handling/http-codes | Ambiguous provider errors require retry with the same idempotency key or GET verification rather than assuming success or failure. |

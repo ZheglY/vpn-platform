@@ -8,8 +8,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/yarik/vpn-service/internal/platform/httperror"
-	"github.com/yarik/vpn-service/internal/platform/requestid"
+	"github.com/ZheglY/vpn-platform/internal/platform/httperror"
+	"github.com/ZheglY/vpn-platform/internal/platform/requestid"
 )
 
 type Middleware func(http.Handler) http.Handler

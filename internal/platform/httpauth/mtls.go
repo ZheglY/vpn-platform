@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/yarik/vpn-service/internal/platform/httperror"
+	"github.com/ZheglY/vpn-platform/internal/platform/httperror"
 )
 
 type ServiceIdentity struct {

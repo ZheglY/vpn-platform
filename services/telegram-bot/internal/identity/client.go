@@ -9,8 +9,8 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/yarik/vpn-service/internal/platform/requestid"
-	"github.com/yarik/vpn-service/services/telegram-bot/internal/bot"
+	"github.com/ZheglY/vpn-platform/internal/platform/requestid"
+	"github.com/ZheglY/vpn-platform/services/telegram-bot/internal/bot"
 )
 
 type Client struct {

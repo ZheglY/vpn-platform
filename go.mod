@@ -1,4 +1,4 @@
-module github.com/yarik/vpn-service
+module github.com/ZheglY/vpn-platform
 
 go 1.26.5
 

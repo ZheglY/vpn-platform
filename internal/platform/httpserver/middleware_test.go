@@ -7,7 +7,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/yarik/vpn-service/internal/platform/requestid"
+	"github.com/ZheglY/vpn-platform/internal/platform/requestid"
 )
 
 func TestRequestIDMiddlewareGeneratesRequestID(t *testing.T) {
