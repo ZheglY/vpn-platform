@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.example.invalid/events/envelope.schema.json",
+  "title": "Kafka Message Envelope",
+  "type": "object",
+  "required": [
+    "event_id",
+    "event_type",
+    "schema_version",
+    "occurred_at",
+    "producer",
+    "correlation_id",
+    "aggregate_type",
+    "aggregate_id",
+    "partition_key",
+    "data"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "event_type": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC3339 timestamp in UTC."
+    },
+    "producer": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "correlation_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "causation_id": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "aggregate_type": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "aggregate_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "partition_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Stable key preserving order for a user or aggregate."
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Message-specific payload. Must not contain secrets, bearer tokens, VPN private material, full provider payloads, or browsing data."
+    }
+  }
+}

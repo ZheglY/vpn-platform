@@ -1,0 +1,24 @@
+# Risk Register
+
+| ID | Risk | Impact | Likelihood | Mitigation | Owner | Status |
+|---|---|---:|---:|---|---|---|
+| R-001 | Legal requirements for VPN sales, YooKassa receipts, taxes, and buyer regions are unknown. | High | High | Sandbox only; no real sales; legal review before production. | Product owner | Open |
+| R-002 | Subscription bearer token leaks through logs, traces, metrics, or reverse proxy access logs. | High | Medium | Dedicated hostname, path redaction, no-store, token hash storage, secret scans, rotation runbook. | Access/Platform | Open |
+| R-003 | Duplicate webhook or Kafka event creates double entitlement or payment effects. | High | Medium | Idempotency keys, unique constraints, inbox/outbox, state-machine tests. | Billing/Subscription | Open |
+| R-004 | Fake or ambiguous YooKassa notification activates access incorrectly. | High | Medium | Verify provider state with API before fulfillment; compare amount/currency/shop/metadata. | Billing | Open |
+| R-005 | Invalid Xray config replaces working config on a node. | High | Medium | Node-agent candidate validation, atomic swap, last-known-good, rollback, e2e tests. | Provisioning | Open |
+| R-006 | Cross-service database access creeps in as implementation grows. | Medium | Medium | Separate DB users, architecture tests, CI checks, code review, AGENTS rules. | All services | Open |
+| R-007 | Shared `internal/platform` becomes a hidden domain model package. | Medium | Medium | ADR, package ownership rules, architecture tests forbidding domain types there. | Platform | Open |
+| R-008 | Failover provisioning failure is hidden while primary access works. | Medium | Medium | `degraded` state, metrics, admin CLI visibility, alerting. | Provisioning/Access | Open |
+| R-009 | Aggregated traffic stats accidentally expand into browsing history or destination logging. | High | Low | Explicit forbidden data list, privacy review, schema review, log/metric scans. | Platform/Node | Open |
+| R-010 | Stage 0 contract skeleton is mistaken for final implemented API. | Medium | Medium | Mark skeletons as Stage 0; require stage-specific ADR and tests before implementation. | Architecture | Open |
+| R-011 | Happ compatibility differs from Stage 0 assumptions. | Medium | Medium | Re-check docs and run compatibility/golden tests in Stage 5; supersede ADR if needed. | Access | Open |
+| R-012 | Production VPS provider forbids VPN/proxy usage or changes AUP. | High | Medium | Provider AUP review and approved provider list before production node onboarding. | Operations | Open |
+| R-013 | Admin CLI credentials are overpowered or unaudited. | High | Medium | RBAC deny-by-default, short-lived credentials, append-only audit, reason-required operations. | Admin/Ops | Open |
+| R-014 | Retention policy conflicts with future legal duties. | Medium | Medium | Sandbox retention only; payment records not auto-deleted until legal requirements are known. | Product owner | Open |
+| R-015 | Plaintext subscription URL is generated before async provisioning and cannot be safely delivered later. | High | Medium | Generate token only after `access.ready.v1` through synchronous one-time issue endpoint. | Access/Bot | Mitigated in ADR 0016 |
+| R-016 | Provisioning cannot receive VLESS credential without leaking it through Kafka. | High | Medium | Kafka carries only IDs/revision; provisioning fetches material over mTLS from access-service; audit every fetch. | Access/Provisioning | Mitigated in ADR 0017 |
+| R-017 | Revoke request has no result lifecycle, leaving credentials active on some nodes without access-service knowing. | High | Medium | Add revoke succeeded/failed events, `revoking` state, reconciliation, terminal escalation. | Access/Provisioning | Mitigated in ADR 0017 |
+| R-018 | OpenAPI or implementation treats internal order/payment/token APIs as public, enabling IDOR. | High | Medium | mTLS service identity, endpoint allowlists, user context in internal path, no user_id in public body. | Platform/Billing/Access | Mitigated in ADR 0015 |
+| R-019 | Notification-service announces VPN readiness from entitlement activation before provisioning succeeds. | Medium | Medium | `subscription.activated` is entitlement-only; user-ready notification uses `access.ready.v1`. | Notification/Access | Mitigated in ADR 0014 |
+| R-020 | Refund of one payment incorrectly revokes periods paid by other payments. | High | Medium | Link each period to source payment; refund marks matching period and recalculates entitlement. | Billing/Subscription | Mitigated in ADR 0011 |

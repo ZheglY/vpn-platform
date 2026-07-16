@@ -1,0 +1,802 @@
+asyncapi: 3.1.0
+info:
+  title: VPN Subscription Platform Events
+  version: 0.0.0-stage0
+  description: >
+    Stage 0 AsyncAPI skeleton. Messages are not implemented yet. Every message
+    uses the common envelope shape and a message-specific data schema.
+defaultContentType: application/json
+channels:
+  billing.payment.succeeded.v1:
+    address: billing.payment.succeeded.v1
+    messages:
+      paymentSucceeded:
+        $ref: '#/components/messages/BillingPaymentSucceededV1'
+  billing.payment.canceled.v1:
+    address: billing.payment.canceled.v1
+    messages:
+      paymentCanceled:
+        $ref: '#/components/messages/BillingPaymentCanceledV1'
+  billing.refund.succeeded.v1:
+    address: billing.refund.succeeded.v1
+    messages:
+      refundSucceeded:
+        $ref: '#/components/messages/BillingRefundSucceededV1'
+  subscription.activated.v1:
+    address: subscription.activated.v1
+    messages:
+      subscriptionActivated:
+        $ref: '#/components/messages/SubscriptionActivatedV1'
+  subscription.extended.v1:
+    address: subscription.extended.v1
+    messages:
+      subscriptionExtended:
+        $ref: '#/components/messages/SubscriptionExtendedV1'
+  subscription.expired.v1:
+    address: subscription.expired.v1
+    messages:
+      subscriptionExpired:
+        $ref: '#/components/messages/SubscriptionExpiredV1'
+  subscription.revoked.v1:
+    address: subscription.revoked.v1
+    messages:
+      subscriptionRevoked:
+        $ref: '#/components/messages/SubscriptionRevokedV1'
+  access.provision.request.v1:
+    address: access.provision.request.v1
+    messages:
+      provisionRequest:
+        $ref: '#/components/messages/AccessProvisionRequestV1'
+  access.revoke.request.v1:
+    address: access.revoke.request.v1
+    messages:
+      revokeRequest:
+        $ref: '#/components/messages/AccessRevokeRequestV1'
+  access.provision.succeeded.v1:
+    address: access.provision.succeeded.v1
+    messages:
+      provisionSucceeded:
+        $ref: '#/components/messages/AccessProvisionSucceededV1'
+  access.provision.failed.v1:
+    address: access.provision.failed.v1
+    messages:
+      provisionFailed:
+        $ref: '#/components/messages/AccessProvisionFailedV1'
+  access.revoke.succeeded.v1:
+    address: access.revoke.succeeded.v1
+    messages:
+      revokeSucceeded:
+        $ref: '#/components/messages/AccessRevokeSucceededV1'
+  access.revoke.failed.v1:
+    address: access.revoke.failed.v1
+    messages:
+      revokeFailed:
+        $ref: '#/components/messages/AccessRevokeFailedV1'
+  access.ready.v1:
+    address: access.ready.v1
+    messages:
+      accessReady:
+        $ref: '#/components/messages/AccessReadyV1'
+operations:
+  publishBillingPaymentSucceeded:
+    action: send
+    channel:
+      $ref: '#/channels/billing.payment.succeeded.v1'
+    summary: billing-service publishes verified payment success.
+  consumeBillingPaymentSucceeded:
+    action: receive
+    channel:
+      $ref: '#/channels/billing.payment.succeeded.v1'
+    summary: subscription-service consumes payment success through inbox.
+  publishAccessProvisionRequest:
+    action: send
+    channel:
+      $ref: '#/channels/access.provision.request.v1'
+    summary: access-service requests provisioning without sending credential material.
+  consumeAccessProvisionRequest:
+    action: receive
+    channel:
+      $ref: '#/channels/access.provision.request.v1'
+    summary: provisioning-service owns provisioning commands and fetches material over mTLS.
+  publishAccessReady:
+    action: send
+    channel:
+      $ref: '#/channels/access.ready.v1'
+    summary: access-service announces VPN access can now be delivered to the user.
+components:
+  messages:
+    BillingPaymentSucceededV1:
+      name: billing.payment.succeeded.v1
+      title: Billing payment succeeded
+      payload:
+        $ref: '#/components/schemas/BillingPaymentSucceededEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            pattern: '^user:[0-9a-fA-F-]{36}$'
+      x-owner: billing-service
+      x-partition-key: user:{user_id}
+      x-consumers: [subscription-service]
+      x-retry: outbox retry with bounded exponential backoff and jitter
+      x-dlq: billing.payment.succeeded.v1.dlq
+    BillingPaymentCanceledV1:
+      name: billing.payment.canceled.v1
+      payload:
+        $ref: '#/components/schemas/BillingPaymentCanceledEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            pattern: '^user:[0-9a-fA-F-]{36}$'
+      x-owner: billing-service
+      x-partition-key: user:{user_id}
+      x-consumers: [notification-service]
+    BillingRefundSucceededV1:
+      name: billing.refund.succeeded.v1
+      payload:
+        $ref: '#/components/schemas/BillingRefundSucceededEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            pattern: '^user:[0-9a-fA-F-]{36}$'
+      x-owner: billing-service
+      x-partition-key: user:{user_id}
+      x-consumers: [subscription-service, notification-service]
+    SubscriptionActivatedV1:
+      name: subscription.activated.v1
+      title: Entitlement activated, VPN not necessarily ready
+      payload:
+        $ref: '#/components/schemas/SubscriptionActivatedEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            pattern: '^user:[0-9a-fA-F-]{36}$'
+      x-owner: subscription-service
+      x-partition-key: user:{user_id}
+      x-consumers: [access-service]
+      x-notification-rule: Do not tell the user that VPN is ready from this event.
+    SubscriptionExtendedV1:
+      name: subscription.extended.v1
+      title: Entitlement extended, VPN not necessarily ready
+      payload:
+        $ref: '#/components/schemas/SubscriptionExtendedEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            pattern: '^user:[0-9a-fA-F-]{36}$'
+      x-owner: subscription-service
+      x-partition-key: user:{user_id}
+      x-consumers: [access-service]
+    SubscriptionExpiredV1:
+      name: subscription.expired.v1
+      payload:
+        $ref: '#/components/schemas/SubscriptionExpiredEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            pattern: '^user:[0-9a-fA-F-]{36}$'
+      x-owner: subscription-service
+      x-partition-key: user:{user_id}
+      x-consumers: [access-service, notification-service]
+    SubscriptionRevokedV1:
+      name: subscription.revoked.v1
+      payload:
+        $ref: '#/components/schemas/SubscriptionRevokedEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            pattern: '^user:[0-9a-fA-F-]{36}$'
+      x-owner: subscription-service
+      x-partition-key: user:{user_id}
+      x-consumers: [access-service, notification-service]
+    AccessProvisionRequestV1:
+      name: access.provision.request.v1
+      title: Access provision request
+      payload:
+        $ref: '#/components/schemas/AccessProvisionRequestEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            pattern: '^credential:[0-9a-fA-F-]{36}$'
+      x-owner: access-service
+      x-partition-key: credential:{credential_id}
+      x-consumers: [provisioning-service]
+      x-command-timeout: PT60S
+      x-retry: bounded exponential backoff with jitter until terminal failure
+      x-dlq: access.provision.request.v1.dlq
+      x-terminal-failure: primary node failed or operation exhausted retries
+      x-secret-policy: No VLESS UUID, subscription token, or node private key in Kafka.
+    AccessRevokeRequestV1:
+      name: access.revoke.request.v1
+      payload:
+        $ref: '#/components/schemas/AccessRevokeRequestEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            pattern: '^credential:[0-9a-fA-F-]{36}$'
+      x-owner: access-service
+      x-partition-key: credential:{credential_id}
+      x-consumers: [provisioning-service]
+      x-command-timeout: PT60S
+      x-retry: retry until removed from all assigned nodes or terminal escalation
+      x-dlq: access.revoke.request.v1.dlq
+    AccessProvisionSucceededV1:
+      name: access.provision.succeeded.v1
+      payload:
+        $ref: '#/components/schemas/AccessProvisionSucceededEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            pattern: '^credential:[0-9a-fA-F-]{36}$'
+      x-owner: provisioning-service
+      x-partition-key: credential:{credential_id}
+      x-consumers: [access-service]
+    AccessProvisionFailedV1:
+      name: access.provision.failed.v1
+      payload:
+        $ref: '#/components/schemas/AccessProvisionFailedEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            pattern: '^credential:[0-9a-fA-F-]{36}$'
+      x-owner: provisioning-service
+      x-partition-key: credential:{credential_id}
+      x-consumers: [access-service, ops]
+    AccessRevokeSucceededV1:
+      name: access.revoke.succeeded.v1
+      payload:
+        $ref: '#/components/schemas/AccessRevokeSucceededEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            pattern: '^credential:[0-9a-fA-F-]{36}$'
+      x-owner: provisioning-service
+      x-partition-key: credential:{credential_id}
+      x-consumers: [access-service, notification-service]
+    AccessRevokeFailedV1:
+      name: access.revoke.failed.v1
+      payload:
+        $ref: '#/components/schemas/AccessRevokeFailedEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            pattern: '^credential:[0-9a-fA-F-]{36}$'
+      x-owner: provisioning-service
+      x-partition-key: credential:{credential_id}
+      x-consumers: [access-service, ops]
+      x-terminal-failure: failed after bounded retries; requires operator escalation and reconciliation
+    AccessReadyV1:
+      name: access.ready.v1
+      title: VPN access is ready for user delivery
+      payload:
+        $ref: '#/components/schemas/AccessReadyEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            pattern: '^user:[0-9a-fA-F-]{36}$'
+      x-owner: access-service
+      x-partition-key: user:{user_id}
+      x-consumers: [notification-service, telegram-bot]
+      x-secret-policy: This event never contains the subscription URL or token.
+  schemas:
+    Envelope:
+      type: object
+      required:
+        - event_id
+        - event_type
+        - schema_version
+        - occurred_at
+        - producer
+        - correlation_id
+        - aggregate_type
+        - aggregate_id
+        - partition_key
+        - data
+      additionalProperties: false
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        event_type:
+          type: string
+        schema_version:
+          type: integer
+          minimum: 1
+        occurred_at:
+          type: string
+          format: date-time
+        producer:
+          type: string
+        correlation_id:
+          type: string
+          format: uuid
+        causation_id:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        aggregate_type:
+          type: string
+        aggregate_id:
+          type: string
+          format: uuid
+        partition_key:
+          type: string
+        data:
+          type: object
+          additionalProperties: true
+    BillingPaymentSucceededEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            event_type:
+              const: billing.payment.succeeded.v1
+            producer:
+              const: billing-service
+            aggregate_type:
+              const: payment
+            partition_key:
+              pattern: '^user:[0-9a-fA-F-]{36}$'
+            data:
+              $ref: '#/components/schemas/BillingPaymentSucceededData'
+    BillingPaymentCanceledEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            event_type:
+              const: billing.payment.canceled.v1
+            producer:
+              const: billing-service
+            aggregate_type:
+              const: payment
+            partition_key:
+              pattern: '^user:[0-9a-fA-F-]{36}$'
+            data:
+              $ref: '#/components/schemas/BillingPaymentCanceledData'
+    BillingRefundSucceededEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            event_type:
+              const: billing.refund.succeeded.v1
+            producer:
+              const: billing-service
+            aggregate_type:
+              const: refund
+            partition_key:
+              pattern: '^user:[0-9a-fA-F-]{36}$'
+            data:
+              $ref: '#/components/schemas/BillingRefundSucceededData'
+    SubscriptionActivatedEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            event_type:
+              const: subscription.activated.v1
+            producer:
+              const: subscription-service
+            aggregate_type:
+              const: subscription
+            partition_key:
+              pattern: '^user:[0-9a-fA-F-]{36}$'
+            data:
+              $ref: '#/components/schemas/SubscriptionPeriodData'
+    SubscriptionExtendedEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            event_type:
+              const: subscription.extended.v1
+            producer:
+              const: subscription-service
+            aggregate_type:
+              const: subscription
+            partition_key:
+              pattern: '^user:[0-9a-fA-F-]{36}$'
+            data:
+              $ref: '#/components/schemas/SubscriptionPeriodData'
+    SubscriptionExpiredEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            event_type:
+              const: subscription.expired.v1
+            producer:
+              const: subscription-service
+            aggregate_type:
+              const: subscription
+            partition_key:
+              pattern: '^user:[0-9a-fA-F-]{36}$'
+            data:
+              $ref: '#/components/schemas/SubscriptionTerminalData'
+    SubscriptionRevokedEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            event_type:
+              const: subscription.revoked.v1
+            producer:
+              const: subscription-service
+            aggregate_type:
+              const: subscription
+            partition_key:
+              pattern: '^user:[0-9a-fA-F-]{36}$'
+            data:
+              $ref: '#/components/schemas/SubscriptionTerminalData'
+    AccessProvisionRequestEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            event_type:
+              const: access.provision.request.v1
+            producer:
+              const: access-service
+            aggregate_type:
+              const: credential
+            partition_key:
+              pattern: '^credential:[0-9a-fA-F-]{36}$'
+            data:
+              $ref: '#/components/schemas/AccessOperationRequestData'
+    AccessRevokeRequestEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            event_type:
+              const: access.revoke.request.v1
+            producer:
+              const: access-service
+            aggregate_type:
+              const: credential
+            partition_key:
+              pattern: '^credential:[0-9a-fA-F-]{36}$'
+            data:
+              $ref: '#/components/schemas/AccessOperationRequestData'
+    AccessProvisionSucceededEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            event_type:
+              const: access.provision.succeeded.v1
+            producer:
+              const: provisioning-service
+            aggregate_type:
+              const: credential
+            partition_key:
+              pattern: '^credential:[0-9a-fA-F-]{36}$'
+            data:
+              $ref: '#/components/schemas/AccessProvisionSucceededData'
+    AccessProvisionFailedEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            event_type:
+              const: access.provision.failed.v1
+            producer:
+              const: provisioning-service
+            aggregate_type:
+              const: credential
+            partition_key:
+              pattern: '^credential:[0-9a-fA-F-]{36}$'
+            data:
+              $ref: '#/components/schemas/AccessOperationFailedData'
+    AccessRevokeSucceededEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            event_type:
+              const: access.revoke.succeeded.v1
+            producer:
+              const: provisioning-service
+            aggregate_type:
+              const: credential
+            partition_key:
+              pattern: '^credential:[0-9a-fA-F-]{36}$'
+            data:
+              $ref: '#/components/schemas/AccessRevokeSucceededData'
+    AccessRevokeFailedEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            event_type:
+              const: access.revoke.failed.v1
+            producer:
+              const: provisioning-service
+            aggregate_type:
+              const: credential
+            partition_key:
+              pattern: '^credential:[0-9a-fA-F-]{36}$'
+            data:
+              $ref: '#/components/schemas/AccessOperationFailedData'
+    AccessReadyEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            event_type:
+              const: access.ready.v1
+            producer:
+              const: access-service
+            aggregate_type:
+              const: access
+            partition_key:
+              pattern: '^user:[0-9a-fA-F-]{36}$'
+            data:
+              $ref: '#/components/schemas/AccessReadyData'
+    BillingPaymentSucceededData:
+      type: object
+      required: [payment_id, order_id, user_id, plan_id, amount_minor, currency, paid_at]
+      additionalProperties: false
+      properties:
+        payment_id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        plan_id:
+          type: string
+        amount_minor:
+          type: integer
+          minimum: 0
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+        paid_at:
+          type: string
+          format: date-time
+    BillingPaymentCanceledData:
+      type: object
+      required: [payment_id, order_id, user_id, canceled_at]
+      additionalProperties: false
+      properties:
+        payment_id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        canceled_at:
+          type: string
+          format: date-time
+        reason_code:
+          type: string
+          maxLength: 64
+    BillingRefundSucceededData:
+      type: object
+      required: [refund_id, payment_id, order_id, user_id, amount_minor, currency, refund_scope, refunded_at]
+      additionalProperties: false
+      properties:
+        refund_id:
+          type: string
+          format: uuid
+        payment_id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        amount_minor:
+          type: integer
+          minimum: 0
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+        refund_scope:
+          type: string
+          const: full
+        refunded_at:
+          type: string
+          format: date-time
+    SubscriptionPeriodData:
+      type: object
+      required:
+        - subscription_id
+        - user_id
+        - period_id
+        - source_order_id
+        - source_payment_id
+        - period_start
+        - period_end
+        - grace_ends_at
+      additionalProperties: false
+      properties:
+        subscription_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        period_id:
+          type: string
+          format: uuid
+        source_order_id:
+          type: string
+          format: uuid
+        source_payment_id:
+          type: string
+          format: uuid
+        period_start:
+          type: string
+          format: date-time
+        period_end:
+          type: string
+          format: date-time
+        grace_ends_at:
+          type: string
+          format: date-time
+    SubscriptionTerminalData:
+      type: object
+      required: [subscription_id, user_id, reason, effective_at]
+      additionalProperties: false
+      properties:
+        subscription_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        reason:
+          type: string
+          enum: [expired, refund, admin_block, abuse, deleted]
+        affected_period_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        effective_at:
+          type: string
+          format: date-time
+    AccessOperationRequestData:
+      type: object
+      required: [operation_id, credential_id, desired_revision]
+      additionalProperties: false
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+        credential_id:
+          type: string
+          format: uuid
+        desired_revision:
+          type: integer
+          minimum: 1
+    AccessProvisionSucceededData:
+      type: object
+      required: [operation_id, credential_id, applied_revision, status, primary_node_id, applied_at]
+      additionalProperties: false
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+        credential_id:
+          type: string
+          format: uuid
+        applied_revision:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum: [active, degraded]
+        primary_node_id:
+          type: string
+          format: uuid
+        failover_node_id:
+          type: [string, 'null']
+          format: uuid
+        applied_at:
+          type: string
+          format: date-time
+    AccessRevokeSucceededData:
+      type: object
+      required: [operation_id, credential_id, revoked_revision, node_ids, revoked_at]
+      additionalProperties: false
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+        credential_id:
+          type: string
+          format: uuid
+        revoked_revision:
+          type: integer
+          minimum: 1
+        node_ids:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: uuid
+        revoked_at:
+          type: string
+          format: date-time
+    AccessOperationFailedData:
+      type: object
+      required: [operation_id, credential_id, failed_revision, failure_scope, terminal, reason_code, failed_at]
+      additionalProperties: false
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+        credential_id:
+          type: string
+          format: uuid
+        failed_revision:
+          type: integer
+          minimum: 1
+        failure_scope:
+          type: string
+          enum: [primary, failover, all, unknown]
+        terminal:
+          type: boolean
+        reason_code:
+          type: string
+          maxLength: 64
+          description: Redacted machine-readable reason code.
+        pending_node_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        failed_at:
+          type: string
+          format: date-time
+    AccessReadyData:
+      type: object
+      required: [subscription_id, credential_id, user_id, provisioning_status, ready_at, link_issuance_required]
+      additionalProperties: false
+      properties:
+        subscription_id:
+          type: string
+          format: uuid
+        credential_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        provisioning_status:
+          type: string
+          enum: [active, degraded]
+        ready_at:
+          type: string
+          format: date-time
+        link_issuance_required:
+          type: boolean
+          const: true

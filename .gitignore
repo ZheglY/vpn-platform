@@ -1,0 +1,33 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+
+# Build and test artifacts
+bin/
+dist/
+coverage/
+*.cover
+*.test
+*.prof
+
+# Logs and temporary files
+*.log
+tmp/
+temp/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+node_modules/
+
+# Local generated env files
+.env.local

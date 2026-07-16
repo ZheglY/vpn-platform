@@ -1,0 +1,16 @@
+{
+  "private": true,
+  "name": "vpn-service-contract-tools",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "lint:openapi": "redocly lint contracts/http/openapi.yaml",
+    "lint:asyncapi": "node scripts/validate-asyncapi.mjs",
+    "lint:contracts": "npm run lint:openapi && npm run lint:asyncapi"
+  },
+  "devDependencies": {
+    "@asyncapi/parser": "3.6.0",
+    "@redocly/cli": "2.38.0",
+    "js-yaml": "5.2.1"
+  }
+}

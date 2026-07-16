@@ -1,0 +1,813 @@
+openapi: 3.1.0
+info:
+  title: VPN Subscription Platform API
+  version: 0.0.0-stage0
+  license:
+    name: UNLICENSED
+    identifier: LicenseRef-UNLICENSED
+  description: >
+    Stage 0 contract skeleton. These operations document intended surfaces only;
+    no endpoints are implemented in Stage 0.
+servers:
+  - url: https://api.example.invalid
+    description: Public API placeholder
+  - url: https://internal.example.invalid
+    description: Internal API placeholder requiring mTLS service identity
+  - url: https://admin.example.invalid
+    description: Admin API placeholder requiring admin mTLS identity
+  - url: https://sub.example.invalid
+    description: Happ subscription endpoint placeholder
+security:
+  - ServiceMTLS: []
+tags:
+  - name: Identity
+    description: User identity, Telegram identity, consent, and blocking surfaces.
+  - name: Catalog
+    description: Published tariff and location catalog surfaces.
+  - name: Billing
+    description: Order, payment, refund, and payment-provider surfaces.
+  - name: Subscription
+    description: Entitlement and subscription lifecycle surfaces.
+  - name: Access
+    description: Subscription URL, token, and access delivery surfaces.
+  - name: Provisioning
+    description: Credential material retrieval for the provisioning control plane.
+  - name: Webhooks
+    description: Public webhook ingress surfaces with explicit verification rules.
+  - name: Admin
+    description: Administrative operations requiring RBAC and audit.
+paths:
+  /webhooks/telegram:
+    post:
+      tags: [Webhooks]
+      summary: Receive Telegram Bot API webhook update
+      operationId: receiveTelegramWebhook
+      x-contract-status: skeleton
+      security:
+        - TelegramWebhookSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              description: Raw Telegram update. Must be body-limited and never logged in full.
+      responses:
+        '200':
+          description: Update accepted or duplicate safely acknowledged
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+  /internal/v1/telegram-users/{telegram_id}:
+    put:
+      tags: [Identity]
+      summary: Idempotently register or refresh a Telegram identity
+      operationId: upsertTelegramIdentity
+      x-contract-status: skeleton
+      security:
+        - ServiceMTLS: []
+      x-allowed-service-identities: [telegram-bot]
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: telegram_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Existing or created identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserIdentity'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+  /internal/v1/users/{user_id}:
+    get:
+      tags: [Identity]
+      summary: Get user identity by internal user ID
+      operationId: getUserIdentity
+      x-contract-status: skeleton
+      security:
+        - ServiceMTLS: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: User identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserIdentity'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+  /internal/v1/users/{user_id}/block:
+    post:
+      tags: [Admin]
+      summary: Block a user with audited reason
+      operationId: blockUser
+      x-contract-status: skeleton
+      security:
+        - AdminMTLS: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminReasonRequest'
+      responses:
+        '202':
+          description: Block accepted
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        default:
+          $ref: '#/components/responses/Error'
+  /v1/plans:
+    get:
+      tags: [Catalog]
+      summary: List published plans
+      operationId: listPlans
+      x-contract-status: skeleton
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: channel
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [telegram]
+        - name: locale
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 32
+      responses:
+        '200':
+          description: Published plan list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [plans]
+                additionalProperties: false
+                properties:
+                  plans:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PlanSummary'
+        '400':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+  /internal/v1/users/{user_id}/orders:
+    post:
+      tags: [Billing]
+      summary: Create an order for a Telegram user through the bot service
+      operationId: createUserOrder
+      x-contract-status: skeleton
+      security:
+        - ServiceMTLS: []
+      x-allowed-service-identities: [telegram-bot]
+      description: >
+        The user is selected by the internal path parameter after the bot has
+        authenticated the Telegram update and resolved the identity. The request
+        body intentionally does not accept user_id.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: Order created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        default:
+          $ref: '#/components/responses/Error'
+  /internal/v1/users/{user_id}/orders/{order_id}:
+    get:
+      tags: [Billing]
+      summary: Get an order for a specific user
+      operationId: getUserOrder
+      x-contract-status: skeleton
+      security:
+        - ServiceMTLS: []
+      x-allowed-service-identities: [telegram-bot, admin-cli]
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+  /internal/v1/users/{user_id}/orders/{order_id}/payments:
+    post:
+      tags: [Billing]
+      summary: Create or return a payment for a user order
+      operationId: createUserOrderPayment
+      x-contract-status: skeleton
+      security:
+        - ServiceMTLS: []
+      x-allowed-service-identities: [telegram-bot]
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '201':
+          description: Payment created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        default:
+          $ref: '#/components/responses/Error'
+  /webhooks/yookassa:
+    post:
+      tags: [Webhooks]
+      summary: Receive YooKassa webhook notification
+      operationId: receiveYooKassaWebhook
+      x-contract-status: skeleton
+      x-provider-verification-required: true
+      security: []
+      description: >
+        Public ingress endpoint. The payload is normalized and durably stored,
+        then an idempotent worker verifies the payment/refund with YooKassa API
+        before any fulfillment effect.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              description: Raw YooKassa notification. Must be body-limited and never logged in full.
+      responses:
+        '200':
+          description: Webhook stored or duplicate safely acknowledged
+        '400':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+  /internal/v1/users/{user_id}/subscription:
+    get:
+      tags: [Subscription]
+      summary: Get current entitlement subscription for a user
+      operationId: getUserSubscription
+      x-contract-status: skeleton
+      security:
+        - ServiceMTLS: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: Subscription entitlement status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+  /internal/v1/subscriptions/{subscription_id}/subscription-url/issue:
+    post:
+      tags: [Access]
+      summary: Issue a subscription URL exactly once after access is ready
+      operationId: issueSubscriptionUrl
+      x-contract-status: skeleton
+      security:
+        - ServiceMTLS: []
+      x-allowed-service-identities: [telegram-bot]
+      description: >
+        Called synchronously by telegram-bot after the user presses "get VPN
+        link". Access-service generates a new token, stores only its lookup HMAC
+        or hash, returns the URL once, and never persists plaintext.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/SubscriptionId'
+      responses:
+        '200':
+          description: New subscription URL issued once
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionUrlIssued'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        default:
+          $ref: '#/components/responses/Error'
+  /internal/v1/subscriptions/{subscription_id}/subscription-url/rotate:
+    post:
+      tags: [Access]
+      summary: Revoke old subscription URL token and issue a replacement
+      operationId: rotateSubscriptionUrl
+      x-contract-status: skeleton
+      security:
+        - ServiceMTLS: []
+      x-allowed-service-identities: [telegram-bot, admin-cli]
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/SubscriptionId'
+      responses:
+        '200':
+          description: Replacement subscription URL issued once
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionUrlIssued'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        default:
+          $ref: '#/components/responses/Error'
+  /internal/v1/subscriptions/{subscription_id}/access:
+    get:
+      tags: [Access]
+      summary: Get access state without returning plaintext token
+      operationId: getSubscriptionAccess
+      x-contract-status: skeleton
+      security:
+        - ServiceMTLS: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/SubscriptionId'
+      responses:
+        '200':
+          description: Access status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessStatus'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+  /internal/v1/credentials/{credential_id}/provisioning-material:
+    get:
+      tags: [Provisioning]
+      summary: Fetch encrypted-at-rest credential material for node provisioning
+      operationId: getProvisioningCredentialMaterial
+      x-contract-status: skeleton
+      security:
+        - ProvisioningMTLS: []
+      x-allowed-service-identities: [provisioning-service]
+      description: >
+        Kafka provisioning commands carry only credential_id, operation_id, and
+        revision. Provisioning-service uses this mTLS endpoint to fetch the
+        minimum required VLESS client material. REALITY private keys remain on
+        VPN nodes and are never returned by this API.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: credential_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Sensitive credential material for provisioning
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProvisioningCredentialMaterial'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+  /s/{token}:
+    get:
+      tags: [Access]
+      summary: Return Happ-compatible subscription document
+      operationId: getHappSubscription
+      x-contract-status: skeleton
+      x-sensitive-path-parameter: token
+      security:
+        - SubscriptionUrlBearer: []
+      description: >
+        The bearer credential is carried in the path for Happ compatibility.
+        Logs, metrics, traces, and reverse-proxy access logs must treat the path
+        segment as a secret and record only the route template.
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 43
+            maxLength: 256
+      responses:
+        '200':
+          description: Active subscription document
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            text/plain:
+              schema:
+                type: string
+                description: Happ-compatible lines and VLESS URIs. Must not be logged.
+        '404':
+          description: Same response for unknown, expired, and revoked tokens
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            text/plain:
+              schema:
+                type: string
+                description: Generic unavailable response without identifiers.
+        default:
+          $ref: '#/components/responses/Error'
+components:
+  securitySchemes:
+    ServiceMTLS:
+      type: mutualTLS
+      description: >
+        Internal service identity from a trusted platform CA. Authorization is
+        based on the certificate subject/SAN and per-endpoint allowed identities.
+    ProvisioningMTLS:
+      type: mutualTLS
+      description: >
+        Internal mTLS identity restricted to provisioning-service for fetching
+        sensitive credential material from access-service.
+    AdminMTLS:
+      type: mutualTLS
+      description: >
+        Admin CLI/client mTLS identity mapped to RBAC roles and audited actions.
+    TelegramWebhookSecret:
+      type: apiKey
+      in: header
+      name: X-Telegram-Bot-Api-Secret-Token
+      description: Telegram webhook secret token configured through Bot API setWebhook.
+    SubscriptionUrlBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: URL path token
+      description: >
+        Bearer-secret semantics for `GET /s/{token}`. Happ v1 carries this
+        token in the path, not in the Authorization header.
+  parameters:
+    RequestId:
+      name: X-Request-Id
+      in: header
+      required: false
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+    UserId:
+      name: user_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    OrderId:
+      name: order_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    SubscriptionId:
+      name: subscription_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    Error:
+      description: Safe error response
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Idempotency conflict or state conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      required: [code, message, request_id]
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+          maxLength: 128
+        message:
+          type: string
+          maxLength: 512
+        request_id:
+          type: string
+          maxLength: 128
+        fields:
+          type: array
+          items:
+            type: object
+            required: [field, code]
+            additionalProperties: false
+            properties:
+              field:
+                type: string
+              code:
+                type: string
+              message:
+                type: string
+    UserIdentity:
+      type: object
+      required: [user_id, status]
+      additionalProperties: false
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [active, blocked, deleted]
+        locale:
+          type: [string, 'null']
+          maxLength: 32
+        timezone:
+          type: [string, 'null']
+          maxLength: 64
+    PlanSummary:
+      type: object
+      required: [plan_id, duration_days, currency, amount_minor, region_policy, traffic_policy]
+      additionalProperties: false
+      properties:
+        plan_id:
+          type: string
+          maxLength: 128
+        duration_days:
+          type: integer
+          minimum: 1
+          maximum: 366
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+        amount_minor:
+          type: integer
+          minimum: 0
+        region_policy:
+          type: string
+          enum: [single_region_with_failover]
+        traffic_policy:
+          type: string
+          enum: [no_hard_cap]
+    CreateOrderRequest:
+      type: object
+      required: [plan_id, region, accepted_terms_version]
+      additionalProperties: false
+      properties:
+        plan_id:
+          type: string
+          maxLength: 128
+        region:
+          type: string
+          minLength: 2
+          maxLength: 64
+        accepted_terms_version:
+          type: string
+          minLength: 1
+          maxLength: 64
+    Order:
+      type: object
+      required: [order_id, user_id, status, amount_minor, currency, plan_snapshot]
+      additionalProperties: false
+      properties:
+        order_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [created, payment_pending, paid, canceled, refunded]
+        amount_minor:
+          type: integer
+          minimum: 0
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+        plan_snapshot:
+          $ref: '#/components/schemas/PlanSummary'
+    Payment:
+      type: object
+      required: [payment_id, order_id, status]
+      additionalProperties: false
+      properties:
+        payment_id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [created, pending, succeeded, canceled]
+        confirmation_url:
+          type: string
+          format: uri
+          description: Sensitive enough to avoid logs.
+    Subscription:
+      type: object
+      required: [subscription_id, user_id, status]
+      additionalProperties: false
+      properties:
+        subscription_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, active, grace, expired, suspended, revoked]
+        current_period_start:
+          type: [string, 'null']
+          format: date-time
+        current_period_end:
+          type: [string, 'null']
+          format: date-time
+    AccessStatus:
+      type: object
+      required: [subscription_id, access_status, provisioning_status, token_status]
+      additionalProperties: false
+      properties:
+        subscription_id:
+          type: string
+          format: uuid
+        access_status:
+          type: string
+          enum: [pending, ready, active, revoking, revoked, failed]
+          description: "`ready` means VPN is provisioned and a URL may be issued."
+        provisioning_status:
+          type: string
+          enum: [pending, active, degraded, failed, revoking, revoked]
+        token_status:
+          type: string
+          enum: [not_issued, active, rotated, revoked]
+    SubscriptionUrlIssued:
+      type: object
+      required: [subscription_url]
+      additionalProperties: false
+      properties:
+        subscription_url:
+          type: string
+          format: uri
+          description: Returned only at issuance or rotation. Must not be logged or persisted by caller.
+    ProvisioningCredentialMaterial:
+      type: object
+      required: [credential_id, revision, protocol, vless_client_uuid, target_nodes]
+      additionalProperties: false
+      properties:
+        credential_id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          minimum: 1
+        protocol:
+          type: string
+          enum: [vless_reality]
+        vless_client_uuid:
+          type: string
+          format: uuid
+          description: Sensitive VPN credential. Must be encrypted at rest and never logged.
+        target_nodes:
+          type: array
+          minItems: 1
+          maxItems: 2
+          items:
+            type: object
+            required: [node_id, role, public_endpoint, reality_public_params]
+            additionalProperties: false
+            properties:
+              node_id:
+                type: string
+                format: uuid
+              role:
+                type: string
+                enum: [primary, failover]
+              public_endpoint:
+                type: string
+                maxLength: 255
+              reality_public_params:
+                type: object
+                additionalProperties: false
+                required: [server_name, public_key, short_id]
+                properties:
+                  server_name:
+                    type: string
+                    maxLength: 255
+                  public_key:
+                    type: string
+                    maxLength: 128
+                  short_id:
+                    type: string
+                    maxLength: 32
+    AdminReasonRequest:
+      type: object
+      required: [reason]
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 512
