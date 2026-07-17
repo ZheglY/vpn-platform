@@ -36,6 +36,33 @@ type TelegramClient interface {
 	SendMessage(ctx context.Context, chatID int64, text string) error
 }
 
+type Plan struct {
+	PlanID       string   `json:"plan_id"`
+	Name         string   `json:"name"`
+	DurationDays int      `json:"duration_days"`
+	AmountMinor  int64    `json:"amount_minor"`
+	Currency     string   `json:"currency"`
+	Regions      []string `json:"regions"`
+}
+
+type CatalogClient interface {
+	ListPlans(context.Context) ([]Plan, error)
+}
+
+type Order struct {
+	OrderID string `json:"order_id"`
+}
+
+type Payment struct {
+	Status          string  `json:"status"`
+	ConfirmationURL *string `json:"confirmation_url,omitempty"`
+}
+
+type BillingClient interface {
+	CreateOrder(context.Context, string, string, string, string, string) (Order, error)
+	CreatePayment(context.Context, string, string, string) (Payment, error)
+}
+
 type DedupeStore interface {
 	StartProcessing(ctx context.Context, updateID int64, token string) (DedupeStatus, error)
 	CompleteProcessing(ctx context.Context, updateID int64, token string) error

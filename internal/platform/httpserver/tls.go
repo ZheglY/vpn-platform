@@ -8,6 +8,14 @@ import (
 )
 
 func NewMutualTLSConfig(certFile, keyFile string, clientCAFiles []string) (*tls.Config, error) {
+	return newTLSConfig(certFile, keyFile, clientCAFiles, tls.RequireAndVerifyClientCert)
+}
+
+func NewOptionalMutualTLSConfig(certFile, keyFile string, clientCAFiles []string) (*tls.Config, error) {
+	return newTLSConfig(certFile, keyFile, clientCAFiles, tls.VerifyClientCertIfGiven)
+}
+
+func newTLSConfig(certFile, keyFile string, clientCAFiles []string, clientAuth tls.ClientAuthType) (*tls.Config, error) {
 	if certFile == "" || keyFile == "" {
 		return nil, fmt.Errorf("server certificate and key files are required")
 	}
@@ -34,7 +42,7 @@ func NewMutualTLSConfig(certFile, keyFile string, clientCAFiles []string) (*tls.
 	return &tls.Config{
 		MinVersion:   tls.VersionTLS13,
 		Certificates: []tls.Certificate{cert},
-		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientAuth:   clientAuth,
 		ClientCAs:    clientCAs,
 	}, nil
 }

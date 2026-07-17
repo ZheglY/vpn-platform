@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vpn-platform.invalid/schemas/billing.payment.succeeded.v1.schema.json",
+  "type": "object",
+  "required": ["event_id", "event_type", "schema_version", "occurred_at", "producer", "correlation_id", "causation_id", "aggregate_type", "aggregate_id", "partition_key", "data"],
+  "additionalProperties": false,
+  "properties": {
+    "event_id": {"type": "string", "format": "uuid"},
+    "event_type": {"const": "billing.payment.succeeded.v1"},
+    "schema_version": {"const": 1},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "producer": {"const": "billing-service"},
+    "correlation_id": {"type": "string", "format": "uuid"},
+    "causation_id": {"type": ["string", "null"], "format": "uuid"},
+    "aggregate_type": {"const": "payment"},
+    "aggregate_id": {"type": "string", "format": "uuid"},
+    "partition_key": {"type": "string", "pattern": "^user:[0-9a-fA-F-]{36}$"},
+    "data": {
+      "type": "object",
+      "required": ["payment_id", "order_id", "user_id", "plan_id", "amount_minor", "currency", "paid_at"],
+      "additionalProperties": false,
+      "properties": {
+        "payment_id": {"type": "string", "format": "uuid"},
+        "order_id": {"type": "string", "format": "uuid"},
+        "user_id": {"type": "string", "format": "uuid"},
+        "plan_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "amount_minor": {"type": "integer", "minimum": 1},
+        "currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+        "paid_at": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}

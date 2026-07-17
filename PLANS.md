@@ -2,9 +2,9 @@
 
 ## Current Approval
 
-Approved milestone: Stage 2 - Identity and Telegram onboarding.
+Approved milestone: Stage 3 - Catalog, Billing, and YooKassa sandbox.
 
-Not approved yet: Stage 3 and later implementation milestones. Do not create catalog, billing, YooKassa, subscription lifecycle, access credential delivery, provisioning, notification, or VPN business logic until the relevant milestone is explicitly approved.
+Not approved yet: Stage 4 and later implementation milestones. Do not create subscription lifecycle, access credential delivery, provisioning, notification, or VPN business logic until the relevant milestone is explicitly approved.
 
 ## Stage 0 Plan
 
@@ -97,7 +97,7 @@ Non-goals:
 
 ### Stage 2 - Identity and Telegram onboarding
 
-Status: review fixes implemented and verified locally; pending user acceptance.
+Status: accepted baseline; pushed to GitHub branch `codex/stage2-identity-telegram`.
 
 Depends on Stage 1. Adds identity service, Telegram webhook adapter, update dedupe, Redis FSM, consent versioning, local mTLS for bot-to-identity calls, and fake Telegram tests.
 
@@ -136,7 +136,29 @@ Notes:
 
 ### Stage 3 - Catalog, Billing, and YooKassa sandbox
 
-Depends on Stage 2 and payment/legal ADR confirmation. Adds immutable plan/order snapshots, YooKassa sandbox adapter, payment idempotency, webhook inbox, verification, reconciliation, and fake provider tests.
+Status: implementation and required verification completed on `codex/stage3-catalog-billing`; pending user acceptance. Stage 4 remains blocked until explicit approval.
+
+Depends on Stage 2 and sandbox payment decisions. Adds immutable plan/order snapshots, YooKassa sandbox adapter, payment idempotency, webhook inbox, verification, reconciliation, and fake provider tests.
+
+Acceptance criteria:
+
+- Catalog plan versions and prices are immutable; an order stores the complete selected plan, price, region, and accepted terms snapshot.
+- Internal order/payment retries use durable request-scoped idempotency and cannot create a second compatible open order, payment, or provider object.
+- Ambiguous YooKassa create responses are reconciled with the persisted provider idempotency key within the provider's idempotency window.
+- Webhook payloads create only normalized inbox records; terminal effects require authenticated provider GET verification.
+- Payment and order transition plus one versioned Kafka outbox event commit atomically and remain monotonic under duplicate or out-of-order delivery.
+- Compose starts from empty volumes and the Stage 3 smoke verifies ambiguous create, duplicate click, duplicate webhook, out-of-order webhook, mTLS authorization, and one Kafka event.
+- `make verify`, `make compose-smoke`, and final diff review pass before Stage 3 is declared complete.
+
+Verification completed:
+
+- `make verify`
+- `make compose-smoke`
+- Final review of transaction boundaries, idempotency, state monotonicity, mTLS allowlists, contract compatibility, redaction, and service ownership
+
+Notes:
+
+- Direct `govulncheck` access to the Go vulnerability service timed out; the repository's fallback used a temporary local copy of the official Go vulnerability database and reported no vulnerabilities.
 
 ### Stage 4 - Subscription lifecycle
 

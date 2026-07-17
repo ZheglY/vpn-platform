@@ -25,3 +25,14 @@ This Definition of Done applies to every implementation task after Stage 0. Stag
 - All unresolved decisions affecting money, law, privacy, public API, event semantics, or VPN provisioning are explicit.
 - ADRs exist for every architecture/security/public-contract decision made in Stage 0.
 - Contract skeletons are present but do not imply implemented behavior.
+
+## Stage 3 Specific
+
+- YooKassa is sandbox-only and every parsed provider object must have `test=true` and the configured account ID.
+- Money is stored as integer minor units and an uppercase ISO-style three-letter currency; no `float` crosses a contract or transaction.
+- A provider idempotency key is persisted before the first create call and reused for all ambiguous retries.
+- Duplicate clicks, idempotency replay with a changed request, duplicate webhook, delayed webhook, and out-of-order terminal notification are tested.
+- Webhook fulfillment requires provider GET verification of ID, account, amount, currency, internal metadata, status, and capture time.
+- Terminal payment/order transition and versioned outbox insert are one PostgreSQL transaction.
+- Full provider/webhook payloads, confirmation URLs, credentials, and payment secrets are absent from logs and durable inbox data.
+- Migration from zero, fake-provider E2E, contract examples, service images, and image scans pass before acceptance.

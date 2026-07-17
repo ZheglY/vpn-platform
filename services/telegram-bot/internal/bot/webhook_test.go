@@ -192,6 +192,47 @@ func TestWebhookAcceptConsentShowsMenu(t *testing.T) {
 	}
 }
 
+func TestWebhookBuyCreatesOneOrderAndPayment(t *testing.T) {
+	identity := &fakeIdentity{consented: true}
+	telegram := &fakeTelegram{}
+	catalog := &fakeCatalog{plans: []Plan{{PlanID: "vpn-30d-v1", Name: "VPN 30 days", DurationDays: 30, AmountMinor: 29900, Currency: "RUB", Regions: []string{"ru-test"}}}}
+	billing := &fakeBilling{order: Order{OrderID: "00000000-0000-4000-8000-000000000002"}, payment: Payment{Status: "pending", ConfirmationURL: stringPointer("https://pay.invalid/payment")}}
+	handler := NewWebhookHandlerWithCommerce(Config{WebhookSecret: "secret", ConsentVersion: "terms-v1", TermsURL: "https://example.invalid/terms/terms-v1"}, identity, catalog, billing, telegram, newMemoryStore(), newMemoryStore(), nil, zap.NewNop())
+
+	rec := postUpdate(handler, startUpdate(17, 42, "/buy"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if billing.orderCalls != 1 || billing.paymentCalls != 1 {
+		t.Fatalf("billing calls = order %d payment %d, want 1 each", billing.orderCalls, billing.paymentCalls)
+	}
+	if billing.orderKey != "tg:17:order" || billing.paymentKey != "tg:17:payment" {
+		t.Fatalf("idempotency keys = %q %q", billing.orderKey, billing.paymentKey)
+	}
+	messages := telegram.messagesSnapshot()
+	if len(messages) != 1 || !strings.Contains(messages[0], "https://pay.invalid/payment") {
+		t.Fatalf("messages = %#v", messages)
+	}
+}
+
+func TestWebhookBuyWithoutConsentPromptsInsteadOfRetrying(t *testing.T) {
+	handler := NewWebhookHandlerWithCommerce(Config{WebhookSecret: "secret", ConsentVersion: "terms-v1", TermsURL: "https://example.invalid/terms/terms-v1"}, &fakeIdentity{}, &fakeCatalog{}, &fakeBilling{}, &fakeTelegram{}, newMemoryStore(), newMemoryStore(), nil, zap.NewNop())
+
+	rec := postUpdate(handler, startUpdate(18, 42, "/buy"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	state, _ := handler.fsm.GetState(context.Background(), 42)
+	if state != StateAwaitingConsent {
+		t.Fatalf("state = %q, want %q", state, StateAwaitingConsent)
+	}
+	if messages := handler.telegram.(*fakeTelegram).messagesSnapshot(); len(messages) != 1 || !strings.Contains(messages[0], "terms-v1") {
+		t.Fatalf("messages = %#v", messages)
+	}
+}
+
 func TestWebhookBlockedUserDoesNotEnterConsentFlow(t *testing.T) {
 	handler := newTestHandler(t)
 	identity := handler.identity.(*fakeIdentity)
@@ -263,6 +304,7 @@ type fakeIdentity struct {
 	accepts       int
 	consentChecks int
 	status        string
+	consented     bool
 }
 
 func (f *fakeIdentity) UpsertTelegramIdentity(context.Context, TelegramProfile) (IdentityUser, error) {
@@ -276,7 +318,7 @@ func (f *fakeIdentity) UpsertTelegramIdentity(context.Context, TelegramProfile) 
 
 func (f *fakeIdentity) HasConsent(context.Context, string, string, string) (bool, error) {
 	f.consentChecks++
-	return false, nil
+	return f.consented, nil
 }
 
 func (f *fakeIdentity) AcceptConsent(context.Context, string, string, string) error {
@@ -292,6 +334,39 @@ type fakeTelegram struct {
 	startedOnce sync.Once
 	release     chan struct{}
 }
+
+type fakeCatalog struct {
+	plans []Plan
+	err   error
+}
+
+func (f *fakeCatalog) ListPlans(context.Context) ([]Plan, error) {
+	return append([]Plan(nil), f.plans...), f.err
+}
+
+type fakeBilling struct {
+	order        Order
+	payment      Payment
+	err          error
+	orderCalls   int
+	paymentCalls int
+	orderKey     string
+	paymentKey   string
+}
+
+func (f *fakeBilling) CreateOrder(_ context.Context, _, _, _, _, idempotencyKey string) (Order, error) {
+	f.orderCalls++
+	f.orderKey = idempotencyKey
+	return f.order, f.err
+}
+
+func (f *fakeBilling) CreatePayment(_ context.Context, _, _, idempotencyKey string) (Payment, error) {
+	f.paymentCalls++
+	f.paymentKey = idempotencyKey
+	return f.payment, f.err
+}
+
+func stringPointer(value string) *string { return &value }
 
 func (f *fakeTelegram) SendMessage(_ context.Context, _ int64, text string) error {
 	f.mu.Lock()

@@ -1,6 +1,6 @@
 # Initial Threat Model
 
-Method: STRIDE-inspired initial model for Stage 0. This file must be expanded before production and reviewed again before connecting production VPS or real payment credentials.
+Method: STRIDE-inspired model updated for Stage 3. It must be reviewed again before connecting production VPS or real payment credentials.
 
 ## Scope
 
@@ -79,6 +79,8 @@ Mitigation:
 - Verify provider payment ID, status, amount, currency, shop/account, and metadata.
 - Transition payment/order and write outbox in one PostgreSQL transaction.
 - Never activate access from webhook payload alone.
+- Accept only sandbox objects for the configured account and exact internal order/payment metadata.
+- Keep local terminal state monotonic when delayed notifications disagree with current provider state.
 
 ### T2 - Subscription bearer token leaks through logs
 
@@ -196,6 +198,29 @@ Mitigation:
 - Error strings never include request URL, token, or provider response description.
 - Bot API `ok=false` and `parameters.retry_after` are parsed without logging raw response bodies.
 - Redaction tests cover a synthetic `url.Error` containing the bot token.
+
+### T12 - Ambiguous payment create produces multiple provider objects
+
+Risk: YooKassa commits a payment but the response times out or returns `5xx`; a retry with a new key creates another payable object.
+
+Mitigation:
+
+- Generate and persist a UUID v4 provider idempotency key before the first network call.
+- Move ambiguous results to durable `verification_pending`, never to succeeded or failed by assumption.
+- Reconciliation repeats create with the same key inside a 23-hour window and validates the returned object.
+- One payment per order and provider-key uniqueness prevent parallel local creation.
+- Fake-provider E2E forces an ambiguous response after commit and asserts one provider object.
+
+### T13 - Provider payload or confirmation URL leaks from billing
+
+Risk: credentials, provider response bodies, webhook buyer fields, or confirmation URLs enter logs, traces, metrics, Kafka, or long-lived diagnostics.
+
+Mitigation:
+
+- YooKassa adapter returns classified errors without wrapping credential-bearing URLs or raw bodies.
+- Webhook ingress persists only event type, provider object ID, and observed status.
+- Confirmation URL is excluded from events and forbidden from structured logs, metrics, and traces.
+- Provider responses are body-limited; error and redaction tests include synthetic secrets.
 
 ## Initial Security Requirements
 

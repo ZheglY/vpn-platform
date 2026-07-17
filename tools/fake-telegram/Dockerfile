@@ -6,7 +6,7 @@ FROM golang:${GO_VERSION}-alpine@${GO_BUILDER_DIGEST} AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
-COPY . .
+COPY tools/fake-telegram/ tools/fake-telegram/
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -trimpath \
     -ldflags="-s -w" \

@@ -21,6 +21,8 @@ type WebhookHandler struct {
 	consentVersion string
 	termsURL       string
 	identity       IdentityClient
+	catalog        CatalogClient
+	billing        BillingClient
 	telegram       TelegramClient
 	dedupe         DedupeStore
 	fsm            FSMStore
@@ -39,6 +41,10 @@ type Config struct {
 }
 
 func NewWebhookHandler(cfg Config, identity IdentityClient, telegram TelegramClient, dedupe DedupeStore, fsm FSMStore, rateLimiter RateLimiter, logger *zap.Logger) *WebhookHandler {
+	return NewWebhookHandlerWithCommerce(cfg, identity, nil, nil, telegram, dedupe, fsm, rateLimiter, logger)
+}
+
+func NewWebhookHandlerWithCommerce(cfg Config, identity IdentityClient, catalog CatalogClient, billing BillingClient, telegram TelegramClient, dedupe DedupeStore, fsm FSMStore, rateLimiter RateLimiter, logger *zap.Logger) *WebhookHandler {
 	rateLimitKey := cfg.RateLimitKey
 	if rateLimitKey == "" {
 		rateLimitKey = "telegram-webhook"
@@ -48,6 +54,8 @@ func NewWebhookHandler(cfg Config, identity IdentityClient, telegram TelegramCli
 		consentVersion: cfg.ConsentVersion,
 		termsURL:       cfg.TermsURL,
 		identity:       identity,
+		catalog:        catalog,
+		billing:        billing,
 		telegram:       telegram,
 		dedupe:         dedupe,
 		fsm:            fsm,
@@ -180,6 +188,24 @@ func (h *WebhookHandler) process(r *http.Request, update Update) error {
 			return err
 		}
 		return h.telegram.SendMessage(r.Context(), update.Message.Chat.ID, mainMenuText())
+	case "/plans", "plans":
+		accepted, err := h.ensureConsent(r.Context(), user.UserID, profile.TelegramUserID, update.Message.Chat.ID)
+		if err != nil {
+			return err
+		}
+		if !accepted {
+			return nil
+		}
+		return h.sendPlans(r.Context(), update.Message.Chat.ID)
+	case "/buy", "buy":
+		accepted, err := h.ensureConsent(r.Context(), user.UserID, profile.TelegramUserID, update.Message.Chat.ID)
+		if err != nil {
+			return err
+		}
+		if !accepted {
+			return nil
+		}
+		return h.createPayment(r.Context(), update, user.UserID)
 	}
 
 	state, err := h.fsm.GetState(r.Context(), profile.TelegramUserID)
@@ -197,6 +223,65 @@ func (h *WebhookHandler) process(r *http.Request, update Update) error {
 	}
 
 	return h.telegram.SendMessage(r.Context(), update.Message.Chat.ID, "Send /start to open the menu.")
+}
+
+func (h *WebhookHandler) ensureConsent(ctx context.Context, userID string, telegramUserID, chatID int64) (bool, error) {
+	accepted, err := h.identity.HasConsent(ctx, userID, "terms", h.consentVersion)
+	if err != nil {
+		return false, err
+	}
+	if !accepted {
+		if err := h.fsm.SetState(ctx, telegramUserID, StateAwaitingConsent); err != nil {
+			return false, err
+		}
+		if err := h.telegram.SendMessage(ctx, chatID, consentPrompt(h.consentVersion, h.termsURL)); err != nil {
+			return false, err
+		}
+	}
+	return accepted, nil
+}
+
+func (h *WebhookHandler) sendPlans(ctx context.Context, chatID int64) error {
+	if h.catalog == nil {
+		return h.telegram.SendMessage(ctx, chatID, "Plans are temporarily unavailable.")
+	}
+	plans, err := h.catalog.ListPlans(ctx)
+	if err != nil {
+		return err
+	}
+	if len(plans) == 0 {
+		return h.telegram.SendMessage(ctx, chatID, "No plans are currently available.")
+	}
+	plan := plans[0]
+	return h.telegram.SendMessage(ctx, chatID, formatPlan(plan)+"\nSend /buy to create a sandbox payment.")
+}
+
+func (h *WebhookHandler) createPayment(ctx context.Context, update Update, userID string) error {
+	if h.catalog == nil || h.billing == nil {
+		return h.telegram.SendMessage(ctx, update.Message.Chat.ID, "Payments are temporarily unavailable.")
+	}
+	plans, err := h.catalog.ListPlans(ctx)
+	if err != nil {
+		return err
+	}
+	if len(plans) == 0 || len(plans[0].Regions) == 0 {
+		return h.telegram.SendMessage(ctx, update.Message.Chat.ID, "No plans are currently available.")
+	}
+	plan := plans[0]
+	orderKey := fmt.Sprintf("tg:%d:order", update.UpdateID)
+	order, err := h.billing.CreateOrder(ctx, userID, plan.PlanID, plan.Regions[0], h.consentVersion, orderKey)
+	if err != nil {
+		return err
+	}
+	paymentKey := fmt.Sprintf("tg:%d:payment", update.UpdateID)
+	payment, err := h.billing.CreatePayment(ctx, userID, order.OrderID, paymentKey)
+	if err != nil {
+		return err
+	}
+	if payment.ConfirmationURL == nil {
+		return h.telegram.SendMessage(ctx, update.Message.Chat.ID, "Payment creation is being reconciled. Send /buy again shortly to check it.")
+	}
+	return h.telegram.SendMessage(ctx, update.Message.Chat.ID, "Complete the sandbox payment: "+*payment.ConfirmationURL)
 }
 
 func (h *WebhookHandler) validSecret(value string) bool {
@@ -258,7 +343,13 @@ func consentPrompt(version, termsURL string) string {
 }
 
 func mainMenuText() string {
-	return "Menu: plans, subscription status, help."
+	return "Menu: /plans, /buy, subscription status, help."
+}
+
+func formatPlan(plan Plan) string {
+	major := plan.AmountMinor / 100
+	minor := plan.AmountMinor % 100
+	return fmt.Sprintf("%s: %d days, %d.%02d %s, regions: %s", plan.Name, plan.DurationDays, major, minor, plan.Currency, strings.Join(plan.Regions, ", "))
 }
 
 func unavailableText() string {

@@ -9,6 +9,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-vpn_platform}
       IDENTITY_DB_PASSWORD: ${IDENTITY_DB_PASSWORD:?set IDENTITY_DB_PASSWORD}
+      CATALOG_DB_PASSWORD: ${CATALOG_DB_PASSWORD:?set CATALOG_DB_PASSWORD}
+      BILLING_DB_PASSWORD: ${BILLING_DB_PASSWORD:?set BILLING_DB_PASSWORD}
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     healthcheck:
@@ -67,7 +69,23 @@ services:
     networks:
       - backend
 
+  kafka-init:
+    image: apache/kafka:4.3.1@sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837
+    profiles: ["app"]
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic billing.payment.succeeded.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic billing.payment.canceled.v1 --partitions 3 --replication-factor 1
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - backend
+
   identity-migrate:
+    image: vpn-service/migrate:local
     build:
       context: .
       dockerfile: tools/migrate/Dockerfile
@@ -85,6 +103,7 @@ services:
       - backend
 
   identity-service:
+    image: vpn-service/identity-service:local
     build:
       context: .
       dockerfile: services/identity/Dockerfile
@@ -119,7 +138,171 @@ services:
     networks:
       - backend
 
+  catalog-migrate:
+    image: vpn-service/migrate:local
+    build:
+      context: .
+      dockerfile: tools/migrate/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      DATABASE_URL: postgres://catalog_app:${CATALOG_DB_PASSWORD:?set CATALOG_DB_PASSWORD}@postgres:5432/catalog_service?sslmode=disable
+      MIGRATIONS_DIR: /migrations/catalog
+      MIGRATION_COMMAND: up
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+
+  catalog-seed:
+    image: vpn-service/catalog-service:local
+    build:
+      context: .
+      dockerfile: services/catalog/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    command: ["seed"]
+    profiles: ["app"]
+    environment:
+      APP_ENV: local
+      DATABASE_URL: postgres://catalog_app:${CATALOG_DB_PASSWORD:?set CATALOG_DB_PASSWORD}@postgres:5432/catalog_service?sslmode=disable
+      INTERNAL_AUTH_MODE: dev-insecure
+      CATALOG_SEED_PLAN_ID: ${CATALOG_SEED_PLAN_ID:-vpn-30d-v1}
+      CATALOG_SEED_NAME: ${CATALOG_SEED_NAME:-VPN 30 days}
+      CATALOG_SEED_AMOUNT_MINOR: ${CATALOG_SEED_AMOUNT_MINOR:-29900}
+      CATALOG_SEED_CURRENCY: ${CATALOG_SEED_CURRENCY:-RUB}
+      CATALOG_SEED_REGIONS: ${CATALOG_SEED_REGIONS:-ru-test}
+    depends_on:
+      catalog-migrate:
+        condition: service_completed_successfully
+    networks:
+      - backend
+
+  catalog-service:
+    image: vpn-service/catalog-service:local
+    build:
+      context: .
+      dockerfile: services/catalog/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      APP_ENV: local
+      LOG_LEVEL: info
+      HTTP_ADDR: ":8083"
+      DATABASE_URL: postgres://catalog_app:${CATALOG_DB_PASSWORD:?set CATALOG_DB_PASSWORD}@postgres:5432/catalog_service?sslmode=disable
+      INTERNAL_AUTH_MODE: mtls
+      MTLS_TRUST_DOMAIN: vpn-service
+      MTLS_NAMESPACE: local
+      SERVER_TLS_CERT_FILE: /run/mtls/catalog-service.crt
+      SERVER_TLS_KEY_FILE: /run/mtls/catalog-service.key
+      CLIENT_CA_FILE: /run/mtls/ca.crt
+      HEALTHCHECK_CA_FILE: /run/mtls/ca.crt
+    ports:
+      - "127.0.0.1:${CATALOG_HTTP_PORT:-8083}:8083"
+    volumes:
+      - ./secrets/dev-mtls/ca.crt:/run/mtls/ca.crt:ro
+      - ./secrets/dev-mtls/catalog-service.crt:/run/mtls/catalog-service.crt:ro
+      - ./secrets/dev-mtls/catalog-service.key:/run/mtls/catalog-service.key:ro
+    depends_on:
+      catalog-seed:
+        condition: service_completed_successfully
+    networks:
+      - backend
+
+  billing-migrate:
+    image: vpn-service/migrate:local
+    build:
+      context: .
+      dockerfile: tools/migrate/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      DATABASE_URL: postgres://billing_app:${BILLING_DB_PASSWORD:?set BILLING_DB_PASSWORD}@postgres:5432/billing_service?sslmode=disable
+      MIGRATIONS_DIR: /migrations/billing
+      MIGRATION_COMMAND: up
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+
+  yookassa-api:
+    image: vpn-service/fake-yookassa:local
+    build:
+      context: .
+      dockerfile: tools/fake-yookassa/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      HTTP_ADDR: ":8085"
+      FAKE_YOOKASSA_SHOP_ID: ${YOOKASSA_SHOP_ID:-test-shop}
+      FAKE_YOOKASSA_SECRET_KEY: ${YOOKASSA_SECRET_KEY:?set YOOKASSA_SECRET_KEY}
+    ports:
+      - "127.0.0.1:${YOOKASSA_HTTP_PORT:-8085}:8085"
+    networks:
+      - backend
+
+  billing-service:
+    image: vpn-service/billing-service:local
+    build:
+      context: .
+      dockerfile: services/billing/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      APP_ENV: local
+      LOG_LEVEL: info
+      HTTP_ADDR: ":8084"
+      DATABASE_URL: postgres://billing_app:${BILLING_DB_PASSWORD:?set BILLING_DB_PASSWORD}@postgres:5432/billing_service?sslmode=disable
+      IDENTITY_BASE_URL: https://identity-service:8080
+      CATALOG_BASE_URL: https://catalog-service:8083
+      INTERNAL_AUTH_MODE: mtls
+      INTERNAL_CLIENT_CERT_FILE: /run/mtls/billing-service.crt
+      INTERNAL_CLIENT_KEY_FILE: /run/mtls/billing-service.key
+      INTERNAL_SERVER_CA_FILE: /run/mtls/ca.crt
+      MTLS_TRUST_DOMAIN: vpn-service
+      MTLS_NAMESPACE: local
+      SERVER_TLS_CERT_FILE: /run/mtls/billing-service.crt
+      SERVER_TLS_KEY_FILE: /run/mtls/billing-service.key
+      CLIENT_CA_FILE: /run/mtls/ca.crt
+      HEALTHCHECK_CA_FILE: /run/mtls/ca.crt
+      YOOKASSA_BASE_URL: http://yookassa-api:8085
+      YOOKASSA_SHOP_ID: ${YOOKASSA_SHOP_ID:-test-shop}
+      YOOKASSA_SECRET_KEY: ${YOOKASSA_SECRET_KEY:?set YOOKASSA_SECRET_KEY}
+      PAYMENT_RETURN_URL: ${PAYMENT_RETURN_URL:-https://example.invalid/payment-return}
+      KAFKA_BROKERS: kafka:9092
+      BILLING_WORKER_POLL_INTERVAL: 250ms
+      BILLING_WORKER_RETRY_DELAY: 500ms
+    ports:
+      - "127.0.0.1:${BILLING_HTTP_PORT:-8084}:8084"
+    volumes:
+      - ./secrets/dev-mtls/ca.crt:/run/mtls/ca.crt:ro
+      - ./secrets/dev-mtls/billing-service.crt:/run/mtls/billing-service.crt:ro
+      - ./secrets/dev-mtls/billing-service.key:/run/mtls/billing-service.key:ro
+    depends_on:
+      billing-migrate:
+        condition: service_completed_successfully
+      identity-service:
+        condition: service_healthy
+      catalog-service:
+        condition: service_healthy
+      yookassa-api:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    networks:
+      - backend
+
   telegram-api:
+    image: vpn-service/fake-telegram:local
     build:
       context: .
       dockerfile: tools/fake-telegram/Dockerfile
@@ -135,6 +318,7 @@ services:
       - backend
 
   telegram-bot:
+    image: vpn-service/telegram-bot:local
     build:
       context: .
       dockerfile: services/telegram-bot/Dockerfile
@@ -149,6 +333,8 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
       REDIS_DB: 0
       IDENTITY_BASE_URL: https://identity-service:8080
+      CATALOG_BASE_URL: https://catalog-service:8083
+      BILLING_BASE_URL: https://billing-service:8084
       IDENTITY_AUTH_MODE: mtls
       IDENTITY_CLIENT_CERT_FILE: /run/mtls/telegram-bot.crt
       IDENTITY_CLIENT_KEY_FILE: /run/mtls/telegram-bot.key
@@ -168,6 +354,10 @@ services:
       redis:
         condition: service_healthy
       identity-service:
+        condition: service_healthy
+      catalog-service:
+        condition: service_healthy
+      billing-service:
         condition: service_healthy
       telegram-api:
         condition: service_healthy

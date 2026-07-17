@@ -1,19 +1,22 @@
 asyncapi: 3.1.0
 info:
   title: VPN Subscription Platform Events
-  version: 0.0.0-stage0
+  version: 0.3.0-stage3
   description: >
-    Stage 0 AsyncAPI skeleton. Messages are not implemented yet. Every message
-    uses the common envelope shape and a message-specific data schema.
+    Stage 3 event contract. Billing payment terminal events are implemented
+    through a transactional outbox. Later subscription and access messages remain
+    skeletons and are not production commitments.
 defaultContentType: application/json
 channels:
   billing.payment.succeeded.v1:
     address: billing.payment.succeeded.v1
+    x-contract-status: implemented-stage3
     messages:
       paymentSucceeded:
         $ref: '#/components/messages/BillingPaymentSucceededV1'
   billing.payment.canceled.v1:
     address: billing.payment.canceled.v1
+    x-contract-status: implemented-stage3
     messages:
       paymentCanceled:
         $ref: '#/components/messages/BillingPaymentCanceledV1'
@@ -87,7 +90,13 @@ operations:
     action: receive
     channel:
       $ref: '#/channels/billing.payment.succeeded.v1'
-    summary: subscription-service consumes payment success through inbox.
+    summary: Future Stage 4 subscription-service consumes payment success through inbox.
+    x-contract-status: skeleton-stage4
+  publishBillingPaymentCanceled:
+    action: send
+    channel:
+      $ref: '#/channels/billing.payment.canceled.v1'
+    summary: billing-service publishes a provider-verified payment cancellation.
   publishAccessProvisionRequest:
     action: send
     channel:
@@ -116,10 +125,12 @@ components:
             type: string
             pattern: '^user:[0-9a-fA-F-]{36}$'
       x-owner: billing-service
+      x-contract-status: implemented-stage3
+      x-json-schema: schemas/billing.payment.succeeded.v1.schema.json
       x-partition-key: user:{user_id}
       x-consumers: [subscription-service]
-      x-retry: outbox retry with bounded exponential backoff and jitter
-      x-dlq: billing.payment.succeeded.v1.dlq
+      x-retry: durable outbox retry with exponential backoff capped at five minutes
+      x-dlq-policy: Stage 3 never discards an unpublished payment event; exhausted or poison records remain visible in the outbox for operator reconciliation. A Kafka DLQ is deferred until a consumer exists.
     BillingPaymentCanceledV1:
       name: billing.payment.canceled.v1
       payload:
@@ -130,8 +141,12 @@ components:
             type: string
             pattern: '^user:[0-9a-fA-F-]{36}$'
       x-owner: billing-service
+      x-contract-status: implemented-stage3
+      x-json-schema: schemas/billing.payment.canceled.v1.schema.json
       x-partition-key: user:{user_id}
       x-consumers: [notification-service]
+      x-retry: durable outbox retry with exponential backoff capped at five minutes
+      x-dlq-policy: Stage 3 never discards an unpublished payment event; exhausted or poison records remain visible in the outbox for operator reconciliation. A Kafka DLQ is deferred until a consumer exists.
     BillingRefundSucceededV1:
       name: billing.refund.succeeded.v1
       payload:

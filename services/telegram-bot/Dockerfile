@@ -6,7 +6,8 @@ FROM golang:${GO_VERSION}-alpine@${GO_BUILDER_DIGEST} AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
-COPY . .
+COPY internal/ internal/
+COPY services/telegram-bot/ services/telegram-bot/
 ARG VERSION=dev
 ARG COMMIT=none
 ARG DATE=unknown

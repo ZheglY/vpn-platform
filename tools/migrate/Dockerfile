@@ -6,7 +6,7 @@ FROM golang:${GO_VERSION}-alpine@${GO_BUILDER_DIGEST} AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
-COPY . .
+COPY tools/migrate/ tools/migrate/
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -trimpath \
     -ldflags="-s -w" \
@@ -16,5 +16,7 @@ FROM gcr.io/distroless/static-debian12:nonroot@${DISTROLESS_DIGEST}
 WORKDIR /
 COPY --from=build /out/migrate /migrate
 COPY services/identity/migrations /migrations/identity
+COPY services/catalog/migrations /migrations/catalog
+COPY services/billing/migrations /migrations/billing
 USER nonroot:nonroot
 ENTRYPOINT ["/migrate"]

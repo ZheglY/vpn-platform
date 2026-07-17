@@ -78,13 +78,18 @@ asyncapi:
 	npm run lint:asyncapi
 
 contracts: openapi asyncapi
+	npm run lint:events
 
 docker-build:
 	docker build -f services/identity/Dockerfile -t vpn-service/identity-service:local .
+	docker build -f services/catalog/Dockerfile -t vpn-service/catalog-service:local .
+	docker build -f services/billing/Dockerfile -t vpn-service/billing-service:local .
 	docker build -f services/telegram-bot/Dockerfile -t vpn-service/telegram-bot:local .
 
 image-scan:
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/identity-service:local
+	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/catalog-service:local
+	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/billing-service:local
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/telegram-bot:local
 
 compose-config:
@@ -92,7 +97,7 @@ ifeq ($(OS),Windows_NT)
 	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/compose-config.ps1
 else
 	bash scripts/dev-mtls.sh
-	POSTGRES_USER=vpn_local POSTGRES_PASSWORD=local-compose-password POSTGRES_DB=vpn_platform REDIS_PASSWORD=local-compose-redis KAFKA_PORT=9094 IDENTITY_DB_PASSWORD=local-compose-identity TELEGRAM_WEBHOOK_SECRET=local-compose-webhook-secret TELEGRAM_BOT_TOKEN=local-compose-fake-bot-token FAKE_TELEGRAM_SEND_DELAY=250ms TERMS_URL=https://example.invalid/terms/terms-v1 docker compose --profile core --profile app config --quiet
+	POSTGRES_USER=vpn_local POSTGRES_PASSWORD=local-compose-password POSTGRES_DB=vpn_platform REDIS_PASSWORD=local-compose-redis KAFKA_PORT=9094 IDENTITY_DB_PASSWORD=local-compose-identity CATALOG_DB_PASSWORD=local-compose-catalog BILLING_DB_PASSWORD=local-compose-billing TELEGRAM_WEBHOOK_SECRET=local-compose-webhook-secret TELEGRAM_BOT_TOKEN=local-compose-fake-bot-token FAKE_TELEGRAM_SEND_DELAY=250ms TERMS_URL=https://example.invalid/terms/terms-v1 YOOKASSA_SHOP_ID=test-shop YOOKASSA_SECRET_KEY=local-compose-yookassa-key PAYMENT_RETURN_URL=https://example.invalid/payment-return docker compose --profile core --profile app config --quiet
 endif
 
 compose-smoke:

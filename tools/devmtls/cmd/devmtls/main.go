@@ -85,6 +85,21 @@ func run(outDir string) error {
 			spiffeName: "identity-health",
 			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		},
+		{
+			name:       "catalog-service",
+			commonName: "catalog-service.local",
+			dnsNames:   []string{"catalog-service", "catalog-service.local", "localhost"},
+			ipAddrs:    []net.IP{net.ParseIP("127.0.0.1")},
+			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		},
+		{
+			name:       "billing-service",
+			commonName: "billing-service.local",
+			dnsNames:   []string{"billing-service", "billing-service.local", "localhost"},
+			ipAddrs:    []net.IP{net.ParseIP("127.0.0.1")},
+			spiffeName: "billing-service",
+			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		},
 	}
 
 	for _, spec := range specs {

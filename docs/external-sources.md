@@ -1,6 +1,6 @@
 # External Sources Checked
 
-Checked on 2026-07-16.
+Checked on 2026-07-17.
 
 These sources are used only to shape Stage 0 decisions. Implementation stages must re-check the relevant official documentation before coding an integration.
 
@@ -13,6 +13,10 @@ These sources are used only to shape Stage 0 decisions. Implementation stages mu
 | YooKassa payment process | https://yookassa.ru/developers/payment-acceptance/getting-started/payment-process | Payment creation uses authentication, `Idempotence-Key`, amount, confirmation data, and status transitions such as `pending`, `succeeded`, and `canceled`. |
 | YooKassa webhooks | https://yookassa.ru/developers/using-api/webhooks | Webhooks report object status changes such as `payment.succeeded`, `payment.canceled`, and `refund.succeeded`; receipt must be acknowledged. |
 | YooKassa response handling | https://yookassa.ru/developers/using-api/response-handling/http-codes | Ambiguous provider errors require retry with the same idempotency key or GET verification rather than assuming success or failure. |
+| YooKassa API interaction and idempotency | https://yookassa.ru/developers/using-api/interaction-format | Stage 3 re-checked `Idempotence-Key`: maximum 64 characters, UUID v4 is recommended, and a result is retained for 24 hours. The implementation persists a UUID before I/O and uses a 23-hour reconciliation deadline. |
+| YooKassa quick start | https://yookassa.ru/developers/payment-acceptance/getting-started/quick-start | Stage 3 uses Basic Auth, integer-to-decimal amount rendering, immediate capture, redirect confirmation, and minimal internal metadata. |
+| YooKassa testing | https://yookassa.ru/developers/payment-acceptance/testing-and-going-live/testing | Stage 3 requires a test shop/payment object and rejects any provider response without `test=true`; no real money or production credentials are used. |
+| YooKassa webhook delivery | https://yookassa.ru/developers/using-api/webhooks | Stage 3 acknowledges only after durable normalized inbox storage and verifies current object state through an authenticated API request before a terminal effect. Non-2xx delivery may be retried for up to 24 hours. |
 | Happ developer docs | https://www.happ.su/main/dev-docs | Happ supports subscription delivery through a URL returning proxy links and parameters. |
 | Happ app management | https://www.happ.su/main/dev-docs/app-management | Happ accepts subscription parameters via headers or body, including `profile-title`, `subscription-userinfo`, `support-url`, and fallback behavior. A fallback URL may be used if the primary URL returns 300-599 or times out. |
 | Happ link examples | https://www.happ.su/main/dev-docs/examples-of-links-and-parameters | Subscription body compatibility must be verified with official examples during Stage 5. |

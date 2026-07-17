@@ -2,20 +2,22 @@
 
 Production-grade portfolio project for selling prepaid VPN subscriptions through a Telegram bot and delivering Happ-compatible subscription URLs backed by Xray-core nodes.
 
-Current milestone: Stage 2 identity and Telegram onboarding.
+Current milestone: Stage 3 catalog, billing, and YooKassa sandbox.
 
 ## What Exists Now
 
 - One root Go module.
 - Shared technical platform packages under `internal/platform`.
 - `identity-service` with Telegram identity, consent persistence, health, version, and metrics endpoints.
-- `telegram-bot` with Telegram webhook secret validation, update dedupe, Redis FSM, `/start`, consent prompt, and health/version/metrics endpoints.
-- Local Compose skeleton for PostgreSQL, Kafka in KRaft mode, Redis, identity-service, telegram-bot, and a fake Telegram Bot API.
+- `catalog-service` with immutable versioned plans, prices, regions, and published Telegram catalog queries.
+- `billing-service` with immutable order snapshots, idempotent payment creation, YooKassa sandbox verification, webhook inbox, reconciliation, and transactional Kafka outbox.
+- `telegram-bot` with Telegram webhook dedupe, consent, `/plans`, and `/buy` sandbox purchase flow.
+- Local Compose stack with isolated service databases, Kafka, Redis, fake Telegram API, and fake YooKassa API.
 - Goose migration runner tool.
 - OpenAPI/AsyncAPI contract linting.
 - Makefile and CI verification workflow, including Go vulnerability checks, secret scan, image build, and image scan.
 
-No payment logic, tariff catalog, VPN provisioning, access credential delivery, or subscription lifecycle exists yet.
+No real payments, refunds, subscription lifecycle, VPN provisioning, or access credential delivery exist yet.
 
 ## Requirements
 
@@ -40,7 +42,7 @@ Copy-Item .env.example .env
 make compose-up
 ```
 
-The identity service listens on `https://localhost:8080` in local Compose and requires generated development mTLS certificates. Use `make compose-smoke` or the container healthcheck for routine checks:
+Internal service endpoints use generated development mTLS certificates. Use `make compose-smoke` or container healthchecks for routine checks:
 
 - `GET /livez`
 - `GET /readyz`
@@ -55,7 +57,9 @@ The telegram-bot service listens on `http://localhost:8081` by default:
 - `GET /version`
 - `GET /metrics`
 
-`make compose-smoke` sends synthetic Telegram updates through the full local Stage 2 path and verifies identity persistence, consent persistence, duplicate handling, Redis behavior, fake Telegram side effects, and mTLS authorization.
+Catalog and billing listen on `https://localhost:8083` and `https://localhost:8084`. The YooKassa webhook is public TLS ingress on billing; internal order and payment endpoints require an allowlisted service certificate.
+
+`make compose-smoke` exercises onboarding and a complete sandbox purchase. It verifies ambiguous provider response recovery, repeated purchase clicks, duplicate and out-of-order webhooks, provider GET verification, a single terminal database transition, and one Kafka event.
 
 ## Repository Rules
 

@@ -1,14 +1,14 @@
 openapi: 3.1.0
 info:
   title: VPN Subscription Platform API
-  version: 0.2.0-stage2
+  version: 0.3.0-stage3
   license:
     name: UNLICENSED
     identifier: LicenseRef-UNLICENSED
   description: >
-    Stage 2 contract. Identity and Telegram onboarding endpoints marked
-    `implemented-stage2` are implemented; other operations remain future
-    skeletons and are not production commitments yet.
+    Stage 3 contract. Identity, Telegram onboarding, catalog, order, payment,
+    and YooKassa webhook operations marked as implemented are executable.
+    Later milestone operations remain skeletons and are not production commitments.
 servers:
   - url: https://api.example.invalid
     description: Public API placeholder
@@ -113,6 +113,7 @@ paths:
       x-contract-status: implemented-stage2
       security:
         - ServiceMTLS: []
+      x-allowed-service-identities: [telegram-bot, billing-service, admin-cli]
       parameters:
         - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/UserId'
@@ -168,7 +169,7 @@ paths:
       x-contract-status: implemented-stage2
       security:
         - ServiceMTLS: []
-      x-allowed-service-identities: [telegram-bot]
+      x-allowed-service-identities: [telegram-bot, billing-service]
       parameters:
         - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/UserId'
@@ -237,7 +238,7 @@ paths:
       tags: [Catalog]
       summary: List published plans
       operationId: listPlans
-      x-contract-status: skeleton
+      x-contract-status: implemented-stage3
       security: []
       parameters:
         - $ref: '#/components/parameters/RequestId'
@@ -273,12 +274,54 @@ paths:
           $ref: '#/components/responses/Error'
         default:
           $ref: '#/components/responses/Error'
+  /internal/v1/plans/{plan_id}:
+    get:
+      tags: [Catalog]
+      summary: Get an exact published plan for an order snapshot
+      operationId: getPublishedPlan
+      x-contract-status: implemented-stage3
+      security:
+        - ServiceMTLS: []
+      x-allowed-service-identities: [billing-service]
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: plan_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - name: region
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 2
+            maxLength: 64
+      responses:
+        '200':
+          description: Published immutable plan version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanSummary'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
   /internal/v1/users/{user_id}/orders:
     post:
       tags: [Billing]
       summary: Create an order for a Telegram user through the bot service
       operationId: createUserOrder
-      x-contract-status: skeleton
+      x-contract-status: implemented-stage3
       security:
         - ServiceMTLS: []
       x-allowed-service-identities: [telegram-bot]
@@ -297,6 +340,12 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateOrderRequest'
       responses:
+        '200':
+          description: Idempotent replay or the existing compatible open order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
         '201':
           description: Order created
           content:
@@ -307,6 +356,8 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
         '409':
           $ref: '#/components/responses/Conflict'
         default:
@@ -316,7 +367,7 @@ paths:
       tags: [Billing]
       summary: Get an order for a specific user
       operationId: getUserOrder
-      x-contract-status: skeleton
+      x-contract-status: implemented-stage3
       security:
         - ServiceMTLS: []
       x-allowed-service-identities: [telegram-bot, admin-cli]
@@ -344,7 +395,7 @@ paths:
       tags: [Billing]
       summary: Create or return a payment for a user order
       operationId: createUserOrderPayment
-      x-contract-status: skeleton
+      x-contract-status: implemented-stage3
       security:
         - ServiceMTLS: []
       x-allowed-service-identities: [telegram-bot]
@@ -354,8 +405,20 @@ paths:
         - $ref: '#/components/parameters/UserId'
         - $ref: '#/components/parameters/OrderId'
       responses:
+        '200':
+          description: Idempotent replay of an existing payment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
         '201':
-          description: Payment created
+          description: Payment created and provider redirect is available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '202':
+          description: Provider result is ambiguous and durable reconciliation is pending
           content:
             application/json:
               schema:
@@ -363,6 +426,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '404':
           $ref: '#/components/responses/Error'
         '409':
           $ref: '#/components/responses/Conflict'
@@ -373,25 +438,49 @@ paths:
       tags: [Webhooks]
       summary: Receive YooKassa webhook notification
       operationId: receiveYooKassaWebhook
-      x-contract-status: skeleton
+      x-contract-status: implemented-stage3
       x-provider-verification-required: true
       security: []
       description: >
-        Public ingress endpoint. The payload is normalized and durably stored,
-        then an idempotent worker verifies the payment/refund with YooKassa API
-        before any fulfillment effect.
+        Public ingress endpoint. Only provider object ID, event type, and observed
+        status are normalized into a durable inbox. An idempotent worker retrieves
+        the current payment from YooKassa before any state transition or event.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
-              description: Raw YooKassa notification. Must be body-limited and never logged in full.
+              required: [type, event, object]
+              additionalProperties: false
+              properties:
+                type:
+                  type: string
+                  const: notification
+                event:
+                  type: string
+                  enum: [payment.succeeded, payment.canceled]
+                object:
+                  type: object
+                  required: [id, status]
+                  additionalProperties: true
+                  description: Provider fields other than id and status are ignored and never persisted.
+                  properties:
+                    id:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                    status:
+                      type: string
+                      enum: [succeeded, canceled]
       responses:
         '200':
           description: Webhook stored or duplicate safely acknowledged
         '400':
+          $ref: '#/components/responses/Error'
+        '413':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
         default:
           $ref: '#/components/responses/Error'
@@ -751,16 +840,25 @@ components:
           type: boolean
     PlanSummary:
       type: object
-      required: [plan_id, duration_days, currency, amount_minor, region_policy, traffic_policy]
+      required: [plan_id, name, duration_days, grace_period_hours, currency, amount_minor, region_policy, traffic_policy, primary_nodes, failover_nodes, regions]
       additionalProperties: false
       properties:
         plan_id:
           type: string
+          minLength: 1
+          maxLength: 128
+        name:
+          type: string
+          minLength: 1
           maxLength: 128
         duration_days:
           type: integer
           minimum: 1
           maximum: 366
+        grace_period_hours:
+          type: integer
+          minimum: 0
+          maximum: 168
         currency:
           type: string
           minLength: 3
@@ -774,6 +872,63 @@ components:
         traffic_policy:
           type: string
           enum: [no_hard_cap]
+        primary_nodes:
+          type: integer
+          minimum: 1
+        failover_nodes:
+          type: integer
+          minimum: 0
+        regions:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 2
+            maxLength: 64
+    PlanSnapshot:
+      type: object
+      required: [plan_id, name, duration_days, grace_period_hours, amount_minor, currency, region, region_policy, traffic_policy, primary_nodes, failover_nodes]
+      additionalProperties: false
+      properties:
+        plan_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        duration_days:
+          type: integer
+          minimum: 1
+          maximum: 366
+        grace_period_hours:
+          type: integer
+          minimum: 0
+          maximum: 168
+        amount_minor:
+          type: integer
+          minimum: 1
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        region:
+          type: string
+          minLength: 2
+          maxLength: 64
+        region_policy:
+          type: string
+          enum: [single_region_with_failover]
+        traffic_policy:
+          type: string
+          enum: [no_hard_cap]
+        primary_nodes:
+          type: integer
+          minimum: 1
+        failover_nodes:
+          type: integer
+          minimum: 0
     CreateOrderRequest:
       type: object
       required: [plan_id, region, accepted_terms_version]
@@ -792,7 +947,7 @@ components:
           maxLength: 64
     Order:
       type: object
-      required: [order_id, user_id, status, amount_minor, currency, plan_snapshot]
+      required: [order_id, user_id, status, amount_minor, currency, accepted_terms_version, plan_snapshot, created_at]
       additionalProperties: false
       properties:
         order_id:
@@ -803,7 +958,7 @@ components:
           format: uuid
         status:
           type: string
-          enum: [created, payment_pending, paid, canceled, refunded]
+          enum: [created, payment_pending, paid, canceled]
         amount_minor:
           type: integer
           minimum: 0
@@ -811,11 +966,18 @@ components:
           type: string
           minLength: 3
           maxLength: 3
+        accepted_terms_version:
+          type: string
+          minLength: 1
+          maxLength: 64
         plan_snapshot:
-          $ref: '#/components/schemas/PlanSummary'
+          $ref: '#/components/schemas/PlanSnapshot'
+        created_at:
+          type: string
+          format: date-time
     Payment:
       type: object
-      required: [payment_id, order_id, status]
+      required: [payment_id, order_id, status, amount_minor, currency, created_at]
       additionalProperties: false
       properties:
         payment_id:
@@ -826,11 +988,23 @@ components:
           format: uuid
         status:
           type: string
-          enum: [created, pending, succeeded, canceled]
+          enum: [created, verification_pending, pending, succeeded, canceled, failed]
+        amount_minor:
+          type: integer
+          minimum: 1
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
         confirmation_url:
           type: string
           format: uri
           description: Sensitive enough to avoid logs.
+        paid_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
     Subscription:
       type: object
       required: [subscription_id, user_id, status]

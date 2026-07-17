@@ -19,7 +19,9 @@ import (
 	"github.com/ZheglY/vpn-platform/internal/platform/observability"
 	platformredis "github.com/ZheglY/vpn-platform/internal/platform/redis"
 	"github.com/ZheglY/vpn-platform/internal/platform/version"
+	billingclient "github.com/ZheglY/vpn-platform/services/telegram-bot/internal/billing"
 	"github.com/ZheglY/vpn-platform/services/telegram-bot/internal/bot"
+	catalogclient "github.com/ZheglY/vpn-platform/services/telegram-bot/internal/catalog"
 	identityclient "github.com/ZheglY/vpn-platform/services/telegram-bot/internal/identity"
 	"github.com/ZheglY/vpn-platform/services/telegram-bot/internal/redisstore"
 	telegramclient "github.com/ZheglY/vpn-platform/services/telegram-bot/internal/telegram"
@@ -85,6 +87,14 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	catalog, err := catalogclient.NewClient(appCfg.CatalogBaseURL, identityHTTPClient)
+	if err != nil {
+		return err
+	}
+	billing, err := billingclient.NewClient(appCfg.BillingBaseURL, identityHTTPClient)
+	if err != nil {
+		return err
+	}
 	telegram, err := telegramclient.NewClient(appCfg.TelegramAPIBaseURL, appCfg.TelegramBotToken, appCfg.OutboundTimeout)
 	if err != nil {
 		return err
@@ -100,15 +110,17 @@ func run(ctx context.Context) error {
 			return platformredis.Ping(ctx, redisClient)
 		},
 		"identity": identity.Ping,
+		"catalog":  catalog.Ping,
+		"billing":  billing.Ping,
 	}))
 	mux.Handle("GET /version", version.Handler(version.New(serviceName, buildVersion, buildCommit, buildDate)))
 	mux.Handle("GET /metrics", observability.Handler(registry))
-	mux.Handle("POST /webhooks/telegram", bot.NewWebhookHandler(bot.Config{
+	mux.Handle("POST /webhooks/telegram", bot.NewWebhookHandlerWithCommerce(bot.Config{
 		WebhookSecret:  appCfg.WebhookSecret,
 		ConsentVersion: appCfg.ConsentVersion,
 		TermsURL:       appCfg.TermsURL,
 		CleanupTimeout: appCfg.DedupeCleanupTimeout,
-	}, identity, telegram, stateStore, stateStore, rateLimiter, logger))
+	}, identity, catalog, billing, telegram, stateStore, stateStore, rateLimiter, logger))
 
 	handler := httpserver.Chain(
 		mux,
@@ -130,6 +142,8 @@ type appConfig struct {
 	RedisPassword          string
 	RedisDB                int
 	IdentityBaseURL        string
+	CatalogBaseURL         string
+	BillingBaseURL         string
 	IdentityAuthMode       string
 	IdentityClientCertFile string
 	IdentityClientKeyFile  string
@@ -176,6 +190,10 @@ func loadConfig() (appConfig, error) {
 	fields = config.Append(fields, "REDIS_DB", err)
 	identityBaseURL, err := config.RequiredString("IDENTITY_BASE_URL")
 	fields = config.Append(fields, "IDENTITY_BASE_URL", err)
+	catalogBaseURL, err := config.RequiredString("CATALOG_BASE_URL")
+	fields = config.Append(fields, "CATALOG_BASE_URL", err)
+	billingBaseURL, err := config.RequiredString("BILLING_BASE_URL")
+	fields = config.Append(fields, "BILLING_BASE_URL", err)
 	identityAuthMode := config.String("IDENTITY_AUTH_MODE", "mtls")
 	if identityAuthMode != "mtls" && identityAuthMode != "dev-insecure" {
 		fields = config.Append(fields, "IDENTITY_AUTH_MODE", fmt.Errorf("must be mtls or dev-insecure"))
@@ -185,6 +203,9 @@ func loadConfig() (appConfig, error) {
 	}
 	if identityAuthMode == "mtls" && err == nil && !strings.HasPrefix(identityBaseURL, "https://") {
 		fields = config.Append(fields, "IDENTITY_BASE_URL", fmt.Errorf("must use https when IDENTITY_AUTH_MODE=mtls"))
+	}
+	if identityAuthMode == "mtls" && (!strings.HasPrefix(catalogBaseURL, "https://") || !strings.HasPrefix(billingBaseURL, "https://")) {
+		fields = config.Append(fields, "COMMERCE_BASE_URLS", fmt.Errorf("must use https when IDENTITY_AUTH_MODE=mtls"))
 	}
 	var identityClientCertFile string
 	var identityClientKeyFile string
@@ -238,6 +259,8 @@ func loadConfig() (appConfig, error) {
 		RedisPassword:          redisPassword,
 		RedisDB:                redisDB,
 		IdentityBaseURL:        identityBaseURL,
+		CatalogBaseURL:         catalogBaseURL,
+		BillingBaseURL:         billingBaseURL,
 		IdentityAuthMode:       identityAuthMode,
 		IdentityClientCertFile: identityClientCertFile,
 		IdentityClientKeyFile:  identityClientKeyFile,

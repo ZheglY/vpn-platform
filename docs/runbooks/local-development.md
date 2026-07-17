@@ -20,7 +20,8 @@ make verify
 - `npm audit --audit-level=high`
 - OpenAPI lint
 - AsyncAPI parser validation
-- identity-service and telegram-bot Docker builds
+- billing event JSON Schema example validation
+- identity-service, catalog-service, billing-service, and telegram-bot Docker builds
 - Trivy HIGH/CRITICAL vulnerability scan for service images
 - `docker compose config --quiet`
 - `git diff --exit-code`
@@ -43,7 +44,7 @@ make compose-up
 
 Local ports bind to `127.0.0.1` only. Kafka exposes `localhost:9094` for host tools and `kafka:9092` for containers on the Compose network. `make compose-up`, `make compose-config`, and `make compose-smoke` generate local development mTLS material under ignored `secrets/dev-mtls`.
 
-Identity-service uses HTTPS with client-certificate authentication in local Compose. Telegram-bot calls it over mTLS, and bot readiness includes that check. A local `telegram-api` fake receives `sendMessage` calls so smoke tests do not call the real Telegram Bot API. `make compose-smoke` removes Compose volumes to verify database bootstrap and migrations from zero.
+Identity, catalog, and billing internal routes use HTTPS with service identity authorization in local Compose. Bot and billing readiness include their synchronous dependencies. Local `telegram-api` and `yookassa-api` fakes prevent calls to real providers. `make compose-smoke` removes Compose volumes to verify all service databases and migrations from zero.
 
 Stage 2 smoke also verifies:
 
@@ -52,6 +53,17 @@ Stage 2 smoke also verifies:
 - completed duplicate replay returns `200` without a second Telegram message
 - consent acceptance persists exactly once
 - identity-service rejects a valid but unauthorized mTLS SPIFFE identity
+
+Stage 3 smoke also verifies:
+
+- configured plan seed and immutable order snapshot flow through `/buy`
+- provider create committed before an ambiguous `500` is recovered with the same provider idempotency key
+- a second purchase update reuses one open order, one payment, and one provider object
+- duplicate YooKassa webhook is durably deduplicated
+- terminal state is accepted only after provider GET verifies account, test mode, amount, currency, metadata, and status
+- an out-of-order canceled notification cannot reverse a succeeded payment or create another event
+- one `billing.payment.succeeded.v1` is visible in Kafka
+- billing rejects a valid but unauthorized mTLS SPIFFE identity
 
 Stop:
 
@@ -66,6 +78,8 @@ docker compose exec -T identity-service /identity-service healthcheck
 Invoke-RestMethod http://localhost:8081/livez
 Invoke-RestMethod http://localhost:8081/readyz
 Invoke-RestMethod http://localhost:8081/version
+docker compose exec -T catalog-service /catalog-service healthcheck
+docker compose exec -T billing-service /billing-service healthcheck
 ```
 
 Automated smoke:
@@ -79,5 +93,6 @@ make compose-smoke
 - Local Compose credentials are development-only and must never be reused in production.
 - Local development mTLS keys are generated secrets and must never be committed.
 - Redis is ephemeral in this project and is not a source of truth.
-- Stage 2 creates only the identity-service schema. Other service schemas remain future-stage work.
+- Identity, catalog, and billing use distinct logical databases and credentials even though local Compose shares one PostgreSQL instance.
 - `TERMS_URL` must point to the immutable terms document matching `CONSENT_VERSION`; local Compose defaults to `https://example.invalid/terms/terms-v1`.
+- `YOOKASSA_SHOP_ID` and `YOOKASSA_SECRET_KEY` are local fake-provider values. Never place real credentials in `.env` or run Stage 3 against a production shop.

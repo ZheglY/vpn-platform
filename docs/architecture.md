@@ -8,7 +8,9 @@ Happ is only the user client. It is not the VPN provider. User VPN traffic must 
 
 ## Current Scope
 
-Stage 0 is documentation-only. No business code, databases, migrations, Docker Compose, service binaries, or production infrastructure are created in this stage.
+Stage 3 implements onboarding plus the sandbox purchase boundary. `identity-service`, `catalog-service`, `billing-service`, and `telegram-bot` run locally with separate logical PostgreSQL databases. Billing owns orders, provider state, normalized webhook inbox, reconciliation, and its transactional outbox. Kafka publishes terminal payment facts, but no Stage 4 consumer or entitlement behavior exists yet.
+
+The current environment is portfolio/sandbox only. It does not use real YooKassa credentials, issue receipts, process refunds, activate subscriptions, create VPN credentials, or touch Xray-core.
 
 ## Product Decisions Already Accepted
 
@@ -305,7 +307,7 @@ Initial SLOs come from the specification:
 - p95 subscription document: under 200 ms with warm DB.
 - 99% of successful payment events start provisioning within 60 seconds.
 
-## Stage 0 Risks
+## Deferred Production Risks
 
 The architecture intentionally keeps several decisions as future approval points:
 
