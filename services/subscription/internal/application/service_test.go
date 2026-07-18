@@ -59,7 +59,7 @@ func TestHandleRefundRejectsPartialScope(t *testing.T) {
 	store := &fakeStore{}
 	service := NewService(store, &fakeBilling{})
 	refund := domain.RefundSucceeded{RefundID: testEventID, PaymentID: testPaymentID, OrderID: testOrderID, UserID: testUserID, AmountMinor: 29900, Currency: "RUB", RefundScope: "partial", RefundedAt: time.Now().UTC()}
-	meta := domain.EventMeta{EventID: testCorrelationID, EventType: "billing.refund.succeeded.v1", AggregateID: refund.RefundID, CorrelationID: testOrderID}
+	meta := domain.EventMeta{EventID: testCorrelationID, EventType: "billing.refund.succeeded.v1", AggregateID: refund.RefundID, CorrelationID: testOrderID, SourceTopic: "billing.refund.succeeded.v1", SourcePartition: 0, SourceOffset: 1, PayloadSHA256: "0000000000000000000000000000000000000000000000000000000000000000"}
 	if err := service.HandleRefund(context.Background(), meta, refund); err == nil {
 		t.Fatal("partial refund was accepted")
 	}
@@ -73,16 +73,16 @@ type fakeStore struct {
 	refundCalls int
 }
 
-func (s *fakeStore) RecordPaymentReplay(context.Context, domain.EventMeta, domain.PaymentSucceeded, time.Time) (bool, error) {
+func (s *fakeStore) RecordPaymentReplay(context.Context, domain.EventMeta, domain.PaymentSucceeded) (bool, error) {
 	return s.replayed, s.replayErr
 }
 
-func (s *fakeStore) ApplyPayment(context.Context, domain.EventMeta, domain.PaymentSucceeded, domain.Order, time.Time) error {
+func (s *fakeStore) ApplyPayment(context.Context, domain.EventMeta, domain.PaymentSucceeded, domain.Order) error {
 	s.applyCalls++
 	return nil
 }
 
-func (s *fakeStore) StoreRefund(context.Context, domain.EventMeta, domain.RefundSucceeded, time.Time) error {
+func (s *fakeStore) StoreRefund(context.Context, domain.EventMeta, domain.RefundSucceeded) error {
 	s.refundCalls++
 	return nil
 }
@@ -100,7 +100,7 @@ func (b *fakeBilling) GetOrder(context.Context, string, string) (domain.Order, e
 }
 
 func validPaymentMeta() domain.EventMeta {
-	return domain.EventMeta{EventID: testEventID, EventType: "billing.payment.succeeded.v1", AggregateID: testPaymentID, CorrelationID: testCorrelationID, OccurredAt: testOccurredAt()}
+	return domain.EventMeta{EventID: testEventID, EventType: "billing.payment.succeeded.v1", AggregateID: testPaymentID, CorrelationID: testCorrelationID, OccurredAt: testOccurredAt(), SourceTopic: "billing.payment.succeeded.v1", SourcePartition: 0, SourceOffset: 1, PayloadSHA256: "0000000000000000000000000000000000000000000000000000000000000000"}
 }
 
 func validPayment() domain.PaymentSucceeded {

@@ -122,7 +122,7 @@ operations:
     action: send
     channel:
       $ref: '#/channels/subscription.revoked.v1'
-    summary: subscription-service publishes refund revocation only when no valid paid period remains.
+    summary: subscription-service publishes terminal refund revocation or a temporary refund-gap revocation before a future period.
   publishBillingPaymentCanceled:
     action: send
     channel:
@@ -740,7 +740,7 @@ components:
           format: uuid
         reason:
           type: string
-          enum: [expired, refund, admin_block, abuse, deleted]
+          enum: [expired, refund, refund_gap, admin_block, abuse, deleted]
         affected_period_ids:
           type: array
           items:

@@ -31,18 +31,17 @@ func ContractErrorCode(err error) (string, bool) {
 type Service struct {
 	store   domain.Store
 	billing domain.Billing
-	now     func() time.Time
 }
 
 func NewService(store domain.Store, billing domain.Billing) *Service {
-	return &Service{store: store, billing: billing, now: func() time.Time { return time.Now().UTC() }}
+	return &Service{store: store, billing: billing}
 }
 
 func (s *Service) HandlePayment(ctx context.Context, meta domain.EventMeta, payment domain.PaymentSucceeded) error {
 	if err := validatePayment(meta, payment); err != nil {
 		return err
 	}
-	recorded, err := s.store.RecordPaymentReplay(ctx, meta, payment, s.now())
+	recorded, err := s.store.RecordPaymentReplay(ctx, meta, payment)
 	if err != nil || recorded {
 		return err
 	}
@@ -53,17 +52,20 @@ func (s *Service) HandlePayment(ctx context.Context, meta domain.EventMeta, paym
 	if err := validateOrder(payment, order); err != nil {
 		return err
 	}
-	return s.store.ApplyPayment(ctx, meta, payment, order, s.now())
+	return s.store.ApplyPayment(ctx, meta, payment, order)
 }
 
 func (s *Service) HandleRefund(ctx context.Context, meta domain.EventMeta, refund domain.RefundSucceeded) error {
 	if err := validateRefund(meta, refund); err != nil {
 		return err
 	}
-	return s.store.StoreRefund(ctx, meta, refund, s.now())
+	return s.store.StoreRefund(ctx, meta, refund)
 }
 
 func validatePayment(meta domain.EventMeta, payment domain.PaymentSucceeded) error {
+	if !validSource(meta) {
+		return &ContractError{Code: "invalid_source_metadata"}
+	}
 	if meta.EventType != "billing.payment.succeeded.v1" || !validUUIDs(meta.EventID, meta.AggregateID, meta.CorrelationID, payment.PaymentID, payment.OrderID, payment.UserID) {
 		return &ContractError{Code: "invalid_payment_identity"}
 	}
@@ -74,6 +76,9 @@ func validatePayment(meta domain.EventMeta, payment domain.PaymentSucceeded) err
 }
 
 func validateRefund(meta domain.EventMeta, refund domain.RefundSucceeded) error {
+	if !validSource(meta) {
+		return &ContractError{Code: "invalid_source_metadata"}
+	}
 	if meta.EventType != "billing.refund.succeeded.v1" || !validUUIDs(meta.EventID, meta.AggregateID, meta.CorrelationID, refund.RefundID, refund.PaymentID, refund.OrderID, refund.UserID) {
 		return &ContractError{Code: "invalid_refund_identity"}
 	}
@@ -109,6 +114,18 @@ func validCurrency(value string) bool {
 	}
 	for _, char := range value {
 		if char < 'A' || char > 'Z' {
+			return false
+		}
+	}
+	return true
+}
+
+func validSource(meta domain.EventMeta) bool {
+	if meta.SourceTopic != meta.EventType || meta.SourcePartition < 0 || meta.SourceOffset < 0 || len(meta.PayloadSHA256) != 64 {
+		return false
+	}
+	for _, char := range meta.PayloadSHA256 {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
 			return false
 		}
 	}

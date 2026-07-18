@@ -82,6 +82,8 @@ Mitigation:
 - Never activate access from webhook payload alone.
 - Accept only sandbox objects for the configured account and exact internal order/payment metadata.
 - Keep local terminal state monotonic when delayed notifications disagree with current provider state.
+- Use PostgreSQL transaction time for entitlement decisions so host clock skew cannot create temporary access after expiry.
+- Serialize outbox claims by subscription aggregate sequence so concurrent publishers cannot reverse activation and revocation.
 
 ### T2 - Subscription bearer token leaks through logs
 
@@ -108,7 +110,7 @@ Mitigation:
 - Event ID inbox dedupe plus unique source payment/order keys.
 - Billing order snapshot validation over an allowlisted mTLS endpoint before offset commit.
 - Poison records persist only topic coordinates, payload SHA-256, and bounded reason code; raw payload is not retained or logged.
-- Contract, concurrency, delayed delivery, refund-ordering, and exact time-boundary tests.
+- Contract, concurrency, delayed delivery, refund-ordering, permanent-conflict DLQ, outbox sequence, and exact time-boundary tests.
 
 ### T4 - Invalid Xray config removes working access
 

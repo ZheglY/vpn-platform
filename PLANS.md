@@ -165,16 +165,17 @@ Notes:
 
 Depends on Stage 3 payment events. Adds entitlement state machine, extension/expiry/revocation logic, scheduler/reconciler, inbox, and time-boundary tests.
 
-Status: implementation and required verification completed on `codex/stage4-subscription-lifecycle`; pending user acceptance. Stage 5 remains blocked until explicit approval.
+Status: hardening implementation and required verification completed on `codex/stage4-subscription-lifecycle` after review of commit `3ab6bdc`; Stage 4 remains pending user acceptance. Stage 5 remains blocked until explicit approval.
 
 Acceptance criteria:
 
 - `subscription-service` owns a separate PostgreSQL database and never reads another service database.
 - Existing `billing.payment.succeeded.v1` remains compatible; immutable entitlement terms are fetched through Billing's allowlisted mTLS order read API and validated against the event.
-- Payment consumption atomically commits inbox, immutable period, subscription state, and exactly one activation or extension outbox event.
+- Payment consumption atomically commits inbox, immutable period, final subscription state, and exactly one activation, extension, or direct-expiry outbox event.
 - Duplicate event IDs, duplicate payment IDs, concurrent different payments, delayed delivery, and consumer restarts do not duplicate or shorten entitlement.
-- The scheduler transitions active to grace and grace to expired at exact UTC boundaries, recovers expired leases, and emits one terminal event.
-- Full refund events are idempotent, can wait for an out-of-order payment, recalculate remaining periods, and revoke only when no valid current or future entitlement remains.
+- The scheduler uses authoritative PostgreSQL time, transitions active to grace and grace to expired at exact UTC boundaries, recovers expired leases, and emits one terminal event.
+- Full refund events are idempotent, can wait for an out-of-order payment, permanently dead-letter incompatible durable state, and revoke current access for terminal or future-period-gap outcomes.
+- Outbox workers preserve monotonic lifecycle delivery per subscription aggregate under concurrent claims.
 - Public HTTP and Kafka contracts, ADRs, threat model, runbooks, Compose, migrations, and contract tests match implemented behavior.
 - PostgreSQL integration tests, `make verify`, `make compose-smoke`, and final security/concurrency/transaction review pass before Stage 4 is declared complete.
 

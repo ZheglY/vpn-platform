@@ -20,8 +20,9 @@ After a confirmed full refund:
 
 - the matching `subscription_period` is marked refunded/revoked;
 - subscription entitlement is recalculated from remaining non-refunded periods;
-- if no valid current/future entitlement remains, subscription transitions to `revoked`, subscription token is blocked, and credential removal is requested from all assigned VPN nodes;
-- if valid paid entitlement remains, access is not revoked solely because one historical period was refunded;
+- if no valid current or future entitlement remains, subscription transitions to `revoked` and emits `subscription.revoked.v1` with reason `refund`;
+- if refund removes the current entitlement but a future period remains, subscription transitions to `pending` and emits `subscription.revoked.v1` with reason `refund_gap`; access stays revoked until the scheduler emits a new activation at the future period boundary;
+- refunding a historical or future period does not revoke access while another period remains currently valid;
 - notification is emitted;
 - audit record includes operator, reason, payment/refund IDs, and correlation ID.
 

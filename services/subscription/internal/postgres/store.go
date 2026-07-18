@@ -29,7 +29,15 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 func (s *Store) Close()                         { s.pool.Close() }
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 
-func (s *Store) RecordPaymentReplay(ctx context.Context, meta domain.EventMeta, payment domain.PaymentSucceeded, now time.Time) (bool, error) {
+func (s *Store) RecordPaymentReplay(ctx context.Context, meta domain.EventMeta, payment domain.PaymentSucceeded) (bool, error) {
+	return s.recordPaymentReplay(ctx, meta, payment, nil)
+}
+
+func (s *Store) recordPaymentReplayAt(ctx context.Context, meta domain.EventMeta, payment domain.PaymentSucceeded, now time.Time) (bool, error) {
+	return s.recordPaymentReplay(ctx, meta, payment, &now)
+}
+
+func (s *Store) recordPaymentReplay(ctx context.Context, meta domain.EventMeta, payment domain.PaymentSucceeded, nowOverride *time.Time) (bool, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, fmt.Errorf("begin payment replay: %w", err)
@@ -38,18 +46,24 @@ func (s *Store) RecordPaymentReplay(ctx context.Context, meta domain.EventMeta, 
 	if err := lockUser(ctx, tx, payment.UserID); err != nil {
 		return false, err
 	}
-	var userID, orderID string
+	now, err := transactionTime(ctx, tx, nowOverride)
+	if err != nil {
+		return false, err
+	}
+	var userID, orderID, planID, currency string
+	var amount int64
+	var paidAt time.Time
 	err = tx.QueryRow(ctx, `
-SELECT s.user_id, p.source_order_id
+SELECT s.user_id, p.source_order_id, p.plan_id, p.amount_minor, p.currency, p.paid_at
 FROM subscription_periods p JOIN subscriptions s ON s.id = p.subscription_id
-WHERE p.source_payment_id = $1`, payment.PaymentID).Scan(&userID, &orderID)
+WHERE p.source_payment_id = $1`, payment.PaymentID).Scan(&userID, &orderID, &planID, &amount, &currency, &paidAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("check subscription payment replay: %w", err)
 	}
-	if userID != payment.UserID || orderID != payment.OrderID {
+	if userID != payment.UserID || orderID != payment.OrderID || planID != payment.PlanID || amount != payment.AmountMinor || currency != payment.Currency || !paidAt.Equal(payment.PaidAt) {
 		return false, domain.ErrConflict
 	}
 	inserted, err := insertInbox(ctx, tx, meta, payment.PaymentID, payment.UserID, nil, "processed")
@@ -67,13 +81,25 @@ WHERE p.source_payment_id = $1`, payment.PaymentID).Scan(&userID, &orderID)
 	return true, nil
 }
 
-func (s *Store) ApplyPayment(ctx context.Context, meta domain.EventMeta, payment domain.PaymentSucceeded, order domain.Order, now time.Time) error {
+func (s *Store) ApplyPayment(ctx context.Context, meta domain.EventMeta, payment domain.PaymentSucceeded, order domain.Order) error {
+	return s.applyPayment(ctx, meta, payment, order, nil)
+}
+
+func (s *Store) applyPaymentAt(ctx context.Context, meta domain.EventMeta, payment domain.PaymentSucceeded, order domain.Order, now time.Time) error {
+	return s.applyPayment(ctx, meta, payment, order, &now)
+}
+
+func (s *Store) applyPayment(ctx context.Context, meta domain.EventMeta, payment domain.PaymentSucceeded, order domain.Order, nowOverride *time.Time) error {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin apply payment: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if err := lockUser(ctx, tx, payment.UserID); err != nil {
+		return err
+	}
+	now, err := transactionTime(ctx, tx, nowOverride)
+	if err != nil {
 		return err
 	}
 	inserted, err := insertInbox(ctx, tx, meta, payment.PaymentID, payment.UserID, nil, "processing")
@@ -135,16 +161,15 @@ INSERT INTO subscription_periods (
 		start = *subscription.CurrentPeriodStart
 	}
 	status, next := statusAt(now, start, periodEnd, graceEndsAt)
-	if status == domain.StatusExpired {
-		// Preserve event order for a payment delivered after its grace boundary.
-		// The scheduler immediately follows the activation fact with expiry.
-		status, next = domain.StatusActive, timePtr(now)
-	}
 	if err := updateSubscription(ctx, tx, subscription.SubscriptionID, status, start, periodEnd, graceEndsAt, next, now); err != nil {
 		return err
 	}
-	data := periodEventData{SubscriptionID: subscription.SubscriptionID, UserID: payment.UserID, PeriodID: periodID, SourceOrderID: payment.OrderID, SourcePaymentID: payment.PaymentID, PeriodStart: periodStart, PeriodEnd: periodEnd, GraceEndsAt: graceEndsAt}
-	if err := insertOutbox(ctx, tx, eventType, subscription.SubscriptionID, payment.UserID, "payment:"+payment.PaymentID+":"+eventType, meta.CorrelationID, &meta.EventID, now, data); err != nil {
+	var eventData any = periodEventData{SubscriptionID: subscription.SubscriptionID, UserID: payment.UserID, PeriodID: periodID, SourceOrderID: payment.OrderID, SourcePaymentID: payment.PaymentID, PeriodStart: periodStart, PeriodEnd: periodEnd, GraceEndsAt: graceEndsAt}
+	if status == domain.StatusExpired {
+		eventType = "subscription.expired.v1"
+		eventData = terminalEventData{SubscriptionID: subscription.SubscriptionID, UserID: payment.UserID, Reason: "expired", AffectedPeriodIDs: []string{periodID}, EffectiveAt: graceEndsAt}
+	}
+	if err := insertOutbox(ctx, tx, eventType, subscription.SubscriptionID, payment.UserID, "payment:"+payment.PaymentID+":"+eventType, meta.CorrelationID, &meta.EventID, now, eventData); err != nil {
 		return err
 	}
 	if err := markInboxProcessed(ctx, tx, meta.EventID, now); err != nil {
@@ -169,7 +194,15 @@ func statusAt(now, start, end, grace time.Time) (string, *time.Time) {
 	return domain.StatusExpired, nil
 }
 
-func (s *Store) StoreRefund(ctx context.Context, meta domain.EventMeta, refund domain.RefundSucceeded, now time.Time) error {
+func (s *Store) StoreRefund(ctx context.Context, meta domain.EventMeta, refund domain.RefundSucceeded) error {
+	return s.storeRefund(ctx, meta, refund, nil)
+}
+
+func (s *Store) storeRefundAt(ctx context.Context, meta domain.EventMeta, refund domain.RefundSucceeded, now time.Time) error {
+	return s.storeRefund(ctx, meta, refund, &now)
+}
+
+func (s *Store) storeRefund(ctx context.Context, meta domain.EventMeta, refund domain.RefundSucceeded, nowOverride *time.Time) error {
 	payload, err := json.Marshal(refund)
 	if err != nil {
 		return fmt.Errorf("encode normalized refund: %w", err)
@@ -182,6 +215,10 @@ func (s *Store) StoreRefund(ctx context.Context, meta domain.EventMeta, refund d
 	if err := lockUser(ctx, tx, refund.UserID); err != nil {
 		return err
 	}
+	now, err := transactionTime(ctx, tx, nowOverride)
+	if err != nil {
+		return err
+	}
 	inserted, err := insertInbox(ctx, tx, meta, refund.PaymentID, refund.UserID, payload, "pending")
 	if err != nil || !inserted {
 		if err != nil {
@@ -191,6 +228,12 @@ func (s *Store) StoreRefund(ctx context.Context, meta domain.EventMeta, refund d
 	}
 	applied, err := applyRefund(ctx, tx, meta, refund, now)
 	if err != nil {
+		if errors.Is(err, domain.ErrConflict) {
+			if deadErr := deadLetterInbox(ctx, tx, meta.EventID, now, "durable_state_conflict"); deadErr != nil {
+				return deadErr
+			}
+			return tx.Commit(ctx)
+		}
 		return err
 	}
 	if applied {
@@ -219,8 +262,10 @@ WITH candidate AS (
 )
 UPDATE inbox i SET state = 'processing', lease_until = now() + $1::interval, attempts = attempts + 1
 FROM candidate c WHERE i.event_id = c.event_id
-RETURNING i.event_id, i.correlation_id, i.aggregate_id, i.event_type, i.payload, i.attempts`, lease).Scan(
+RETURNING i.event_id, i.correlation_id, i.aggregate_id, i.event_type, i.payload, i.attempts,
+          i.source_topic, i.source_partition, i.source_offset, i.payload_sha256`, lease).Scan(
 		&work.InboxID, &work.Meta.CorrelationID, &work.Meta.AggregateID, &work.Meta.EventType, &payload, &work.Attempts,
+		&work.Meta.SourceTopic, &work.Meta.SourcePartition, &work.Meta.SourceOffset, &work.Meta.PayloadSHA256,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.RefundWork{}, false, nil
@@ -235,7 +280,15 @@ RETURNING i.event_id, i.correlation_id, i.aggregate_id, i.event_type, i.payload,
 	return work, true, nil
 }
 
-func (s *Store) ApplyClaimedRefund(ctx context.Context, work domain.RefundWork, now time.Time, retryDelay time.Duration) error {
+func (s *Store) ApplyClaimedRefund(ctx context.Context, work domain.RefundWork, retryDelay time.Duration) error {
+	return s.applyClaimedRefund(ctx, work, retryDelay, nil)
+}
+
+func (s *Store) applyClaimedRefundAt(ctx context.Context, work domain.RefundWork, now time.Time, retryDelay time.Duration) error {
+	return s.applyClaimedRefund(ctx, work, retryDelay, &now)
+}
+
+func (s *Store) applyClaimedRefund(ctx context.Context, work domain.RefundWork, retryDelay time.Duration, nowOverride *time.Time) error {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin reconcile refund: %w", err)
@@ -244,8 +297,18 @@ func (s *Store) ApplyClaimedRefund(ctx context.Context, work domain.RefundWork, 
 	if err := lockUser(ctx, tx, work.Refund.UserID); err != nil {
 		return err
 	}
+	now, err := transactionTime(ctx, tx, nowOverride)
+	if err != nil {
+		return err
+	}
 	applied, err := applyRefund(ctx, tx, work.Meta, work.Refund, now)
 	if err != nil {
+		if errors.Is(err, domain.ErrConflict) {
+			if deadErr := deadLetterInbox(ctx, tx, work.InboxID, now, "durable_state_conflict"); deadErr != nil {
+				return deadErr
+			}
+			return tx.Commit(ctx)
+		}
 		return err
 	}
 	if applied {
@@ -259,12 +322,12 @@ func (s *Store) ApplyClaimedRefund(ctx context.Context, work domain.RefundWork, 
 }
 
 func applyRefund(ctx context.Context, tx pgx.Tx, meta domain.EventMeta, refund domain.RefundSucceeded, now time.Time) (bool, error) {
-	var periodID, subscriptionID, userID, orderID, status, currency string
+	var periodID, subscriptionID, userID, orderID, status, currency, oldSubscriptionStatus string
 	var amount int64
 	err := tx.QueryRow(ctx, `
-SELECT p.id, p.subscription_id, s.user_id, p.source_order_id, p.status, p.amount_minor, p.currency
+SELECT p.id, p.subscription_id, s.user_id, p.source_order_id, p.status, p.amount_minor, p.currency, s.status
 FROM subscription_periods p JOIN subscriptions s ON s.id = p.subscription_id
-WHERE p.source_payment_id = $1 FOR UPDATE OF p, s`, refund.PaymentID).Scan(&periodID, &subscriptionID, &userID, &orderID, &status, &amount, &currency)
+WHERE p.source_payment_id = $1 FOR UPDATE OF p, s`, refund.PaymentID).Scan(&periodID, &subscriptionID, &userID, &orderID, &status, &amount, &currency, &oldSubscriptionStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -299,8 +362,16 @@ WHERE p.source_payment_id = $1 FOR UPDATE OF p, s`, refund.PaymentID).Scan(&peri
 		if err := insertOutbox(ctx, tx, "subscription.revoked.v1", subscriptionID, userID, "refund:"+refund.RefundID, meta.CorrelationID, &meta.EventID, now, data); err != nil {
 			return false, err
 		}
-	} else if err := updateSubscription(ctx, tx, subscriptionID, state.Status, state.Start, state.End, state.Grace, state.Next, now); err != nil {
-		return false, err
+	} else {
+		if err := updateSubscription(ctx, tx, subscriptionID, state.Status, state.Start, state.End, state.Grace, state.Next, now); err != nil {
+			return false, err
+		}
+		if (oldSubscriptionStatus == domain.StatusActive || oldSubscriptionStatus == domain.StatusGrace) && state.Status == domain.StatusPending {
+			data := terminalEventData{SubscriptionID: subscriptionID, UserID: userID, Reason: "refund_gap", AffectedPeriodIDs: []string{periodID}, EffectiveAt: refund.RefundedAt}
+			if err := insertOutbox(ctx, tx, "subscription.revoked.v1", subscriptionID, userID, "refund-gap:"+refund.RefundID, meta.CorrelationID, &meta.EventID, now, data); err != nil {
+				return false, err
+			}
+		}
 	}
 	return true, nil
 }
@@ -372,18 +443,29 @@ ORDER BY period_start, id`, subscriptionID, now)
 	return entitlementState{Status: status, Start: selected.Start, End: chainEnd, Grace: chainGrace, Next: next, Period: selected}, true, nil
 }
 
-func (s *Store) ClaimDue(ctx context.Context, now time.Time, lease time.Duration) (domain.Subscription, bool, error) {
+func (s *Store) ClaimDue(ctx context.Context, lease time.Duration) (domain.Subscription, bool, error) {
+	return s.claimDue(ctx, nil, lease)
+}
+
+func (s *Store) claimDueAt(ctx context.Context, now time.Time, lease time.Duration) (domain.Subscription, bool, error) {
+	return s.claimDue(ctx, &now, lease)
+}
+
+func (s *Store) claimDue(ctx context.Context, nowOverride *time.Time, lease time.Duration) (domain.Subscription, bool, error) {
 	var subscription domain.Subscription
 	err := s.pool.QueryRow(ctx, `
-WITH candidate AS (
+WITH authoritative AS (
+    SELECT COALESCE($1::timestamptz, clock_timestamp()) AS now
+), candidate AS (
     SELECT id FROM subscriptions
-    WHERE status IN ('pending', 'active', 'grace') AND next_transition_at <= $1
-      AND (transition_lease_until IS NULL OR transition_lease_until <= $1)
+    CROSS JOIN authoritative
+    WHERE status IN ('pending', 'active', 'grace') AND next_transition_at <= authoritative.now
+      AND (transition_lease_until IS NULL OR transition_lease_until <= authoritative.now)
     ORDER BY next_transition_at, id FOR UPDATE SKIP LOCKED LIMIT 1
 )
-UPDATE subscriptions s SET transition_lease_until = $1 + $2::interval
-FROM candidate c WHERE s.id = c.id
-RETURNING s.id, s.user_id, s.status, s.current_period_start, s.current_period_end, s.grace_ends_at`, now, lease).Scan(
+UPDATE subscriptions s SET transition_lease_until = authoritative.now + $2::interval
+FROM candidate c, authoritative WHERE s.id = c.id
+RETURNING s.id, s.user_id, s.status, s.current_period_start, s.current_period_end, s.grace_ends_at`, nowOverride, lease).Scan(
 		&subscription.SubscriptionID, &subscription.UserID, &subscription.Status, &subscription.CurrentPeriodStart, &subscription.CurrentPeriodEnd, &subscription.GraceEndsAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -395,7 +477,15 @@ RETURNING s.id, s.user_id, s.status, s.current_period_start, s.current_period_en
 	return subscription, true, nil
 }
 
-func (s *Store) CompleteDue(ctx context.Context, subscriptionID string, now time.Time) error {
+func (s *Store) CompleteDue(ctx context.Context, subscriptionID string) error {
+	return s.completeDue(ctx, subscriptionID, nil)
+}
+
+func (s *Store) completeDueAt(ctx context.Context, subscriptionID string, now time.Time) error {
+	return s.completeDue(ctx, subscriptionID, &now)
+}
+
+func (s *Store) completeDue(ctx context.Context, subscriptionID string, nowOverride *time.Time) error {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin complete transition: %w", err)
@@ -406,6 +496,10 @@ func (s *Store) CompleteDue(ctx context.Context, subscriptionID string, now time
 	var oldGraceEndsAt *time.Time
 	if err := tx.QueryRow(ctx, `SELECT user_id, status, transition_lease_until, grace_ends_at FROM subscriptions WHERE id = $1 FOR UPDATE`, subscriptionID).Scan(&userID, &oldStatus, &leaseUntil, &oldGraceEndsAt); err != nil {
 		return fmt.Errorf("lock due subscription: %w", err)
+	}
+	now, err := transactionTime(ctx, tx, nowOverride)
+	if err != nil {
+		return err
 	}
 	if leaseUntil == nil {
 		return nil
@@ -479,11 +573,19 @@ func (s *Store) ClaimOutbox(ctx context.Context, lease time.Duration) (domain.Ou
 	var message domain.OutboxMessage
 	err := s.pool.QueryRow(ctx, `
 WITH candidate AS (
-    SELECT event_id FROM outbox WHERE state IN ('pending','processing') AND next_attempt_at <= now()
-      AND (lease_until IS NULL OR lease_until <= now())
-    ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1
+    SELECT o.event_id FROM outbox o
+    WHERE o.state IN ('pending','processing') AND o.next_attempt_at <= clock_timestamp()
+      AND (o.lease_until IS NULL OR o.lease_until <= clock_timestamp())
+      AND NOT EXISTS (
+          SELECT 1 FROM outbox prior
+          WHERE prior.aggregate_id = o.aggregate_id
+            AND prior.aggregate_sequence < o.aggregate_sequence
+            AND prior.state <> 'published'
+      )
+    ORDER BY o.created_at, o.aggregate_id, o.aggregate_sequence
+    FOR UPDATE OF o SKIP LOCKED LIMIT 1
 )
-UPDATE outbox o SET state = 'processing', lease_until = now() + $1::interval, attempts = attempts + 1
+UPDATE outbox o SET state = 'processing', lease_until = clock_timestamp() + $1::interval, attempts = attempts + 1
 FROM candidate c WHERE o.event_id = c.event_id
 RETURNING o.event_id, o.topic, o.partition_key, o.payload, o.attempts`, lease).Scan(&message.EventID, &message.Topic, &message.PartitionKey, &message.Payload, &message.Attempts)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -532,17 +634,65 @@ func getOrCreateSubscription(ctx context.Context, tx pgx.Tx, userID string, now 
 
 func insertInbox(ctx context.Context, tx pgx.Tx, meta domain.EventMeta, paymentID, userID string, payload []byte, state string) (bool, error) {
 	command, err := tx.Exec(ctx, `
-INSERT INTO inbox (event_id, event_type, aggregate_id, source_payment_id, user_id, correlation_id, payload, state)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (event_id) DO NOTHING`, meta.EventID, meta.EventType, meta.AggregateID, paymentID, userID, meta.CorrelationID, payload, state)
+INSERT INTO inbox (
+    event_id, event_type, aggregate_id, source_payment_id, user_id, correlation_id, payload, state,
+    source_topic, source_partition, source_offset, payload_sha256
+)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+ON CONFLICT (event_id) DO UPDATE SET
+    source_topic = EXCLUDED.source_topic,
+    source_partition = EXCLUDED.source_partition,
+    source_offset = EXCLUDED.source_offset,
+    payload_sha256 = EXCLUDED.payload_sha256
+WHERE inbox.source_topic IS NULL
+  AND inbox.event_type = EXCLUDED.event_type
+  AND inbox.aggregate_id = EXCLUDED.aggregate_id
+  AND inbox.source_payment_id = EXCLUDED.source_payment_id
+  AND inbox.user_id = EXCLUDED.user_id
+  AND inbox.correlation_id = EXCLUDED.correlation_id`,
+		meta.EventID, meta.EventType, meta.AggregateID, paymentID, userID, meta.CorrelationID, payload, state,
+		meta.SourceTopic, meta.SourcePartition, meta.SourceOffset, meta.PayloadSHA256)
 	if err != nil {
 		return false, fmt.Errorf("insert subscription inbox: %w", err)
 	}
-	return command.RowsAffected() == 1, nil
+	if command.RowsAffected() == 1 {
+		return true, nil
+	}
+	var eventType, aggregateID, storedPaymentID, storedUserID, correlationID, payloadHash string
+	if err := tx.QueryRow(ctx, `SELECT event_type, aggregate_id, source_payment_id, user_id, correlation_id, payload_sha256 FROM inbox WHERE event_id = $1`, meta.EventID).Scan(
+		&eventType, &aggregateID, &storedPaymentID, &storedUserID, &correlationID, &payloadHash,
+	); err != nil {
+		return false, fmt.Errorf("load subscription inbox replay: %w", err)
+	}
+	if eventType != meta.EventType || aggregateID != meta.AggregateID || storedPaymentID != paymentID || storedUserID != userID || correlationID != meta.CorrelationID || payloadHash != meta.PayloadSHA256 {
+		return false, domain.ErrConflict
+	}
+	return false, nil
 }
 
 func markInboxProcessed(ctx context.Context, tx pgx.Tx, eventID string, now time.Time) error {
 	if _, err := tx.Exec(ctx, `UPDATE inbox SET state = 'processed', payload = NULL, lease_until = NULL, processed_at = $2, last_error_code = NULL WHERE event_id = $1`, eventID, now); err != nil {
 		return fmt.Errorf("complete subscription inbox: %w", err)
+	}
+	return nil
+}
+
+func deadLetterInbox(ctx context.Context, tx pgx.Tx, eventID string, now time.Time, reason string) error {
+	command, err := tx.Exec(ctx, `
+WITH dead AS (
+    UPDATE inbox SET state = 'dead', payload = NULL, lease_until = NULL, processed_at = $2, last_error_code = $3
+    WHERE event_id = $1
+    RETURNING source_topic, source_partition, source_offset, payload_sha256
+)
+INSERT INTO consumer_dead_letters (topic, partition, record_offset, payload_sha256, reason_code)
+SELECT source_topic, source_partition, source_offset, payload_sha256, $3 FROM dead
+WHERE source_topic IS NOT NULL
+ON CONFLICT (topic, partition, record_offset) DO NOTHING`, eventID, now, reason)
+	if err != nil {
+		return fmt.Errorf("dead-letter subscription inbox: %w", err)
+	}
+	if command.RowsAffected() != 1 {
+		return fmt.Errorf("dead-letter subscription inbox: source metadata missing or already recorded")
 	}
 	return nil
 }
@@ -590,8 +740,18 @@ func insertOutbox(ctx context.Context, tx pgx.Tx, topic, subscriptionID, userID,
 	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO outbox (event_id, topic, partition_key, aggregate_id, dedupe_key, payload) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (dedupe_key) DO NOTHING`, eventID, topic, "user:"+userID, subscriptionID, dedupeKey, payload); err != nil {
+	var sequence int64
+	if err := tx.QueryRow(ctx, `UPDATE subscriptions SET aggregate_sequence = aggregate_sequence + 1 WHERE id = $1 RETURNING aggregate_sequence`, subscriptionID).Scan(&sequence); err != nil {
+		return fmt.Errorf("advance subscription aggregate sequence: %w", err)
+	}
+	command, err := tx.Exec(ctx, `
+INSERT INTO outbox (event_id, topic, partition_key, aggregate_id, aggregate_sequence, dedupe_key, payload)
+VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (dedupe_key) DO NOTHING`, eventID, topic, "user:"+userID, subscriptionID, sequence, dedupeKey, payload)
+	if err != nil {
 		return fmt.Errorf("insert subscription outbox: %w", err)
+	}
+	if command.RowsAffected() != 1 {
+		return domain.ErrConflict
 	}
 	return nil
 }
@@ -613,3 +773,14 @@ func buildEventPayload(topic, eventID, subscriptionID, userID, correlationID str
 }
 
 func timePtr(value time.Time) *time.Time { return &value }
+
+func transactionTime(ctx context.Context, tx pgx.Tx, override *time.Time) (time.Time, error) {
+	if override != nil {
+		return override.UTC(), nil
+	}
+	var now time.Time
+	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+		return time.Time{}, fmt.Errorf("read authoritative database time: %w", err)
+	}
+	return now.UTC(), nil
+}

@@ -20,58 +20,74 @@ import (
 )
 
 type Consumer struct {
-	client     *kgo.Client
+	client     consumerClient
 	service    *application.Service
 	store      domain.Store
 	logger     *zap.Logger
 	retryDelay time.Duration
 }
 
-func NewConsumer(client *kgo.Client, service *application.Service, store domain.Store, logger *zap.Logger, retryDelay time.Duration) *Consumer {
+type consumerClient interface {
+	PollRecords(context.Context, int) kgo.Fetches
+	AllowRebalance()
+	CommitRecords(context.Context, ...*kgo.Record) error
+	SetOffsets(map[string]map[int32]kgo.EpochOffset)
+}
+
+func NewConsumer(client consumerClient, service *application.Service, store domain.Store, logger *zap.Logger, retryDelay time.Duration) *Consumer {
 	return &Consumer{client: client, service: service, store: store, logger: logger, retryDelay: retryDelay}
 }
 
 func (c *Consumer) Run(ctx context.Context) {
-	for ctx.Err() == nil {
-		fetches := c.client.PollRecords(ctx, 1)
-		if err := fetches.Err(); err != nil {
-			if ctx.Err() == nil {
-				c.logger.Warn("subscription Kafka poll failed", zap.String("error_type", fmt.Sprintf("%T", err)))
-			}
-			continue
+	for c.pollOnce(ctx) {
+	}
+}
+
+func (c *Consumer) pollOnce(ctx context.Context) (keepRunning bool) {
+	fetches := c.client.PollRecords(ctx, 1)
+	defer c.client.AllowRebalance()
+
+	for _, fetchErr := range fetches.Errors() {
+		if ctx.Err() == nil {
+			c.logger.Warn("subscription Kafka partition fetch failed",
+				zap.String("error_type", fmt.Sprintf("%T", fetchErr.Err)),
+				zap.String("topic", fetchErr.Topic),
+				zap.Int32("partition", fetchErr.Partition),
+			)
 		}
-		records := fetches.Records()
-		if len(records) == 0 {
-			c.client.AllowRebalance()
-			continue
+	}
+
+	records := fetches.Records()
+	for index, record := range records {
+		if ctx.Err() != nil {
+			c.rewind(records[index:])
+			return false
 		}
-		record := records[0]
 		err := c.process(ctx, record)
 		if err != nil {
 			if code, poison := application.ContractErrorCode(err); poison {
 				sum := sha256.Sum256(record.Value)
 				if deadErr := c.store.RecordDeadLetter(ctx, record.Topic, record.Partition, record.Offset, hex.EncodeToString(sum[:]), code); deadErr != nil {
-					c.rewind(record)
+					c.rewind(records[index:])
 					c.logRetry(ctx, deadErr)
-					c.client.AllowRebalance()
-					continue
+					return ctx.Err() == nil
 				}
 			} else {
-				c.rewind(record)
+				c.rewind(records[index:])
 				c.logRetry(ctx, err)
-				c.client.AllowRebalance()
-				continue
+				return ctx.Err() == nil
 			}
 		}
 		commitCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		err = c.client.CommitRecords(commitCtx, record)
 		cancel()
 		if err != nil {
-			c.rewind(record)
+			c.rewind(records[index:])
 			c.logRetry(ctx, err)
+			return ctx.Err() == nil
 		}
-		c.client.AllowRebalance()
 	}
+	return ctx.Err() == nil
 }
 
 func (c *Consumer) process(ctx context.Context, record *kgo.Record) error {
@@ -82,7 +98,13 @@ func (c *Consumer) process(ctx context.Context, record *kgo.Record) error {
 	if envelope.SchemaVersion != 1 || envelope.EventType != record.Topic || envelope.Producer != "billing-service" || envelope.PartitionKey != string(record.Key) {
 		return &application.ContractError{Code: "invalid_envelope_metadata"}
 	}
-	meta := domain.EventMeta{EventID: envelope.EventID, EventType: envelope.EventType, AggregateID: envelope.AggregateID, CorrelationID: envelope.CorrelationID, CausationID: envelope.CausationID, OccurredAt: envelope.OccurredAt}
+	sum := sha256.Sum256(record.Value)
+	meta := domain.EventMeta{
+		EventID: envelope.EventID, EventType: envelope.EventType, AggregateID: envelope.AggregateID,
+		CorrelationID: envelope.CorrelationID, CausationID: envelope.CausationID, OccurredAt: envelope.OccurredAt,
+		SourceTopic: record.Topic, SourcePartition: record.Partition, SourceOffset: record.Offset,
+		PayloadSHA256: hex.EncodeToString(sum[:]),
+	}
 	switch record.Topic {
 	case "billing.payment.succeeded.v1":
 		if envelope.AggregateType != "payment" {
@@ -119,10 +141,21 @@ func strictDecode(payload []byte, target any) error {
 	return nil
 }
 
-func (c *Consumer) rewind(record *kgo.Record) {
-	c.client.SetOffsets(map[string]map[int32]kgo.EpochOffset{
-		record.Topic: {record.Partition: {Epoch: record.LeaderEpoch, Offset: record.Offset}},
-	})
+func (c *Consumer) rewind(records []*kgo.Record) {
+	offsets := make(map[string]map[int32]kgo.EpochOffset)
+	for _, record := range records {
+		partitions := offsets[record.Topic]
+		if partitions == nil {
+			partitions = make(map[int32]kgo.EpochOffset)
+			offsets[record.Topic] = partitions
+		}
+		if current, exists := partitions[record.Partition]; !exists || record.Offset < current.Offset {
+			partitions[record.Partition] = kgo.EpochOffset{Epoch: record.LeaderEpoch, Offset: record.Offset}
+		}
+	}
+	if len(offsets) > 0 {
+		c.client.SetOffsets(offsets)
+	}
 }
 
 func (c *Consumer) logRetry(ctx context.Context, err error) {

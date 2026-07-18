@@ -39,13 +39,16 @@ delete the metadata or advance offsets manually without an incident record.
 ## Outbox Not Published
 
 Restore Kafka and allow retry. Rows in `pending` or expired `processing` lease
-state are recoverable. Do not insert a replacement event: the durable dedupe key
-and event ID are authoritative. Verify publication before marking an incident
-resolved.
+state are recoverable. A later `aggregate_sequence` remains intentionally
+blocked until every lower sequence is published. Do not insert a replacement
+event: the durable dedupe key and event ID are authoritative. Verify publication
+in sequence before marking an incident resolved.
 
 ## Refund Waiting For Payment
 
 A verified refund can arrive before its payment event and remain `pending` with
 `payment_not_received`. Restore payment-event processing and allow reconciliation.
-Do not manufacture a period or revoke a user manually. Revocation is emitted only
-when recalculation finds no valid current or future paid period.
+Do not manufacture a period or revoke a user manually. A permanent mismatch is
+atomically moved to `dead` with payload-free source metadata. Reconciliation
+emits terminal revoke when nothing remains or `refund_gap` revoke when access
+must stop until a remaining future period starts.

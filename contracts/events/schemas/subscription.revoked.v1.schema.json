@@ -6,7 +6,7 @@
       "type": "object", "required": ["subscription_id", "user_id", "reason", "effective_at"], "additionalProperties": false,
       "properties": {
         "subscription_id": {"type": "string", "format": "uuid"}, "user_id": {"type": "string", "format": "uuid"},
-        "reason": {"enum": ["refund", "admin_block", "abuse", "deleted"]}, "affected_period_ids": {"type": "array", "items": {"type": "string", "format": "uuid"}},
+        "reason": {"enum": ["refund", "refund_gap", "admin_block", "abuse", "deleted"]}, "affected_period_ids": {"type": "array", "items": {"type": "string", "format": "uuid"}},
         "effective_at": {"type": "string", "format": "date-time"}
       }
     }

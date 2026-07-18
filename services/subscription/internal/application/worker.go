@@ -21,11 +21,10 @@ type Worker struct {
 	pollInterval time.Duration
 	retryDelay   time.Duration
 	lease        time.Duration
-	now          func() time.Time
 }
 
 func NewWorker(store domain.Store, publisher Publisher, logger *zap.Logger, pollInterval, retryDelay, lease time.Duration) *Worker {
-	return &Worker{store: store, publisher: publisher, logger: logger, pollInterval: pollInterval, retryDelay: retryDelay, lease: lease, now: func() time.Time { return time.Now().UTC() }}
+	return &Worker{store: store, publisher: publisher, logger: logger, pollInterval: pollInterval, retryDelay: retryDelay, lease: lease}
 }
 
 func (w *Worker) Run(ctx context.Context) {
@@ -59,15 +58,15 @@ func (w *Worker) reconcileRefund(ctx context.Context) error {
 		return err
 	}
 	delay := RetryBackoff(w.retryDelay, work.Attempts, work.InboxID)
-	return w.store.ApplyClaimedRefund(ctx, work, w.now(), delay)
+	return w.store.ApplyClaimedRefund(ctx, work, delay)
 }
 
 func (w *Worker) advanceLifecycle(ctx context.Context) error {
-	subscription, ok, err := w.store.ClaimDue(ctx, w.now(), w.lease)
+	subscription, ok, err := w.store.ClaimDue(ctx, w.lease)
 	if err != nil || !ok {
 		return err
 	}
-	return w.store.CompleteDue(ctx, subscription.SubscriptionID, w.now())
+	return w.store.CompleteDue(ctx, subscription.SubscriptionID)
 }
 
 func (w *Worker) publishOutbox(ctx context.Context) error {

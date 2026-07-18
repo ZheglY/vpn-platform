@@ -9,7 +9,7 @@ Accepted on 2026-07-12 for Stage 0 and future MVP planning.
 | PD-003 | MVP has one test plan: 30 days, no hard traffic cap, one selected region, one primary node, one failover, 24h grace. | Accepted | Price and currency come from seed configuration, not domain constants. |
 | PD-004 | Purchase during active subscription extends from `current_period_end`; purchase after expiry starts from confirmed payment time. | Accepted | Must be covered by boundary-time tests in Stage 4. |
 | PD-005 | v1 supports only full operator-initiated refunds. | Accepted | Partial refunds are not supported. |
-| PD-006 | Confirmed full refund is tied to the specific payment-funded subscription period. | Accepted | Revoke access only if recalculation leaves no valid current/future paid entitlement. |
+| PD-006 | Confirmed full refund is tied to the specific payment-funded subscription period. | Accepted | Revoke terminally when nothing remains; revoke with `refund_gap` when only future entitlement remains; preserve currently valid access for historical/future-only refunds. |
 | PD-007 | Subscription receives primary node in selected region plus one failover node. | Accepted | User is not given all platform nodes. |
 | PD-008 | Happ HWID and device limit are not used in v1. | Accepted | No unused device fields or interfaces should be introduced early. |
 | PD-009 | Only aggregate traffic and health statistics are allowed. | Accepted | No DNS, domains, destination IPs, packet content, or browsing history. |

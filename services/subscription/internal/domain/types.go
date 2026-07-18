@@ -20,12 +20,16 @@ const (
 )
 
 type EventMeta struct {
-	EventID       string
-	EventType     string
-	AggregateID   string
-	CorrelationID string
-	CausationID   *string
-	OccurredAt    time.Time
+	EventID         string
+	EventType       string
+	AggregateID     string
+	CorrelationID   string
+	CausationID     *string
+	OccurredAt      time.Time
+	SourceTopic     string
+	SourcePartition int32
+	SourceOffset    int64
+	PayloadSHA256   string
 }
 
 type PaymentSucceeded struct {
@@ -93,13 +97,13 @@ type OutboxMessage struct {
 
 type Store interface {
 	Ping(context.Context) error
-	RecordPaymentReplay(context.Context, EventMeta, PaymentSucceeded, time.Time) (bool, error)
-	ApplyPayment(context.Context, EventMeta, PaymentSucceeded, Order, time.Time) error
-	StoreRefund(context.Context, EventMeta, RefundSucceeded, time.Time) error
+	RecordPaymentReplay(context.Context, EventMeta, PaymentSucceeded) (bool, error)
+	ApplyPayment(context.Context, EventMeta, PaymentSucceeded, Order) error
+	StoreRefund(context.Context, EventMeta, RefundSucceeded) error
 	ClaimRefund(context.Context, time.Duration) (RefundWork, bool, error)
-	ApplyClaimedRefund(context.Context, RefundWork, time.Time, time.Duration) error
-	ClaimDue(context.Context, time.Time, time.Duration) (Subscription, bool, error)
-	CompleteDue(context.Context, string, time.Time) error
+	ApplyClaimedRefund(context.Context, RefundWork, time.Duration) error
+	ClaimDue(context.Context, time.Duration) (Subscription, bool, error)
+	CompleteDue(context.Context, string) error
 	GetSubscription(context.Context, string) (Subscription, error)
 	RecordDeadLetter(context.Context, string, int32, int64, string, string) error
 	ClaimOutbox(context.Context, time.Duration) (OutboxMessage, bool, error)

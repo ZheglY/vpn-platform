@@ -12,7 +12,7 @@
   "data": {
     "subscription_id": "99999999-9999-4999-8999-999999999999",
     "user_id": "33333333-3333-4333-8333-333333333333",
-    "reason": "refund",
+    "reason": "refund_gap",
     "affected_period_ids": ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
     "effective_at": "2026-07-18T12:00:00Z"
   }

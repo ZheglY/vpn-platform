@@ -2,8 +2,10 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,16 +13,20 @@ import (
 	"github.com/ZheglY/vpn-platform/services/subscription/internal/domain"
 )
 
+const zeroPayloadHash = "0000000000000000000000000000000000000000000000000000000000000000"
+
+var sourceOffsets atomic.Int64
+
 func TestIntegrationPaymentIsIdempotentAndConcurrentExtensionsSerialize(t *testing.T) {
 	store := openIntegrationStore(t)
 	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
 	userID := newUUID(t)
 	first, firstOrder := paymentFixture(t, userID, now)
-	if err := store.ApplyPayment(context.Background(), paymentMeta(t, first), first, firstOrder, now); err != nil {
+	if err := store.applyPaymentAt(context.Background(), paymentMeta(t, first), first, firstOrder, now); err != nil {
 		t.Fatal(err)
 	}
 	duplicateMeta := paymentMeta(t, first)
-	if err := store.ApplyPayment(context.Background(), duplicateMeta, first, firstOrder, now); err != nil {
+	if err := store.applyPaymentAt(context.Background(), duplicateMeta, first, firstOrder, now); err != nil {
 		t.Fatal(err)
 	}
 	assertCount(t, store, `SELECT count(*) FROM subscription_periods`, 1)
@@ -42,7 +48,7 @@ func TestIntegrationPaymentIsIdempotentAndConcurrentExtensionsSerialize(t *testi
 		go func(payment domain.PaymentSucceeded, order domain.Order, meta domain.EventMeta) {
 			defer wg.Done()
 			<-start
-			errs <- store.ApplyPayment(context.Background(), meta, payment, order, now.Add(3*time.Hour))
+			errs <- store.applyPaymentAt(context.Background(), meta, payment, order, now.Add(3*time.Hour))
 		}(input.payment, input.order, input.meta)
 	}
 	close(start)
@@ -72,33 +78,33 @@ func TestIntegrationLifecycleExactBoundariesAndLeaseRecovery(t *testing.T) {
 	payment, order := paymentFixture(t, userID, start)
 	order.PlanSnapshot.DurationDays = 1
 	order.PlanSnapshot.GracePeriodHours = 1
-	if err := store.ApplyPayment(context.Background(), paymentMeta(t, payment), payment, order, start); err != nil {
+	if err := store.applyPaymentAt(context.Background(), paymentMeta(t, payment), payment, order, start); err != nil {
 		t.Fatal(err)
 	}
 	periodEnd := start.Add(24 * time.Hour)
-	claimed, ok, err := store.ClaimDue(context.Background(), periodEnd, time.Minute)
+	claimed, ok, err := store.claimDueAt(context.Background(), periodEnd, time.Minute)
 	if err != nil || !ok {
 		t.Fatalf("claim at period boundary ok=%v err=%v", ok, err)
 	}
-	if _, ok, err := store.ClaimDue(context.Background(), periodEnd.Add(30*time.Second), time.Minute); err != nil || ok {
+	if _, ok, err := store.claimDueAt(context.Background(), periodEnd.Add(30*time.Second), time.Minute); err != nil || ok {
 		t.Fatalf("lease was not respected ok=%v err=%v", ok, err)
 	}
-	claimed, ok, err = store.ClaimDue(context.Background(), periodEnd.Add(time.Minute), time.Minute)
+	claimed, ok, err = store.claimDueAt(context.Background(), periodEnd.Add(time.Minute), time.Minute)
 	if err != nil || !ok {
 		t.Fatalf("expired lease was not recovered ok=%v err=%v", ok, err)
 	}
-	if err := store.CompleteDue(context.Background(), claimed.SubscriptionID, periodEnd); err != nil {
+	if err := store.completeDueAt(context.Background(), claimed.SubscriptionID, periodEnd); err != nil {
 		t.Fatal(err)
 	}
 	assertStatus(t, store, userID, domain.StatusGrace)
-	if _, ok, err := store.ClaimDue(context.Background(), periodEnd.Add(time.Hour-time.Nanosecond), time.Minute); err != nil || ok {
+	if _, ok, err := store.claimDueAt(context.Background(), periodEnd.Add(time.Hour-time.Nanosecond), time.Minute); err != nil || ok {
 		t.Fatalf("claimed before grace boundary ok=%v err=%v", ok, err)
 	}
-	claimed, ok, err = store.ClaimDue(context.Background(), periodEnd.Add(time.Hour), time.Minute)
+	claimed, ok, err = store.claimDueAt(context.Background(), periodEnd.Add(time.Hour), time.Minute)
 	if err != nil || !ok {
 		t.Fatalf("claim at grace boundary ok=%v err=%v", ok, err)
 	}
-	if err := store.CompleteDue(context.Background(), claimed.SubscriptionID, periodEnd.Add(time.Hour)); err != nil {
+	if err := store.completeDueAt(context.Background(), claimed.SubscriptionID, periodEnd.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	assertStatus(t, store, userID, domain.StatusExpired)
@@ -112,31 +118,86 @@ func TestIntegrationLifecycleExactBoundariesAndLeaseRecovery(t *testing.T) {
 	}
 }
 
+func TestIntegrationSchedulerProductionPathUsesPostgresTime(t *testing.T) {
+	store := openIntegrationStore(t)
+	paidAt := time.Now().UTC().Add(-48 * time.Hour)
+	payment, order := paymentFixture(t, newUUID(t), paidAt)
+	order.PlanSnapshot.DurationDays = 1
+	order.PlanSnapshot.GracePeriodHours = 1
+	if err := store.applyPaymentAt(context.Background(), paymentMeta(t, payment), payment, order, paidAt); err != nil {
+		t.Fatal(err)
+	}
+	claimed, ok, err := store.ClaimDue(context.Background(), time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("production DB-time claim ok=%v err=%v", ok, err)
+	}
+	if err := store.CompleteDue(context.Background(), claimed.SubscriptionID); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, store, payment.UserID, domain.StatusExpired)
+	assertCount(t, store, `SELECT count(*) FROM outbox WHERE topic='subscription.expired.v1'`, 1)
+}
+
 func TestIntegrationRefundBeforePaymentReconcilesAndRevokes(t *testing.T) {
 	store := openIntegrationStore(t)
 	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
 	userID := newUUID(t)
 	payment, order := paymentFixture(t, userID, now)
 	refund := refundFixture(t, payment, now.Add(time.Hour))
-	if err := store.StoreRefund(context.Background(), refundMeta(t, refund), refund, now); err != nil {
+	if err := store.storeRefundAt(context.Background(), refundMeta(t, refund), refund, now); err != nil {
 		t.Fatal(err)
 	}
 	assertCount(t, store, `SELECT count(*) FROM inbox WHERE state='pending'`, 1)
-	if err := store.ApplyPayment(context.Background(), paymentMeta(t, payment), payment, order, now); err != nil {
+	if err := store.applyPaymentAt(context.Background(), paymentMeta(t, payment), payment, order, now); err != nil {
 		t.Fatal(err)
 	}
 	work, ok, err := store.ClaimRefund(context.Background(), time.Minute)
 	if err != nil || !ok {
 		t.Fatalf("claim pending refund ok=%v err=%v", ok, err)
 	}
-	if err := store.ApplyClaimedRefund(context.Background(), work, now.Add(time.Hour), time.Second); err != nil {
+	if err := store.applyClaimedRefundAt(context.Background(), work, now.Add(time.Hour), time.Second); err != nil {
 		t.Fatal(err)
 	}
 	assertStatus(t, store, userID, domain.StatusRevoked)
 	assertCount(t, store, `SELECT count(*) FROM outbox WHERE topic='subscription.revoked.v1'`, 1)
 }
 
-func TestIntegrationDelayedPaymentEmitsActivationThenBoundaryExpiry(t *testing.T) {
+func TestIntegrationConflictingRefundBeforePaymentMovesAtomicallyToDeadLetter(t *testing.T) {
+	store := openIntegrationStore(t)
+	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
+	originalUserID := newUUID(t)
+	payment, _ := paymentFixture(t, originalUserID, now)
+	refund := refundFixture(t, payment, now.Add(time.Hour))
+	if err := store.storeRefundAt(context.Background(), refundMeta(t, refund), refund, now); err != nil {
+		t.Fatal(err)
+	}
+
+	conflictingPayment := payment
+	conflictingPayment.UserID = newUUID(t)
+	conflictingPayment.OrderID = newUUID(t)
+	conflictingOrder := domain.Order{
+		OrderID: conflictingPayment.OrderID, UserID: conflictingPayment.UserID, Status: "paid",
+		AmountMinor: conflictingPayment.AmountMinor, Currency: conflictingPayment.Currency,
+		PlanSnapshot: domain.PlanSnapshot{PlanID: conflictingPayment.PlanID, DurationDays: 30, GracePeriodHours: 24, AmountMinor: conflictingPayment.AmountMinor, Currency: conflictingPayment.Currency, Region: "ru-test"},
+	}
+	if err := store.applyPaymentAt(context.Background(), paymentMeta(t, conflictingPayment), conflictingPayment, conflictingOrder, now); err != nil {
+		t.Fatal(err)
+	}
+	work, ok, err := store.ClaimRefund(context.Background(), time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("claim conflicting refund ok=%v err=%v", ok, err)
+	}
+	if err := store.applyClaimedRefundAt(context.Background(), work, now.Add(time.Hour), time.Second); err != nil {
+		t.Fatal(err)
+	}
+	assertCount(t, store, `SELECT count(*) FROM inbox WHERE event_id=$1 AND state='dead' AND payload IS NULL AND last_error_code='durable_state_conflict'`, 1, work.InboxID)
+	assertCount(t, store, `SELECT count(*) FROM consumer_dead_letters WHERE topic=$1 AND partition=$2 AND record_offset=$3 AND payload_sha256=$4 AND reason_code='durable_state_conflict'`, 1, work.Meta.SourceTopic, work.Meta.SourcePartition, work.Meta.SourceOffset, work.Meta.PayloadSHA256)
+	if _, ok, err := store.ClaimRefund(context.Background(), time.Minute); err != nil || ok {
+		t.Fatalf("dead refund was claimed again ok=%v err=%v", ok, err)
+	}
+}
+
+func TestIntegrationDelayedPaymentCommitsFinalExpiredState(t *testing.T) {
 	store := openIntegrationStore(t)
 	paidAt := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	now := paidAt.Add(48 * time.Hour)
@@ -144,15 +205,7 @@ func TestIntegrationDelayedPaymentEmitsActivationThenBoundaryExpiry(t *testing.T
 	payment, order := paymentFixture(t, userID, paidAt)
 	order.PlanSnapshot.DurationDays = 1
 	order.PlanSnapshot.GracePeriodHours = 1
-	if err := store.ApplyPayment(context.Background(), paymentMeta(t, payment), payment, order, now); err != nil {
-		t.Fatal(err)
-	}
-	assertStatus(t, store, userID, domain.StatusActive)
-	claimed, ok, err := store.ClaimDue(context.Background(), now, time.Minute)
-	if err != nil || !ok {
-		t.Fatalf("delayed payment was not immediately due: ok=%v err=%v", ok, err)
-	}
-	if err := store.CompleteDue(context.Background(), claimed.SubscriptionID, now); err != nil {
+	if err := store.applyPaymentAt(context.Background(), paymentMeta(t, payment), payment, order, now); err != nil {
 		t.Fatal(err)
 	}
 	assertStatus(t, store, userID, domain.StatusExpired)
@@ -169,7 +222,7 @@ func TestIntegrationDelayedPaymentEmitsActivationThenBoundaryExpiry(t *testing.T
 		}
 		topics = append(topics, topic)
 	}
-	if len(topics) != 2 || topics[0] != "subscription.activated.v1" || topics[1] != "subscription.expired.v1" {
+	if len(topics) != 1 || topics[0] != "subscription.expired.v1" {
 		t.Fatalf("topics=%v", topics)
 	}
 	var effectiveAt time.Time
@@ -191,11 +244,21 @@ func TestIntegrationRefundCurrentFutureAndHistoricalPeriods(t *testing.T) {
 		second, secondOrder := paymentFixture(t, userID, now.Add(time.Hour))
 		applyPayments(t, store, now, first, firstOrder, second, secondOrder)
 		refund := refundFixture(t, first, now.Add(2*time.Hour))
-		if err := store.StoreRefund(context.Background(), refundMeta(t, refund), refund, now.Add(2*time.Hour)); err != nil {
+		if err := store.storeRefundAt(context.Background(), refundMeta(t, refund), refund, now.Add(2*time.Hour)); err != nil {
 			t.Fatal(err)
 		}
 		assertStatus(t, store, userID, domain.StatusPending)
-		assertCount(t, store, `SELECT count(*) FROM outbox WHERE topic='subscription.revoked.v1'`, 0)
+		assertCount(t, store, `SELECT count(*) FROM outbox WHERE topic='subscription.revoked.v1' AND payload->'data'->>'reason'='refund_gap'`, 1)
+		futureStart := now.Add(30 * 24 * time.Hour)
+		claimed, ok, err := store.claimDueAt(context.Background(), futureStart, time.Minute)
+		if err != nil || !ok {
+			t.Fatalf("claim future period ok=%v err=%v", ok, err)
+		}
+		if err := store.completeDueAt(context.Background(), claimed.SubscriptionID, futureStart); err != nil {
+			t.Fatal(err)
+		}
+		assertStatus(t, store, userID, domain.StatusActive)
+		assertCount(t, store, `SELECT count(*) FROM outbox WHERE topic='subscription.activated.v1'`, 2)
 	})
 
 	t.Run("future refund preserves current", func(t *testing.T) {
@@ -206,7 +269,7 @@ func TestIntegrationRefundCurrentFutureAndHistoricalPeriods(t *testing.T) {
 		second, secondOrder := paymentFixture(t, userID, now.Add(time.Hour))
 		applyPayments(t, store, now, first, firstOrder, second, secondOrder)
 		refund := refundFixture(t, second, now.Add(2*time.Hour))
-		if err := store.StoreRefund(context.Background(), refundMeta(t, refund), refund, now.Add(2*time.Hour)); err != nil {
+		if err := store.storeRefundAt(context.Background(), refundMeta(t, refund), refund, now.Add(2*time.Hour)); err != nil {
 			t.Fatal(err)
 		}
 		assertStatus(t, store, userID, domain.StatusActive)
@@ -226,7 +289,7 @@ func TestIntegrationRefundCurrentFutureAndHistoricalPeriods(t *testing.T) {
 		applyPayments(t, store, start, first, firstOrder, second, secondOrder)
 		now := start.Add(25 * time.Hour)
 		refund := refundFixture(t, first, now)
-		if err := store.StoreRefund(context.Background(), refundMeta(t, refund), refund, now); err != nil {
+		if err := store.storeRefundAt(context.Background(), refundMeta(t, refund), refund, now); err != nil {
 			t.Fatal(err)
 		}
 		assertStatus(t, store, userID, domain.StatusActive)
@@ -245,7 +308,7 @@ func TestIntegrationPeriodSnapshotAndOutboxAreAtomic(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = store.pool.Exec(context.Background(), `ALTER TABLE outbox DROP CONSTRAINT IF EXISTS reject_test_outbox`)
 	})
-	if err := store.ApplyPayment(context.Background(), paymentMeta(t, payment), payment, order, now); err == nil {
+	if err := store.applyPaymentAt(context.Background(), paymentMeta(t, payment), payment, order, now); err == nil {
 		t.Fatal("payment application succeeded while outbox insert was rejected")
 	}
 	if _, err := store.pool.Exec(context.Background(), `ALTER TABLE outbox DROP CONSTRAINT reject_test_outbox`); err != nil {
@@ -254,6 +317,75 @@ func TestIntegrationPeriodSnapshotAndOutboxAreAtomic(t *testing.T) {
 	assertCount(t, store, `SELECT count(*) FROM subscriptions`, 0)
 	assertCount(t, store, `SELECT count(*) FROM subscription_periods`, 0)
 	assertCount(t, store, `SELECT count(*) FROM inbox`, 0)
+}
+
+func TestIntegrationPaymentReplayRejectsChangedTermsAndEventPayload(t *testing.T) {
+	store := openIntegrationStore(t)
+	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
+	payment, order := paymentFixture(t, newUUID(t), now)
+	meta := paymentMeta(t, payment)
+	if err := store.applyPaymentAt(context.Background(), meta, payment, order, now); err != nil {
+		t.Fatal(err)
+	}
+
+	changedTerms := payment
+	changedTerms.AmountMinor++
+	if _, err := store.recordPaymentReplayAt(context.Background(), paymentMeta(t, changedTerms), changedTerms, now); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("changed payment terms error=%v, want durable conflict", err)
+	}
+
+	changedPayloadMeta := meta
+	changedPayloadMeta.PayloadSHA256 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	if err := store.applyPaymentAt(context.Background(), changedPayloadMeta, payment, order, now); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("changed event payload error=%v, want durable conflict", err)
+	}
+	assertCount(t, store, `SELECT count(*) FROM subscription_periods`, 1)
+	assertCount(t, store, `SELECT count(*) FROM inbox`, 1)
+}
+
+func TestIntegrationOutboxPreventsReverseCompletionAcrossWorkers(t *testing.T) {
+	store := openIntegrationStore(t)
+	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
+	userID := newUUID(t)
+	first, firstOrder := paymentFixture(t, userID, now)
+	second, secondOrder := paymentFixture(t, userID, now.Add(time.Hour))
+	applyPayments(t, store, now, first, firstOrder, second, secondOrder)
+
+	firstMessage, ok, err := store.ClaimOutbox(context.Background(), time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("first worker claim ok=%v err=%v", ok, err)
+	}
+	type claimResult struct {
+		message domain.OutboxMessage
+		ok      bool
+		err     error
+	}
+	reverseAttempt := make(chan claimResult, 1)
+	go func() {
+		message, claimed, claimErr := store.ClaimOutbox(context.Background(), time.Minute)
+		reverseAttempt <- claimResult{message: message, ok: claimed, err: claimErr}
+	}()
+	result := <-reverseAttempt
+	if result.err != nil || result.ok {
+		t.Fatalf("second worker bypassed unpublished sequence: ok=%v event=%s err=%v", result.ok, result.message.EventID, result.err)
+	}
+	if err := store.CompleteOutbox(context.Background(), firstMessage.EventID); err != nil {
+		t.Fatal(err)
+	}
+	secondMessage, ok, err := store.ClaimOutbox(context.Background(), time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("second worker claim after first completion ok=%v err=%v", ok, err)
+	}
+	var firstSequence, secondSequence int64
+	if err := store.pool.QueryRow(context.Background(), `SELECT aggregate_sequence FROM outbox WHERE event_id=$1`, firstMessage.EventID).Scan(&firstSequence); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.pool.QueryRow(context.Background(), `SELECT aggregate_sequence FROM outbox WHERE event_id=$1`, secondMessage.EventID).Scan(&secondSequence); err != nil {
+		t.Fatal(err)
+	}
+	if firstSequence != 1 || secondSequence != 2 {
+		t.Fatalf("delivery sequences=%d,%d, want 1,2", firstSequence, secondSequence)
+	}
 }
 
 func openIntegrationStore(t *testing.T) *Store {
@@ -290,7 +422,7 @@ func paymentFixture(t *testing.T, userID string, paidAt time.Time) (domain.Payme
 
 func paymentMeta(t *testing.T, payment domain.PaymentSucceeded) domain.EventMeta {
 	t.Helper()
-	return domain.EventMeta{EventID: newUUID(t), EventType: "billing.payment.succeeded.v1", AggregateID: payment.PaymentID, CorrelationID: newUUID(t), OccurredAt: payment.PaidAt}
+	return domain.EventMeta{EventID: newUUID(t), EventType: "billing.payment.succeeded.v1", AggregateID: payment.PaymentID, CorrelationID: newUUID(t), OccurredAt: payment.PaidAt, SourceTopic: "billing.payment.succeeded.v1", SourcePartition: 0, SourceOffset: sourceOffsets.Add(1), PayloadSHA256: zeroPayloadHash}
 }
 
 func refundFixture(t *testing.T, payment domain.PaymentSucceeded, refundedAt time.Time) domain.RefundSucceeded {
@@ -300,15 +432,15 @@ func refundFixture(t *testing.T, payment domain.PaymentSucceeded, refundedAt tim
 
 func refundMeta(t *testing.T, refund domain.RefundSucceeded) domain.EventMeta {
 	t.Helper()
-	return domain.EventMeta{EventID: newUUID(t), EventType: "billing.refund.succeeded.v1", AggregateID: refund.RefundID, CorrelationID: newUUID(t), OccurredAt: refund.RefundedAt}
+	return domain.EventMeta{EventID: newUUID(t), EventType: "billing.refund.succeeded.v1", AggregateID: refund.RefundID, CorrelationID: newUUID(t), OccurredAt: refund.RefundedAt, SourceTopic: "billing.refund.succeeded.v1", SourcePartition: 0, SourceOffset: sourceOffsets.Add(1), PayloadSHA256: zeroPayloadHash}
 }
 
 func applyPayments(t *testing.T, store *Store, now time.Time, first domain.PaymentSucceeded, firstOrder domain.Order, second domain.PaymentSucceeded, secondOrder domain.Order) {
 	t.Helper()
-	if err := store.ApplyPayment(context.Background(), paymentMeta(t, first), first, firstOrder, now); err != nil {
+	if err := store.applyPaymentAt(context.Background(), paymentMeta(t, first), first, firstOrder, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ApplyPayment(context.Background(), paymentMeta(t, second), second, secondOrder, now.Add(time.Hour)); err != nil {
+	if err := store.applyPaymentAt(context.Background(), paymentMeta(t, second), second, secondOrder, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 }

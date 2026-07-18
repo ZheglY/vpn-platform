@@ -21,7 +21,7 @@ The current environment is portfolio/sandbox only. It does not use real YooKassa
 - Grace period is 24 hours.
 - Buying while active extends from `current_period_end`; buying after expiry starts from confirmed payment time.
 - Only full operator-initiated refunds in v1.
-- Confirmed full refund is tied to the specific payment-funded subscription period; access is revoked only if recalculation leaves no valid current/future paid entitlement.
+- Confirmed full refund is tied to the specific payment-funded subscription period; it revokes current access when recalculation creates a gap, while historical or future-only refunds preserve currently valid access.
 - Happ HWID and device limit are not used in v1.
 - Only aggregate traffic and health data may be collected.
 - Management plane uses private WireGuard networking and mTLS.
@@ -199,7 +199,7 @@ The existing payment event remains v1-compatible and intentionally carries no mu
 - A purchase after expiry or revocation starts at provider-confirmed `paid_at`.
 - At `current_period_end`, active becomes grace. At `grace_ends_at`, active/grace becomes expired and emits one event.
 - Scheduler rows use recoverable leases and `FOR UPDATE SKIP LOCKED`; exact boundaries use `now >= boundary` semantics.
-- A confirmed full refund marks only its immutable source period, recalculates remaining paid periods, and emits revoke only when no valid current/future entitlement remains.
+- A confirmed full refund marks only its immutable source period and recalculates remaining paid periods. It emits terminal revoke when nothing remains, refund-gap revoke when only a future period remains, and no revoke for historical or future-only changes while current access remains valid.
 - Refund-before-payment is retained as normalized pending inbox work and reconciled after the source period arrives.
 
 ### Access and Provisioning
