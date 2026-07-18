@@ -1,0 +1,22 @@
+{
+  "event_id": "66666666-6666-4666-8666-666666666666",
+  "event_type": "billing.refund.succeeded.v1",
+  "schema_version": 1,
+  "occurred_at": "2026-07-18T12:00:00Z",
+  "producer": "billing-service",
+  "correlation_id": "44444444-4444-4444-8444-444444444444",
+  "causation_id": null,
+  "aggregate_type": "refund",
+  "aggregate_id": "77777777-7777-4777-8777-777777777777",
+  "partition_key": "user:33333333-3333-4333-8333-333333333333",
+  "data": {
+    "refund_id": "77777777-7777-4777-8777-777777777777",
+    "payment_id": "11111111-1111-4111-8111-111111111111",
+    "order_id": "22222222-2222-4222-8222-222222222222",
+    "user_id": "33333333-3333-4333-8333-333333333333",
+    "amount_minor": 29900,
+    "currency": "RUB",
+    "refund_scope": "full",
+    "refunded_at": "2026-07-18T12:00:00Z"
+  }
+}

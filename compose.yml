@@ -11,6 +11,7 @@ services:
       IDENTITY_DB_PASSWORD: ${IDENTITY_DB_PASSWORD:?set IDENTITY_DB_PASSWORD}
       CATALOG_DB_PASSWORD: ${CATALOG_DB_PASSWORD:?set CATALOG_DB_PASSWORD}
       BILLING_DB_PASSWORD: ${BILLING_DB_PASSWORD:?set BILLING_DB_PASSWORD}
+      SUBSCRIPTION_DB_PASSWORD: ${SUBSCRIPTION_DB_PASSWORD:?set SUBSCRIPTION_DB_PASSWORD}
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     healthcheck:
@@ -78,6 +79,11 @@ services:
       - |
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic billing.payment.succeeded.v1 --partitions 3 --replication-factor 1
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic billing.payment.canceled.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic billing.refund.succeeded.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic subscription.activated.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic subscription.extended.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic subscription.expired.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic subscription.revoked.v1 --partitions 3 --replication-factor 1
     depends_on:
       kafka:
         condition: service_healthy
@@ -293,6 +299,70 @@ services:
       catalog-service:
         condition: service_healthy
       yookassa-api:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    networks:
+      - backend
+
+  subscription-migrate:
+    image: vpn-service/migrate:local
+    build:
+      context: .
+      dockerfile: tools/migrate/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      DATABASE_URL: postgres://subscription_app:${SUBSCRIPTION_DB_PASSWORD:?set SUBSCRIPTION_DB_PASSWORD}@postgres:5432/subscription_service?sslmode=disable
+      MIGRATIONS_DIR: /migrations/subscription
+      MIGRATION_COMMAND: up
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+
+  subscription-service:
+    image: vpn-service/subscription-service:local
+    build:
+      context: .
+      dockerfile: services/subscription/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      APP_ENV: local
+      LOG_LEVEL: info
+      HTTP_ADDR: ":8086"
+      DATABASE_URL: postgres://subscription_app:${SUBSCRIPTION_DB_PASSWORD:?set SUBSCRIPTION_DB_PASSWORD}@postgres:5432/subscription_service?sslmode=disable
+      BILLING_BASE_URL: https://billing-service:8084
+      INTERNAL_AUTH_MODE: mtls
+      INTERNAL_CLIENT_CERT_FILE: /run/mtls/subscription-service.crt
+      INTERNAL_CLIENT_KEY_FILE: /run/mtls/subscription-service.key
+      INTERNAL_SERVER_CA_FILE: /run/mtls/ca.crt
+      MTLS_TRUST_DOMAIN: vpn-service
+      MTLS_NAMESPACE: local
+      SERVER_TLS_CERT_FILE: /run/mtls/subscription-service.crt
+      SERVER_TLS_KEY_FILE: /run/mtls/subscription-service.key
+      CLIENT_CA_FILE: /run/mtls/ca.crt
+      HEALTHCHECK_CA_FILE: /run/mtls/ca.crt
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_CONSUMER_GROUP: subscription-service-v1
+      SUBSCRIPTION_WORKER_POLL_INTERVAL: 250ms
+      SUBSCRIPTION_WORKER_RETRY_DELAY: 500ms
+    ports:
+      - "127.0.0.1:${SUBSCRIPTION_HTTP_PORT:-8086}:8086"
+    volumes:
+      - ./secrets/dev-mtls/ca.crt:/run/mtls/ca.crt:ro
+      - ./secrets/dev-mtls/subscription-service.crt:/run/mtls/subscription-service.crt:ro
+      - ./secrets/dev-mtls/subscription-service.key:/run/mtls/subscription-service.key:ro
+    depends_on:
+      subscription-migrate:
+        condition: service_completed_successfully
+      billing-service:
         condition: service_healthy
       kafka:
         condition: service_healthy

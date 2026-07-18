@@ -8,9 +8,9 @@ Happ is only the user client. It is not the VPN provider. User VPN traffic must 
 
 ## Current Scope
 
-Stage 3 implements onboarding plus the sandbox purchase boundary. `identity-service`, `catalog-service`, `billing-service`, and `telegram-bot` run locally with separate logical PostgreSQL databases. Billing owns orders, provider state, normalized webhook inbox, reconciliation, and its transactional outbox. Kafka publishes terminal payment facts, but no Stage 4 consumer or entitlement behavior exists yet.
+Stage 4 implements onboarding, the sandbox purchase boundary, and subscription entitlement lifecycle. `identity-service`, `catalog-service`, `billing-service`, `subscription-service`, and `telegram-bot` run locally with separate logical PostgreSQL databases. Subscription consumes verified payment facts through its own inbox, validates immutable terms through Billing's allowlisted mTLS order API, owns paid periods, and publishes activation, extension, expiry, and revocation facts through its outbox.
 
-The current environment is portfolio/sandbox only. It does not use real YooKassa credentials, issue receipts, process refunds, activate subscriptions, create VPN credentials, or touch Xray-core.
+The current environment is portfolio/sandbox only. It does not use real YooKassa credentials, issue receipts, initiate provider refunds, create VPN credentials, issue Happ URLs, or touch Xray-core. Active entitlement explicitly does not mean VPN access is ready.
 
 ## Product Decisions Already Accepted
 
@@ -172,6 +172,7 @@ sequenceDiagram
     participant Billing as billing-service
     participant Yoo as YooKassa sandbox
     participant Kafka
+    participant Sub as subscription-service
     User->>Bot: choose plan
     Bot->>Catalog: GET published plans
     Bot->>Billing: POST order/payment with Idempotency-Key
@@ -184,7 +185,22 @@ sequenceDiagram
     Billing->>Yoo: worker GET payment for verification
     Billing->>Billing: state transition + outbox in one DB transaction
     Billing->>Kafka: billing.payment.succeeded.v1
+    Kafka->>Sub: payment fact with user partition key
+    Sub->>Billing: GET immutable order snapshot over mTLS
+    Sub->>Sub: inbox + period + entitlement + outbox transaction
+    Sub->>Kafka: subscription.activated.v1 or subscription.extended.v1
 ```
+
+The existing payment event remains v1-compatible and intentionally carries no mutable catalog lookup. Subscription validates event identity, plan, and money against the immutable Billing order snapshot before committing the Kafka offset. Duplicate event IDs and duplicate source payment IDs cannot create another period.
+
+### Entitlement Time Lifecycle
+
+- A purchase while active or in grace appends a complete period at the current entitlement end.
+- A purchase after expiry or revocation starts at provider-confirmed `paid_at`.
+- At `current_period_end`, active becomes grace. At `grace_ends_at`, active/grace becomes expired and emits one event.
+- Scheduler rows use recoverable leases and `FOR UPDATE SKIP LOCKED`; exact boundaries use `now >= boundary` semantics.
+- A confirmed full refund marks only its immutable source period, recalculates remaining paid periods, and emits revoke only when no valid current/future entitlement remains.
+- Refund-before-payment is retained as normalized pending inbox work and reconciled after the source period arrives.
 
 ### Access and Provisioning
 

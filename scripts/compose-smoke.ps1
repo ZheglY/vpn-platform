@@ -15,6 +15,7 @@ Set-DefaultEnv "KAFKA_PORT" "9094"
 Set-DefaultEnv "IDENTITY_DB_PASSWORD" "local-compose-identity"
 Set-DefaultEnv "CATALOG_DB_PASSWORD" "local-compose-catalog"
 Set-DefaultEnv "BILLING_DB_PASSWORD" "local-compose-billing"
+Set-DefaultEnv "SUBSCRIPTION_DB_PASSWORD" "local-compose-subscription"
 Set-DefaultEnv "TELEGRAM_WEBHOOK_SECRET" "local-compose-webhook-secret"
 Set-DefaultEnv "TELEGRAM_BOT_TOKEN" "local-compose-fake-bot-token"
 Set-DefaultEnv "FAKE_TELEGRAM_SEND_DELAY" "1s"
@@ -106,7 +107,7 @@ try {
         exit $LASTEXITCODE
     }
 
-    $buildServices = @("identity-migrate", "identity-service", "catalog-service", "billing-service", "yookassa-api", "telegram-api", "telegram-bot")
+    $buildServices = @("identity-migrate", "identity-service", "catalog-service", "billing-service", "subscription-service", "yookassa-api", "telegram-api", "telegram-bot")
     foreach ($service in $buildServices) {
         docker compose --profile core --profile app build $service
         if ($LASTEXITCODE -ne 0) {
@@ -127,6 +128,7 @@ try {
         "vpn-service-catalog-service-1",
         "vpn-service-yookassa-api-1",
         "vpn-service-billing-service-1",
+        "vpn-service-subscription-service-1",
         "vpn-service-telegram-api-1",
         "vpn-service-telegram-bot-1"
     )
@@ -145,7 +147,7 @@ try {
         Start-Sleep -Seconds 2
     }
 
-    docker stop "vpn-service-telegram-bot-1" "vpn-service-billing-service-1" | Out-Null
+    docker stop "vpn-service-telegram-bot-1" "vpn-service-subscription-service-1" "vpn-service-billing-service-1" | Out-Null
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
@@ -159,18 +161,29 @@ try {
     } finally {
         $env:BILLING_TEST_DATABASE_URL = $previousBillingTestDatabaseURL
     }
-    docker start "vpn-service-billing-service-1" "vpn-service-telegram-bot-1" | Out-Null
+    $previousSubscriptionTestDatabaseURL = $env:SUBSCRIPTION_TEST_DATABASE_URL
+    try {
+        $env:SUBSCRIPTION_TEST_DATABASE_URL = "postgres://subscription_app:$($env:SUBSCRIPTION_DB_PASSWORD)@127.0.0.1:$($env:POSTGRES_PORT)/subscription_service?sslmode=disable"
+        go test ./services/subscription/internal/postgres -run '^TestIntegration' -count=1
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
+    } finally {
+        $env:SUBSCRIPTION_TEST_DATABASE_URL = $previousSubscriptionTestDatabaseURL
+    }
+    docker start "vpn-service-billing-service-1" "vpn-service-subscription-service-1" "vpn-service-telegram-bot-1" | Out-Null
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
     foreach ($attempt in 1..60) {
         $billingStatus = docker inspect -f "{{.State.Health.Status}}" "vpn-service-billing-service-1"
+        $subscriptionStatus = docker inspect -f "{{.State.Health.Status}}" "vpn-service-subscription-service-1"
         $botStatus = docker inspect -f "{{.State.Health.Status}}" "vpn-service-telegram-bot-1"
-        if ($billingStatus -eq "healthy" -and $botStatus -eq "healthy") {
+        if ($billingStatus -eq "healthy" -and $subscriptionStatus -eq "healthy" -and $botStatus -eq "healthy") {
             break
         }
         if ($attempt -eq 60) {
-            throw "Billing services did not recover after integration tests: billing=$billingStatus bot=$botStatus"
+            throw "Services did not recover after integration tests: billing=$billingStatus subscription=$subscriptionStatus bot=$botStatus"
         }
         Start-Sleep -Seconds 2
     }
@@ -318,6 +331,21 @@ try {
         throw "verified payment transition did not converge exactly once: payment=$paymentStatus order=$orderStatus published=$publishedCount processed_inbox=$processedInbox inbox_count=$succeededInboxCount"
     }
 
+    foreach ($attempt in 1..80) {
+        $subscriptionStatus = Invoke-ScalarSQL "subscription_service" "SELECT status FROM subscriptions LIMIT 1"
+        $subscriptionPeriodCount = Invoke-ScalarSQL "subscription_service" "SELECT count(*) FROM subscription_periods"
+        $subscriptionInboxCount = Invoke-ScalarSQL "subscription_service" "SELECT count(*) FROM inbox WHERE event_type='billing.payment.succeeded.v1' AND state='processed'"
+        $activationPublishedCount = Invoke-ScalarSQL "subscription_service" "SELECT count(*) FROM outbox WHERE topic='subscription.activated.v1' AND state='published'"
+        if ($subscriptionStatus -eq "active" -and $subscriptionPeriodCount -eq "1" -and $subscriptionInboxCount -eq "1" -and $activationPublishedCount -eq "1") {
+            break
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    if ($subscriptionStatus -ne "active" -or $subscriptionPeriodCount -ne "1" -or $subscriptionInboxCount -ne "1" -or $activationPublishedCount -ne "1") {
+        throw "subscription activation did not converge exactly once: status=$subscriptionStatus periods=$subscriptionPeriodCount inbox=$subscriptionInboxCount activation=$activationPublishedCount"
+    }
+    $subscriptionUserID = Invoke-ScalarSQL "subscription_service" "SELECT user_id FROM subscriptions LIMIT 1"
+
     $outOfOrderWebhook = '{"type":"notification","event":"payment.canceled","object":{"id":"' + $providerPaymentID + '","status":"canceled"}}'
     if ((Invoke-YooKassaWebhookStatus $outOfOrderWebhook) -ne 200) {
         throw "out-of-order webhook did not return 200"
@@ -372,6 +400,18 @@ try {
         exit $LASTEXITCODE
     }
     go run ./tools/mtlsprobe/cmd/mtlsprobe GET https://127.0.0.1:8084/internal/v1/users/00000000-0000-4000-8000-000000000001/orders/00000000-0000-4000-8000-000000000002 secrets/dev-mtls/identity-health.crt secrets/dev-mtls/identity-health.key secrets/dev-mtls/ca.crt 403
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+    go run ./tools/mtlsprobe/cmd/mtlsprobe GET https://127.0.0.1:8084/internal/v1/users/00000000-0000-4000-8000-000000000001/orders/00000000-0000-4000-8000-000000000002 secrets/dev-mtls/subscription-service.crt secrets/dev-mtls/subscription-service.key secrets/dev-mtls/ca.crt 404
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+    go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:8086/internal/v1/users/$subscriptionUserID/subscription" secrets/dev-mtls/telegram-bot.crt secrets/dev-mtls/telegram-bot.key secrets/dev-mtls/ca.crt 200
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+    go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:8086/internal/v1/users/$subscriptionUserID/subscription" secrets/dev-mtls/identity-health.crt secrets/dev-mtls/identity-health.key secrets/dev-mtls/ca.crt 403
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }

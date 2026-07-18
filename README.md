@@ -2,7 +2,7 @@
 
 Production-grade portfolio project for selling prepaid VPN subscriptions through a Telegram bot and delivering Happ-compatible subscription URLs backed by Xray-core nodes.
 
-Current milestone: Stage 3 catalog, billing, and YooKassa sandbox.
+Current milestone: Stage 4 subscription lifecycle.
 
 ## What Exists Now
 
@@ -11,13 +11,14 @@ Current milestone: Stage 3 catalog, billing, and YooKassa sandbox.
 - `identity-service` with Telegram identity, consent persistence, health, version, and metrics endpoints.
 - `catalog-service` with immutable versioned plans, prices, regions, and published Telegram catalog queries.
 - `billing-service` with immutable order snapshots, idempotent payment creation, YooKassa sandbox verification, webhook inbox, reconciliation, and transactional Kafka outbox.
+- `subscription-service` with a separate database, payment/refund inbox, immutable entitlement periods, activation/extension, grace/expiry scheduler, refund recalculation, and transactional Kafka outbox.
 - `telegram-bot` with Telegram webhook dedupe, consent, `/plans`, and `/buy` sandbox purchase flow.
 - Local Compose stack with isolated service databases, Kafka, Redis, fake Telegram API, and fake YooKassa API.
 - Goose migration runner tool.
 - OpenAPI/AsyncAPI contract linting.
 - Makefile and CI verification workflow, including Go vulnerability checks, secret scan, image build, and image scan.
 
-No real payments, refunds, subscription lifecycle, VPN provisioning, or access credential delivery exist yet.
+No real payments, refund initiation, VPN provisioning, Happ subscription URL, or access credential delivery exist yet. Subscription entitlement is implemented but does not mean VPN access is ready.
 
 ## Requirements
 
@@ -57,9 +58,9 @@ The telegram-bot service listens on `http://localhost:8081` by default:
 - `GET /version`
 - `GET /metrics`
 
-Catalog and billing listen on `https://localhost:8083` and `https://localhost:8084`. The YooKassa webhook is public TLS ingress on billing; internal order and payment endpoints require an allowlisted service certificate.
+Catalog, billing, and subscription listen on `https://localhost:8083`, `https://localhost:8084`, and `https://localhost:8086`. The YooKassa webhook is public TLS ingress on billing; internal order, payment, and entitlement endpoints require an allowlisted service certificate.
 
-`make compose-smoke` exercises onboarding and a complete sandbox purchase. It first runs real PostgreSQL concurrency, deadline, lease, trigger, and transaction tests, then verifies concurrent purchase clicks, ambiguous provider response recovery, duplicate and out-of-order webhooks, provider GET verification, a single terminal database transition, and one Kafka event.
+`make compose-smoke` exercises onboarding and a complete sandbox purchase through entitlement activation. It runs real Billing and Subscription PostgreSQL suites, then verifies concurrent purchase clicks, ambiguous provider recovery, duplicate/out-of-order webhooks, Billing event publication, Subscription inbox processing, one immutable period, one activation event, and mTLS authorization.
 
 ## Repository Rules
 

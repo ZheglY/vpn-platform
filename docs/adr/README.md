@@ -23,3 +23,4 @@ ADRs are immutable decision records. If a decision changes after implementation 
 | [0017](0017-credential-material-and-revoke-lifecycle.md) | Credential material delivery and revoke lifecycle | Accepted |
 | [0018](0018-spiffe-verified-chain-and-local-mtls.md) | SPIFFE verified-chain identity and local mTLS | Accepted |
 | [0019](0019-stage3-billing-state-and-idempotency.md) | Stage 3 billing state and idempotency | Accepted |
+| [0020](0020-stage4-subscription-lifecycle.md) | Stage 4 subscription lifecycle | Accepted |

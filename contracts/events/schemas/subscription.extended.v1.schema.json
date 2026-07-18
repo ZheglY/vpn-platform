@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vpn-platform.invalid/schemas/subscription.extended.v1.schema.json",
+  "$defs": {
+    "periodData": {
+      "type": "object",
+      "required": ["subscription_id", "user_id", "period_id", "source_order_id", "source_payment_id", "period_start", "period_end", "grace_ends_at"],
+      "additionalProperties": false,
+      "properties": {
+        "subscription_id": {"type": "string", "format": "uuid"}, "user_id": {"type": "string", "format": "uuid"},
+        "period_id": {"type": "string", "format": "uuid"}, "source_order_id": {"type": "string", "format": "uuid"},
+        "source_payment_id": {"type": "string", "format": "uuid"}, "period_start": {"type": "string", "format": "date-time"},
+        "period_end": {"type": "string", "format": "date-time"}, "grace_ends_at": {"type": "string", "format": "date-time"}
+      }
+    }
+  },
+  "type": "object",
+  "required": ["event_id", "event_type", "schema_version", "occurred_at", "producer", "correlation_id", "causation_id", "aggregate_type", "aggregate_id", "partition_key", "data"],
+  "additionalProperties": false,
+  "properties": {
+    "event_id": {"type": "string", "format": "uuid"}, "event_type": {"const": "subscription.extended.v1"}, "schema_version": {"const": 1},
+    "occurred_at": {"type": "string", "format": "date-time"}, "producer": {"const": "subscription-service"},
+    "correlation_id": {"type": "string", "format": "uuid"}, "causation_id": {"type": ["string", "null"], "format": "uuid"},
+    "aggregate_type": {"const": "subscription"}, "aggregate_id": {"type": "string", "format": "uuid"},
+    "partition_key": {"type": "string", "pattern": "^user:[0-9a-fA-F-]{36}$"}, "data": {"$ref": "#/$defs/periodData"}
+  }
+}

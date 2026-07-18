@@ -1,0 +1,19 @@
+{
+  "event_id": "13131313-1313-4313-8313-131313131313",
+  "event_type": "subscription.revoked.v1",
+  "schema_version": 1,
+  "occurred_at": "2026-07-18T12:00:00Z",
+  "producer": "subscription-service",
+  "correlation_id": "44444444-4444-4444-8444-444444444444",
+  "causation_id": "66666666-6666-4666-8666-666666666666",
+  "aggregate_type": "subscription",
+  "aggregate_id": "99999999-9999-4999-8999-999999999999",
+  "partition_key": "user:33333333-3333-4333-8333-333333333333",
+  "data": {
+    "subscription_id": "99999999-9999-4999-8999-999999999999",
+    "user_id": "33333333-3333-4333-8333-333333333333",
+    "reason": "refund",
+    "affected_period_ids": ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
+    "effective_at": "2026-07-18T12:00:00Z"
+  }
+}

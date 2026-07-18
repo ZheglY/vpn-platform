@@ -100,6 +100,14 @@ func run(outDir string) error {
 			spiffeName: "billing-service",
 			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		},
+		{
+			name:       "subscription-service",
+			commonName: "subscription-service.local",
+			dnsNames:   []string{"subscription-service", "subscription-service.local", "localhost"},
+			ipAddrs:    []net.IP{net.ParseIP("127.0.0.1")},
+			spiffeName: "subscription-service",
+			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		},
 	}
 
 	for _, spec := range specs {

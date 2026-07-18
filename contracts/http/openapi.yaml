@@ -1,14 +1,14 @@
 openapi: 3.1.0
 info:
   title: VPN Subscription Platform API
-  version: 0.3.0-stage3
+  version: 0.4.0-stage4
   license:
     name: UNLICENSED
     identifier: LicenseRef-UNLICENSED
   description: >
-    Stage 3 contract. Identity, Telegram onboarding, catalog, order, payment,
-    and YooKassa webhook operations marked as implemented are executable.
-    Later milestone operations remain skeletons and are not production commitments.
+    Stage 4 contract. Identity, Telegram onboarding, catalog, billing, and
+    subscription entitlement operations marked as implemented are executable.
+    Access and provisioning operations remain skeletons and are not production commitments.
 servers:
   - url: https://api.example.invalid
     description: Public API placeholder
@@ -370,7 +370,7 @@ paths:
       x-contract-status: implemented-stage3
       security:
         - ServiceMTLS: []
-      x-allowed-service-identities: [telegram-bot, admin-cli]
+      x-allowed-service-identities: [telegram-bot, subscription-service, admin-cli]
       parameters:
         - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/UserId'
@@ -489,9 +489,10 @@ paths:
       tags: [Subscription]
       summary: Get current entitlement subscription for a user
       operationId: getUserSubscription
-      x-contract-status: skeleton
+      x-contract-status: implemented-stage4
       security:
         - ServiceMTLS: []
+      x-allowed-service-identities: [telegram-bot, access-service, admin-cli]
       parameters:
         - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/UserId'
@@ -505,6 +506,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '404':
           $ref: '#/components/responses/Error'
         default:
           $ref: '#/components/responses/Error'
@@ -1023,6 +1026,9 @@ components:
           type: [string, 'null']
           format: date-time
         current_period_end:
+          type: [string, 'null']
+          format: date-time
+        grace_ends_at:
           type: [string, 'null']
           format: date-time
     AccessStatus:

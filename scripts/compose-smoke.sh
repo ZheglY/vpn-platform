@@ -10,6 +10,7 @@ export KAFKA_PORT="${KAFKA_PORT:-9094}"
 export IDENTITY_DB_PASSWORD="${IDENTITY_DB_PASSWORD:-local-compose-identity}"
 export CATALOG_DB_PASSWORD="${CATALOG_DB_PASSWORD:-local-compose-catalog}"
 export BILLING_DB_PASSWORD="${BILLING_DB_PASSWORD:-local-compose-billing}"
+export SUBSCRIPTION_DB_PASSWORD="${SUBSCRIPTION_DB_PASSWORD:-local-compose-subscription}"
 export TELEGRAM_WEBHOOK_SECRET="${TELEGRAM_WEBHOOK_SECRET:-local-compose-webhook-secret}"
 export TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-local-compose-fake-bot-token}"
 export FAKE_TELEGRAM_SEND_DELAY="${FAKE_TELEGRAM_SEND_DELAY:-1s}"
@@ -69,7 +70,7 @@ wait_redis_processing_key() {
   exit 1
 }
 
-build_services=(identity-migrate identity-service catalog-service billing-service yookassa-api telegram-api telegram-bot)
+build_services=(identity-migrate identity-service catalog-service billing-service subscription-service yookassa-api telegram-api telegram-bot)
 for service in "${build_services[@]}"; do
   docker compose --profile core --profile app build "$service"
 done
@@ -84,6 +85,7 @@ containers=(
   vpn-service-catalog-service-1
   vpn-service-yookassa-api-1
   vpn-service-billing-service-1
+  vpn-service-subscription-service-1
   vpn-service-telegram-api-1
   vpn-service-telegram-bot-1
 )
@@ -111,20 +113,23 @@ for container in "${containers[@]}"; do
   fi
 done
 
-docker stop vpn-service-telegram-bot-1 vpn-service-billing-service-1 >/dev/null
+docker stop vpn-service-telegram-bot-1 vpn-service-subscription-service-1 vpn-service-billing-service-1 >/dev/null
 BILLING_TEST_DATABASE_URL="postgres://billing_app:${BILLING_DB_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/billing_service?sslmode=disable" \
   go test ./services/billing/internal/postgres -run '^TestIntegration' -count=1
-docker start vpn-service-billing-service-1 vpn-service-telegram-bot-1 >/dev/null
+SUBSCRIPTION_TEST_DATABASE_URL="postgres://subscription_app:${SUBSCRIPTION_DB_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/subscription_service?sslmode=disable" \
+  go test ./services/subscription/internal/postgres -run '^TestIntegration' -count=1
+docker start vpn-service-billing-service-1 vpn-service-subscription-service-1 vpn-service-telegram-bot-1 >/dev/null
 for _ in $(seq 1 60); do
   billing_status="$(docker inspect -f '{{.State.Health.Status}}' vpn-service-billing-service-1)"
+  subscription_status="$(docker inspect -f '{{.State.Health.Status}}' vpn-service-subscription-service-1)"
   bot_status="$(docker inspect -f '{{.State.Health.Status}}' vpn-service-telegram-bot-1)"
-  if [[ "$billing_status" == "healthy" && "$bot_status" == "healthy" ]]; then
+  if [[ "$billing_status" == "healthy" && "$subscription_status" == "healthy" && "$bot_status" == "healthy" ]]; then
     break
   fi
   sleep 2
 done
-if [[ "$billing_status" != "healthy" || "$bot_status" != "healthy" ]]; then
-  echo "billing services did not recover after integration tests: billing=$billing_status bot=$bot_status" >&2
+if [[ "$billing_status" != "healthy" || "$subscription_status" != "healthy" || "$bot_status" != "healthy" ]]; then
+  echo "services did not recover after integration tests: billing=$billing_status subscription=$subscription_status bot=$bot_status" >&2
   exit 1
 fi
 
@@ -256,6 +261,26 @@ if [[ "$payment_status" != "succeeded" || "$order_status" != "paid" || "$publish
   exit 1
 fi
 
+subscription_status=""
+subscription_period_count=""
+subscription_inbox_count=""
+activation_published_count=""
+for _ in $(seq 1 80); do
+  subscription_status="$(scalar_sql subscription_service "SELECT status FROM subscriptions LIMIT 1")"
+  subscription_period_count="$(scalar_sql subscription_service "SELECT count(*) FROM subscription_periods")"
+  subscription_inbox_count="$(scalar_sql subscription_service "SELECT count(*) FROM inbox WHERE event_type='billing.payment.succeeded.v1' AND state='processed'")"
+  activation_published_count="$(scalar_sql subscription_service "SELECT count(*) FROM outbox WHERE topic='subscription.activated.v1' AND state='published'")"
+  if [[ "$subscription_status" == "active" && "$subscription_period_count" == "1" && "$subscription_inbox_count" == "1" && "$activation_published_count" == "1" ]]; then
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$subscription_status" != "active" || "$subscription_period_count" != "1" || "$subscription_inbox_count" != "1" || "$activation_published_count" != "1" ]]; then
+  echo "subscription activation did not converge exactly once" >&2
+  exit 1
+fi
+subscription_user_id="$(scalar_sql subscription_service "SELECT user_id FROM subscriptions LIMIT 1")"
+
 out_of_order_webhook='{"type":"notification","event":"payment.canceled","object":{"id":"'"${provider_payment_id}"'","status":"canceled"}}'
 if [[ "$(yookassa_webhook_status "$out_of_order_webhook")" != "200" ]]; then
   echo "out-of-order webhook did not return 200" >&2
@@ -283,3 +308,6 @@ go run ./tools/mtlsprobe/cmd/mtlsprobe PUT https://127.0.0.1:8080/internal/v1/te
 go run ./tools/mtlsprobe/cmd/mtlsprobe POST https://127.0.0.1:8080/internal/v1/users/00000000-0000-4000-8000-000000000001/consents secrets/dev-mtls/billing-service.crt secrets/dev-mtls/billing-service.key secrets/dev-mtls/ca.crt 403
 go run ./tools/mtlsprobe/cmd/mtlsprobe POST https://127.0.0.1:8084/internal/v1/users/00000000-0000-4000-8000-000000000001/orders secrets/dev-mtls/billing-service.crt secrets/dev-mtls/billing-service.key secrets/dev-mtls/ca.crt 403
 go run ./tools/mtlsprobe/cmd/mtlsprobe GET https://127.0.0.1:8084/internal/v1/users/00000000-0000-4000-8000-000000000001/orders/00000000-0000-4000-8000-000000000002 secrets/dev-mtls/identity-health.crt secrets/dev-mtls/identity-health.key secrets/dev-mtls/ca.crt 403
+go run ./tools/mtlsprobe/cmd/mtlsprobe GET https://127.0.0.1:8084/internal/v1/users/00000000-0000-4000-8000-000000000001/orders/00000000-0000-4000-8000-000000000002 secrets/dev-mtls/subscription-service.crt secrets/dev-mtls/subscription-service.key secrets/dev-mtls/ca.crt 404
+go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:8086/internal/v1/users/${subscription_user_id}/subscription" secrets/dev-mtls/telegram-bot.crt secrets/dev-mtls/telegram-bot.key secrets/dev-mtls/ca.crt 200
+go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:8086/internal/v1/users/${subscription_user_id}/subscription" secrets/dev-mtls/identity-health.crt secrets/dev-mtls/identity-health.key secrets/dev-mtls/ca.crt 403

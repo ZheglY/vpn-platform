@@ -39,3 +39,14 @@ This Definition of Done applies to every implementation task after Stage 0. Stag
 - Full provider/webhook payloads, confirmation URLs, credentials, and payment secrets are absent from logs and durable inbox data.
 - Confirmation URLs are cleared on succeeded, canceled, and failed payment transitions.
 - Migration from zero, fake-provider E2E, contract examples, service images, and image scans pass before acceptance.
+
+## Stage 4 Specific
+
+- Subscription owns a separate database; no code or SQL reads Billing/Catalog/Identity databases directly.
+- The implemented payment v1 event remains compatible and is validated against Billing's immutable order snapshot over mTLS.
+- Payment inbox, immutable period, entitlement transition, and activation/extension outbox event commit atomically.
+- Duplicate event/payment IDs and concurrent different payments cannot duplicate, overlap, or shorten purchased entitlement.
+- Active, grace, expired, and refund transitions use deterministic UTC boundaries and recoverable scheduler leases.
+- Refund-before-payment and current/future/historical full-period refund cases are idempotent and tested.
+- Kafka poison handling retains no raw payload; transient failures do not advance the committed partition offset.
+- Subscription HTTP and event contracts, migration-from-zero, PostgreSQL integration suite, Compose E2E, service image, and image scan pass before acceptance.

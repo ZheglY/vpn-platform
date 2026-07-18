@@ -2,9 +2,9 @@
 
 ## Current Approval
 
-Approved milestone: Stage 3 - Catalog, Billing, and YooKassa sandbox.
+Approved milestone: Stage 4 - Subscription lifecycle.
 
-Not approved yet: Stage 4 and later implementation milestones. Do not create subscription lifecycle, access credential delivery, provisioning, notification, or VPN business logic until the relevant milestone is explicitly approved.
+Not approved yet: Stage 5 and later implementation milestones. Do not create access credential delivery, provisioning, notification delivery, or VPN business logic until the relevant milestone is explicitly approved.
 
 ## Stage 0 Plan
 
@@ -136,7 +136,7 @@ Notes:
 
 ### Stage 3 - Catalog, Billing, and YooKassa sandbox
 
-Status: acceptance-review remediation implemented on `codex/stage3-catalog-billing`; required verification completed and pending user acceptance. Stage 4 remains blocked until explicit approval.
+Status: accepted after acceptance-review remediation on `codex/stage3-catalog-billing`.
 
 Depends on Stage 2 and sandbox payment decisions. Adds immutable plan/order snapshots, YooKassa sandbox adapter, payment idempotency, webhook inbox, verification, reconciliation, and fake provider tests.
 
@@ -164,6 +164,25 @@ Notes:
 ### Stage 4 - Subscription lifecycle
 
 Depends on Stage 3 payment events. Adds entitlement state machine, extension/expiry/revocation logic, scheduler/reconciler, inbox, and time-boundary tests.
+
+Status: implementation and required verification completed on `codex/stage4-subscription-lifecycle`; pending user acceptance. Stage 5 remains blocked until explicit approval.
+
+Acceptance criteria:
+
+- `subscription-service` owns a separate PostgreSQL database and never reads another service database.
+- Existing `billing.payment.succeeded.v1` remains compatible; immutable entitlement terms are fetched through Billing's allowlisted mTLS order read API and validated against the event.
+- Payment consumption atomically commits inbox, immutable period, subscription state, and exactly one activation or extension outbox event.
+- Duplicate event IDs, duplicate payment IDs, concurrent different payments, delayed delivery, and consumer restarts do not duplicate or shorten entitlement.
+- The scheduler transitions active to grace and grace to expired at exact UTC boundaries, recovers expired leases, and emits one terminal event.
+- Full refund events are idempotent, can wait for an out-of-order payment, recalculate remaining periods, and revoke only when no valid current or future entitlement remains.
+- Public HTTP and Kafka contracts, ADRs, threat model, runbooks, Compose, migrations, and contract tests match implemented behavior.
+- PostgreSQL integration tests, `make verify`, `make compose-smoke`, and final security/concurrency/transaction review pass before Stage 4 is declared complete.
+
+Non-goals:
+
+- No subscription URL or token generation.
+- No Happ document rendering, VLESS credentials, Xray provisioning, or node operations.
+- No Telegram notification delivery or production refund initiation.
 
 ### Stage 5 - Access and Happ subscription delivery
 

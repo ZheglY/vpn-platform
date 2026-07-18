@@ -1,11 +1,11 @@
 asyncapi: 3.1.0
 info:
   title: VPN Subscription Platform Events
-  version: 0.3.0-stage3
+  version: 0.4.0-stage4
   description: >
-    Stage 3 event contract. Billing payment terminal events are implemented
-    through a transactional outbox. Later subscription and access messages remain
-    skeletons and are not production commitments.
+    Stage 4 event contract. Billing payment success and refund success are
+    consumed through a durable subscription inbox. Subscription lifecycle events
+    are emitted through a transactional outbox. Access messages remain skeletons.
 defaultContentType: application/json
 channels:
   billing.payment.succeeded.v1:
@@ -22,26 +22,31 @@ channels:
         $ref: '#/components/messages/BillingPaymentCanceledV1'
   billing.refund.succeeded.v1:
     address: billing.refund.succeeded.v1
+    x-contract-status: consumed-stage4-producer-pending
     messages:
       refundSucceeded:
         $ref: '#/components/messages/BillingRefundSucceededV1'
   subscription.activated.v1:
     address: subscription.activated.v1
+    x-contract-status: implemented-stage4
     messages:
       subscriptionActivated:
         $ref: '#/components/messages/SubscriptionActivatedV1'
   subscription.extended.v1:
     address: subscription.extended.v1
+    x-contract-status: implemented-stage4
     messages:
       subscriptionExtended:
         $ref: '#/components/messages/SubscriptionExtendedV1'
   subscription.expired.v1:
     address: subscription.expired.v1
+    x-contract-status: implemented-stage4
     messages:
       subscriptionExpired:
         $ref: '#/components/messages/SubscriptionExpiredV1'
   subscription.revoked.v1:
     address: subscription.revoked.v1
+    x-contract-status: implemented-stage4
     messages:
       subscriptionRevoked:
         $ref: '#/components/messages/SubscriptionRevokedV1'
@@ -90,8 +95,34 @@ operations:
     action: receive
     channel:
       $ref: '#/channels/billing.payment.succeeded.v1'
-    summary: Future Stage 4 subscription-service consumes payment success through inbox.
-    x-contract-status: skeleton-stage4
+    summary: subscription-service consumes payment success through a durable inbox.
+    x-contract-status: implemented-stage4
+  consumeBillingRefundSucceeded:
+    action: receive
+    channel:
+      $ref: '#/channels/billing.refund.succeeded.v1'
+    summary: subscription-service consumes provider-verified full refund success through a durable inbox.
+    x-contract-status: implemented-stage4-consumer
+  publishSubscriptionActivated:
+    action: send
+    channel:
+      $ref: '#/channels/subscription.activated.v1'
+    summary: subscription-service publishes entitlement activation; VPN access may still be unavailable.
+  publishSubscriptionExtended:
+    action: send
+    channel:
+      $ref: '#/channels/subscription.extended.v1'
+    summary: subscription-service publishes an appended immutable entitlement period.
+  publishSubscriptionExpired:
+    action: send
+    channel:
+      $ref: '#/channels/subscription.expired.v1'
+    summary: subscription-service publishes terminal entitlement expiry.
+  publishSubscriptionRevoked:
+    action: send
+    channel:
+      $ref: '#/channels/subscription.revoked.v1'
+    summary: subscription-service publishes refund revocation only when no valid paid period remains.
   publishBillingPaymentCanceled:
     action: send
     channel:
@@ -157,8 +188,12 @@ components:
             type: string
             pattern: '^user:[0-9a-fA-F-]{36}$'
       x-owner: billing-service
+      x-contract-status: consumed-stage4-producer-pending
+      x-json-schema: schemas/billing.refund.succeeded.v1.schema.json
       x-partition-key: user:{user_id}
       x-consumers: [subscription-service, notification-service]
+      x-retry: subscription-service retries transient processing without committing the Kafka offset
+      x-dlq-policy: poison records are stored as payload-free consumer dead-letter metadata and their offsets are committed
     SubscriptionActivatedV1:
       name: subscription.activated.v1
       title: Entitlement activated, VPN not necessarily ready
@@ -170,8 +205,12 @@ components:
             type: string
             pattern: '^user:[0-9a-fA-F-]{36}$'
       x-owner: subscription-service
+      x-contract-status: implemented-stage4
+      x-json-schema: schemas/subscription.activated.v1.schema.json
       x-partition-key: user:{user_id}
       x-consumers: [access-service]
+      x-retry: durable outbox retry with exponential backoff capped at five minutes
+      x-dlq-policy: unpublished records remain durable and operator-visible in the subscription outbox
       x-notification-rule: Do not tell the user that VPN is ready from this event.
     SubscriptionExtendedV1:
       name: subscription.extended.v1
@@ -184,8 +223,12 @@ components:
             type: string
             pattern: '^user:[0-9a-fA-F-]{36}$'
       x-owner: subscription-service
+      x-contract-status: implemented-stage4
+      x-json-schema: schemas/subscription.extended.v1.schema.json
       x-partition-key: user:{user_id}
       x-consumers: [access-service]
+      x-retry: durable outbox retry with exponential backoff capped at five minutes
+      x-dlq-policy: unpublished records remain durable and operator-visible in the subscription outbox
     SubscriptionExpiredV1:
       name: subscription.expired.v1
       payload:
@@ -196,8 +239,12 @@ components:
             type: string
             pattern: '^user:[0-9a-fA-F-]{36}$'
       x-owner: subscription-service
+      x-contract-status: implemented-stage4
+      x-json-schema: schemas/subscription.expired.v1.schema.json
       x-partition-key: user:{user_id}
       x-consumers: [access-service, notification-service]
+      x-retry: durable outbox retry with exponential backoff capped at five minutes
+      x-dlq-policy: unpublished records remain durable and operator-visible in the subscription outbox
     SubscriptionRevokedV1:
       name: subscription.revoked.v1
       payload:
@@ -208,8 +255,12 @@ components:
             type: string
             pattern: '^user:[0-9a-fA-F-]{36}$'
       x-owner: subscription-service
+      x-contract-status: implemented-stage4
+      x-json-schema: schemas/subscription.revoked.v1.schema.json
       x-partition-key: user:{user_id}
       x-consumers: [access-service, notification-service]
+      x-retry: durable outbox retry with exponential backoff capped at five minutes
+      x-dlq-policy: unpublished records remain durable and operator-visible in the subscription outbox
     AccessProvisionRequestV1:
       name: access.provision.request.v1
       title: Access provision request

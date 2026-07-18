@@ -5,6 +5,7 @@ Implemented local and sandbox runbooks are listed below. Production operations s
 - [Local development](local-development.md)
 - [Development mTLS](dev-mtls.md)
 - [YooKassa sandbox and billing recovery](yookassa-sandbox.md)
+- [Subscription lifecycle recovery](subscription-lifecycle.md)
 - [Support and abuse](support-abuse.md)
 
 Required before production:

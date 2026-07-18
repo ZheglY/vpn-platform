@@ -20,8 +20,8 @@ make verify
 - `npm audit --audit-level=high`
 - OpenAPI lint
 - AsyncAPI parser validation
-- billing event JSON Schema example validation
-- identity-service, catalog-service, billing-service, and telegram-bot Docker builds
+- billing and subscription event JSON Schema example validation
+- identity-service, catalog-service, billing-service, subscription-service, and telegram-bot Docker builds
 - Trivy HIGH/CRITICAL vulnerability scan for service images
 - `docker compose config --quiet`
 - `git diff --exit-code`
@@ -44,7 +44,7 @@ make compose-up
 
 Local ports bind to `127.0.0.1` only. Kafka exposes `localhost:9094` for host tools and `kafka:9092` for containers on the Compose network. `make compose-up`, `make compose-config`, and `make compose-smoke` generate local development mTLS material under ignored `secrets/dev-mtls`.
 
-Identity, catalog, and billing internal routes use HTTPS with service identity authorization in local Compose. Bot and billing readiness include their synchronous dependencies. Local `telegram-api` and `yookassa-api` fakes prevent calls to real providers. `make compose-smoke` removes Compose volumes to verify all service databases and migrations from zero.
+Identity, catalog, billing, and subscription internal routes use HTTPS with service identity authorization in local Compose. Readiness checks include synchronous dependencies and Kafka where used. Local `telegram-api` and `yookassa-api` fakes prevent calls to real providers. `make compose-smoke` removes Compose volumes to verify all service databases and migrations from zero.
 
 Stage 2 smoke also verifies:
 
@@ -66,6 +66,14 @@ Stage 3 smoke also verifies:
 - one `billing.payment.succeeded.v1` is visible in Kafka
 - billing rejects a valid but unauthorized mTLS SPIFFE identity
 
+Stage 4 smoke also verifies:
+
+- Subscription PostgreSQL tests for concurrent extensions, immutable snapshots, atomic outbox, exact period/grace boundaries, lease recovery, and refund ordering
+- `subscription-service` consumes the single verified payment event through its durable inbox
+- the Billing order read accepts `subscription-service` and still rejects non-allowlisted identities
+- one immutable paid period activates one subscription and publishes one `subscription.activated.v1`
+- the entitlement endpoint accepts `telegram-bot` mTLS identity and rejects a different valid identity
+
 Stop:
 
 ```powershell
@@ -81,6 +89,7 @@ Invoke-RestMethod http://localhost:8081/readyz
 Invoke-RestMethod http://localhost:8081/version
 docker compose exec -T catalog-service /catalog-service healthcheck
 docker compose exec -T billing-service /billing-service healthcheck
+docker compose exec -T subscription-service /subscription-service healthcheck
 ```
 
 Automated smoke:
@@ -94,6 +103,6 @@ make compose-smoke
 - Local Compose credentials are development-only and must never be reused in production.
 - Local development mTLS keys are generated secrets and must never be committed.
 - Redis is ephemeral in this project and is not a source of truth.
-- Identity, catalog, and billing use distinct logical databases and credentials even though local Compose shares one PostgreSQL instance.
+- Identity, catalog, billing, and subscription use distinct logical databases and credentials even though local Compose shares one PostgreSQL instance.
 - `TERMS_URL` must point to the immutable terms document matching `CONSENT_VERSION`; local Compose defaults to `https://example.invalid/terms/terms-v1`.
 - `YOOKASSA_SHOP_ID` and `YOOKASSA_SECRET_KEY` are local fake-provider values. Never place real credentials in `.env` or run Stage 3 against a production shop.

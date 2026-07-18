@@ -1,6 +1,6 @@
 # Initial Threat Model
 
-Method: STRIDE-inspired model updated for Stage 3. It must be reviewed again before connecting production VPS or real payment credentials.
+Method: STRIDE-inspired model updated for Stage 4. It must be reviewed again before connecting production VPS or real payment credentials.
 
 ## Scope
 
@@ -104,8 +104,11 @@ Mitigation:
 
 - Inbox unique `event_id`.
 - Business unique key for source payment/order period.
-- Subscription state machine with optimistic locking.
-- Contract and concurrency tests.
+- User-scoped PostgreSQL advisory transaction lock and immutable period constraints.
+- Event ID inbox dedupe plus unique source payment/order keys.
+- Billing order snapshot validation over an allowlisted mTLS endpoint before offset commit.
+- Poison records persist only topic coordinates, payload SHA-256, and bounded reason code; raw payload is not retained or logged.
+- Contract, concurrency, delayed delivery, refund-ordering, and exact time-boundary tests.
 
 ### T4 - Invalid Xray config removes working access
 
@@ -239,8 +242,9 @@ Mitigation:
 - Telegram webhook ingress rate limit before business processing.
 - YooKassa webhook edge rate limit and current official source-IP allowlist before public production exposure; authenticated provider GET remains mandatory.
 - `Idempotency-Key` required for payment/order/token issue/rotation commands.
-- Manual commit after successful Kafka processing and inbox persistence.
-- DLQ is actionable with alert, reason, replay tooling, and runbook.
+- Manual commit only after atomic inbox/state/outbox processing or durable poison-record metadata.
+- A transient dependency/database failure rewinds the partition offset and retries with backoff; it is never converted into poison.
+- Consumer dead-letter metadata and outbox recovery have an actionable Stage 4 runbook; production alert routing and replay CLI remain Stage 8 work.
 - No production private keys in CI logs or artifacts.
 
 ## Open Threat Model Items

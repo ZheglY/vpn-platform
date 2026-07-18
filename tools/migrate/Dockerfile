@@ -18,5 +18,6 @@ COPY --from=build /out/migrate /migrate
 COPY services/identity/migrations /migrations/identity
 COPY services/catalog/migrations /migrations/catalog
 COPY services/billing/migrations /migrations/billing
+COPY services/subscription/migrations /migrations/subscription
 USER nonroot:nonroot
 ENTRYPOINT ["/migrate"]

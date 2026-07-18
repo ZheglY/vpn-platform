@@ -24,20 +24,18 @@ import (
 	"github.com/ZheglY/vpn-platform/internal/platform/logging"
 	"github.com/ZheglY/vpn-platform/internal/platform/observability"
 	"github.com/ZheglY/vpn-platform/internal/platform/version"
-	"github.com/ZheglY/vpn-platform/services/billing/internal/application"
-	catalogclient "github.com/ZheglY/vpn-platform/services/billing/internal/catalog"
-	"github.com/ZheglY/vpn-platform/services/billing/internal/httpapi"
-	identityclient "github.com/ZheglY/vpn-platform/services/billing/internal/identity"
-	billingkafka "github.com/ZheglY/vpn-platform/services/billing/internal/kafka"
-	billingpostgres "github.com/ZheglY/vpn-platform/services/billing/internal/postgres"
-	"github.com/ZheglY/vpn-platform/services/billing/internal/yookassa"
+	"github.com/ZheglY/vpn-platform/services/subscription/internal/application"
+	billingclient "github.com/ZheglY/vpn-platform/services/subscription/internal/billing"
+	"github.com/ZheglY/vpn-platform/services/subscription/internal/httpapi"
+	subscriptionkafka "github.com/ZheglY/vpn-platform/services/subscription/internal/kafka"
+	subscriptionpostgres "github.com/ZheglY/vpn-platform/services/subscription/internal/postgres"
 )
 
 var buildVersion = "dev"
 var buildCommit = "none"
 var buildDate = "unknown"
 
-const serviceName = "billing-service"
+const serviceName = "subscription-service"
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
@@ -61,7 +59,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = logger.Sync() }()
-	store, err := billingpostgres.Open(ctx, cfg.DatabaseURL)
+	store, err := subscriptionpostgres.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
 	}
@@ -73,43 +71,38 @@ func run(ctx context.Context) error {
 			return err
 		}
 	}
-	identity, err := identityclient.NewClient(cfg.IdentityBaseURL, internalHTTP)
+	billing, err := billingclient.NewClient(cfg.BillingBaseURL, internalHTTP)
 	if err != nil {
 		return err
 	}
-	catalog, err := catalogclient.NewClient(cfg.CatalogBaseURL, internalHTTP)
-	if err != nil {
-		return err
-	}
-	providerHTTP := &http.Client{Timeout: cfg.ProviderTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	provider, err := yookassa.NewClient(cfg.YooKassaBaseURL, cfg.YooKassaShopID, cfg.YooKassaSecretKey, cfg.PaymentReturnURL, providerHTTP)
-	if err != nil {
-		return err
-	}
-	kafkaClient, err := platformkafka.NewClient(cfg.KafkaBrokers, serviceName, kgo.RequiredAcks(kgo.AllISRAcks()))
+	kafkaClient, err := platformkafka.NewClient(cfg.KafkaBrokers, serviceName,
+		kgo.ConsumerGroup(cfg.ConsumerGroup),
+		kgo.ConsumeTopics("billing.payment.succeeded.v1", "billing.refund.succeeded.v1"),
+		kgo.DisableAutoCommit(),
+		kgo.BlockRebalanceOnPoll(),
+		kgo.RequiredAcks(kgo.AllISRAcks()),
+	)
 	if err != nil {
 		return err
 	}
 	defer kafkaClient.Close()
-	service := application.NewService(store, identity, catalog, provider, cfg.YooKassaShopID, cfg.ProviderCreateWindow, cfg.WorkerRetryDelay)
-	worker := application.NewWorker(service, store, billingkafka.NewPublisher(kafkaClient), logger, cfg.WorkerPollInterval, cfg.WorkerLease)
+	service := application.NewService(store, billing)
+	consumer := subscriptionkafka.NewConsumer(kafkaClient, service, store, logger, cfg.WorkerRetryDelay)
+	worker := application.NewWorker(store, subscriptionkafka.NewPublisher(kafkaClient), logger, cfg.WorkerPollInterval, cfg.WorkerRetryDelay, cfg.WorkerLease)
+	go consumer.Run(ctx)
 	go worker.Run(ctx)
-	api := httpapi.New(service, store)
-	commerceAuth := func(next http.Handler) http.Handler { return next }
-	readAuth := commerceAuth
+
+	api := httpapi.New(store)
+	internalAuth := func(next http.Handler) http.Handler { return next }
 	if cfg.InternalAuth == "mtls" {
-		commerceAuth = httpauth.RequireService(httpauth.ServicePolicy{TrustDomain: cfg.MTLSTrustDomain, Namespace: cfg.MTLSNamespace, Allowed: []string{"telegram-bot"}})
-		readAuth = httpauth.RequireService(httpauth.ServicePolicy{TrustDomain: cfg.MTLSTrustDomain, Namespace: cfg.MTLSNamespace, Allowed: []string{"telegram-bot", "subscription-service", "admin-cli"}})
+		internalAuth = httpauth.RequireService(httpauth.ServicePolicy{TrustDomain: cfg.MTLSTrustDomain, Namespace: cfg.MTLSNamespace, Allowed: []string{"telegram-bot", "access-service", "admin-cli"}})
 	}
 	mux := http.NewServeMux()
 	mux.Handle("GET /livez", httpserver.LivenessHandler(serviceName))
-	mux.Handle("GET /readyz", httpserver.ReadinessHandler(serviceName, map[string]httpserver.Check{"postgres": store.Ping, "identity": identity.Ping, "catalog": catalog.Ping, "kafka": kafkaClient.Ping}))
+	mux.Handle("GET /readyz", httpserver.ReadinessHandler(serviceName, map[string]httpserver.Check{"postgres": store.Ping, "billing": billing.Ping, "kafka": kafkaClient.Ping}))
 	mux.Handle("GET /version", version.Handler(version.New(serviceName, buildVersion, buildCommit, buildDate)))
 	mux.Handle("GET /metrics", observability.Handler(observability.NewRegistry()))
-	mux.Handle("POST /internal/v1/users/{user_id}/orders", commerceAuth(http.HandlerFunc(api.CreateOrder)))
-	mux.Handle("GET /internal/v1/users/{user_id}/orders/{order_id}", readAuth(http.HandlerFunc(api.GetOrder)))
-	mux.Handle("POST /internal/v1/users/{user_id}/orders/{order_id}/payments", commerceAuth(http.HandlerFunc(api.CreatePayment)))
-	mux.HandleFunc("POST /webhooks/yookassa", api.YooKassaWebhook)
+	mux.Handle("GET /internal/v1/users/{user_id}/subscription", internalAuth(http.HandlerFunc(api.GetSubscription)))
 	handler := httpserver.Chain(mux, httpserver.RequestID, httpserver.LimitBody(cfg.MaxBodyBytes), httpserver.Recover(logger), httpserver.LogRequests(logger))
 	srv := httpserver.New(cfg.HTTP, handler)
 	srv.TLSConfig = cfg.TLS
@@ -118,31 +111,25 @@ func run(ctx context.Context) error {
 }
 
 type appConfig struct {
-	Environment          string
-	LogLevel             string
-	DatabaseURL          string
-	IdentityBaseURL      string
-	CatalogBaseURL       string
-	InternalAuth         string
-	ClientCertFile       string
-	ClientKeyFile        string
-	ServerCAFile         string
-	MTLSTrustDomain      string
-	MTLSNamespace        string
-	YooKassaBaseURL      string
-	YooKassaShopID       string
-	YooKassaSecretKey    string
-	PaymentReturnURL     string
-	KafkaBrokers         []string
-	OutboundTimeout      time.Duration
-	ProviderTimeout      time.Duration
-	ProviderCreateWindow time.Duration
-	WorkerPollInterval   time.Duration
-	WorkerRetryDelay     time.Duration
-	WorkerLease          time.Duration
-	MaxBodyBytes         int64
-	HTTP                 httpserver.Config
-	TLS                  *tls.Config
+	Environment        string
+	LogLevel           string
+	DatabaseURL        string
+	BillingBaseURL     string
+	InternalAuth       string
+	ClientCertFile     string
+	ClientKeyFile      string
+	ServerCAFile       string
+	MTLSTrustDomain    string
+	MTLSNamespace      string
+	KafkaBrokers       []string
+	ConsumerGroup      string
+	OutboundTimeout    time.Duration
+	WorkerPollInterval time.Duration
+	WorkerRetryDelay   time.Duration
+	WorkerLease        time.Duration
+	MaxBodyBytes       int64
+	HTTP               httpserver.Config
+	TLS                *tls.Config
 }
 
 func loadConfig() (appConfig, error) {
@@ -154,12 +141,7 @@ func loadConfig() (appConfig, error) {
 		return value
 	}
 	databaseURL := required("DATABASE_URL")
-	identityURL := required("IDENTITY_BASE_URL")
-	catalogURL := required("CATALOG_BASE_URL")
-	yooURL := required("YOOKASSA_BASE_URL")
-	shopID := required("YOOKASSA_SHOP_ID")
-	secret := required("YOOKASSA_SECRET_KEY")
-	returnURL := required("PAYMENT_RETURN_URL")
+	billingURL := required("BILLING_BASE_URL")
 	authMode := config.String("INTERNAL_AUTH_MODE", "mtls")
 	if authMode != "mtls" && authMode != "dev-insecure" {
 		fields = config.Append(fields, "INTERNAL_AUTH_MODE", fmt.Errorf("must be mtls or dev-insecure"))
@@ -168,11 +150,9 @@ func loadConfig() (appConfig, error) {
 		fields = config.Append(fields, "INTERNAL_AUTH_MODE", fmt.Errorf("dev-insecure is local only"))
 	}
 	if environment != "local" {
-		for name, value := range map[string]string{"IDENTITY_BASE_URL": identityURL, "CATALOG_BASE_URL": catalogURL, "YOOKASSA_BASE_URL": yooURL} {
-			parsed, err := url.Parse(value)
-			if err != nil || parsed.Scheme != "https" {
-				fields = config.Append(fields, name, fmt.Errorf("must use https outside local environment"))
-			}
+		parsed, err := url.Parse(billingURL)
+		if err != nil || parsed.Scheme != "https" {
+			fields = config.Append(fields, "BILLING_BASE_URL", fmt.Errorf("must use https outside local environment"))
 		}
 	}
 	var clientCert, clientKey, serverCA string
@@ -193,17 +173,15 @@ func loadConfig() (appConfig, error) {
 	parseDuration := func(name string, fallback time.Duration) time.Duration {
 		value, err := config.Duration(name, fallback)
 		fields = config.Append(fields, name, err)
+		if value <= 0 {
+			fields = config.Append(fields, name, fmt.Errorf("must be positive"))
+		}
 		return value
 	}
 	outbound := parseDuration("OUTBOUND_TIMEOUT", 5*time.Second)
-	providerTimeout := parseDuration("YOOKASSA_TIMEOUT", 10*time.Second)
-	createWindow := parseDuration("YOOKASSA_CREATE_WINDOW", 23*time.Hour)
-	if createWindow > 23*time.Hour {
-		fields = config.Append(fields, "YOOKASSA_CREATE_WINDOW", fmt.Errorf("must not exceed 23h"))
-	}
-	poll := parseDuration("BILLING_WORKER_POLL_INTERVAL", 500*time.Millisecond)
-	retry := parseDuration("BILLING_WORKER_RETRY_DELAY", time.Second)
-	lease := parseDuration("BILLING_WORKER_LEASE", 30*time.Second)
+	poll := parseDuration("SUBSCRIPTION_WORKER_POLL_INTERVAL", 500*time.Millisecond)
+	retry := parseDuration("SUBSCRIPTION_WORKER_RETRY_DELAY", time.Second)
+	lease := parseDuration("SUBSCRIPTION_WORKER_LEASE", 30*time.Second)
 	maxBody, err := config.Int("HTTP_MAX_BODY_BYTES", 64<<10)
 	fields = config.Append(fields, "HTTP_MAX_BODY_BYTES", err)
 	if maxBody <= 0 {
@@ -213,12 +191,16 @@ func loadConfig() (appConfig, error) {
 	if len(brokers) == 0 {
 		fields = config.Append(fields, "KAFKA_BROKERS", fmt.Errorf("at least one broker is required"))
 	}
+	consumerGroup := strings.TrimSpace(config.String("KAFKA_CONSUMER_GROUP", "subscription-service-v1"))
+	if consumerGroup == "" {
+		fields = config.Append(fields, "KAFKA_CONSUMER_GROUP", fmt.Errorf("must not be empty"))
+	}
 	httpCfg := httpserver.DefaultConfig()
-	httpCfg.Addr = config.String("HTTP_ADDR", ":8084")
+	httpCfg.Addr = config.String("HTTP_ADDR", ":8086")
 	if err := config.Combine(fields); err != nil {
 		return appConfig{}, err
 	}
-	return appConfig{Environment: environment, LogLevel: config.String("LOG_LEVEL", "info"), DatabaseURL: databaseURL, IdentityBaseURL: identityURL, CatalogBaseURL: catalogURL, InternalAuth: authMode, ClientCertFile: clientCert, ClientKeyFile: clientKey, ServerCAFile: serverCA, MTLSTrustDomain: config.String("MTLS_TRUST_DOMAIN", "vpn-service"), MTLSNamespace: config.String("MTLS_NAMESPACE", environment), YooKassaBaseURL: yooURL, YooKassaShopID: shopID, YooKassaSecretKey: secret, PaymentReturnURL: returnURL, KafkaBrokers: brokers, OutboundTimeout: outbound, ProviderTimeout: providerTimeout, ProviderCreateWindow: createWindow, WorkerPollInterval: poll, WorkerRetryDelay: retry, WorkerLease: lease, MaxBodyBytes: int64(maxBody), HTTP: httpCfg, TLS: tlsCfg}, nil
+	return appConfig{Environment: environment, LogLevel: config.String("LOG_LEVEL", "info"), DatabaseURL: databaseURL, BillingBaseURL: billingURL, InternalAuth: authMode, ClientCertFile: clientCert, ClientKeyFile: clientKey, ServerCAFile: serverCA, MTLSTrustDomain: config.String("MTLS_TRUST_DOMAIN", "vpn-service"), MTLSNamespace: config.String("MTLS_NAMESPACE", environment), KafkaBrokers: brokers, ConsumerGroup: consumerGroup, OutboundTimeout: outbound, WorkerPollInterval: poll, WorkerRetryDelay: retry, WorkerLease: lease, MaxBodyBytes: int64(maxBody), HTTP: httpCfg, TLS: tlsCfg}, nil
 }
 
 func splitCSV(value string) []string {
@@ -232,7 +214,7 @@ func splitCSV(value string) []string {
 }
 
 func runHealthcheck() int {
-	addr := strings.TrimPrefix(config.String("HTTP_ADDR", ":8084"), ":")
+	addr := strings.TrimPrefix(config.String("HTTP_ADDR", ":8086"), ":")
 	if _, err := strconv.Atoi(addr); err != nil {
 		return 1
 	}
