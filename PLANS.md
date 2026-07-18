@@ -189,19 +189,23 @@ Non-goals:
 
 Depends on Stage 4. Adds token generation/hash/rotation, subscription endpoint, VLESS + REALITY URI rendering, Happ compatibility tests, no-store responses, and redaction tests.
 
-Status: implementation and required verification completed on `codex/stage5-access-happ`; pending user acceptance. Stage 6 remains blocked until explicit approval.
+Status: acceptance-review remediation and required verification completed on `codex/stage5-access-happ`; pending user acceptance. Stage 5 remains unaccepted and Stage 6 remains blocked until explicit approval.
 
 Acceptance criteria:
 
 - `access-service` owns a separate PostgreSQL database and consumes subscription lifecycle and provisioning outcome events through a durable, payload-free inbox.
 - Activation or extension creates at most one current encrypted VLESS credential and atomically emits a secret-free `access.provision.request.v1` through a transactional outbox.
+- Subscription lifecycle envelopes carry a producer-owned sequence; Access atomically persists its last applied sequence, defers gaps without acknowledging them, rejects stale collisions, and checks provisioning eligibility against PostgreSQL time.
 - Provisioning success is the only transition to `active` or `degraded`; it stores a validated public endpoint snapshot and emits one secret-free `access.ready.v1` event.
+- A provisioning success delayed beyond entitlement expiry atomically starts revoke and emits no readiness. Revoke succeeds only with exact unique node-set proof bound to desired and allocation revisions, including a valid zero-allocation no-op.
 - VLESS UUIDs use versioned AES-256-GCM encryption at rest. Subscription tokens use 256 bits from `crypto/rand`; only an HMAC-SHA-256 lookup value is persisted.
 - URL issuance and rotation are serialized per subscription. Plaintext URLs exist only in the successful response; replay of a completed idempotency key returns a safe conflict because the plaintext cannot be reconstructed.
+- Global URL idempotency keys and per-subscription issuance are both serialized, and the public Redis IP/token decision is atomic across both counters.
 - Unknown, expired, revoked, and malformed public tokens receive the same `404 text/plain` response with `Cache-Control: no-store`; request logs record only `GET /s/{token}`.
 - Happ responses include compatible profile and expiry headers and deterministic VLESS + REALITY share URIs backed by golden tests.
 - Terminal entitlement events invalidate tokens synchronously and emit a revoke command; actual node allocation, Xray mutation, reconciliation, and real-Xray e2e remain Stage 6.
 - OpenAPI, AsyncAPI/JSON Schema, ADRs, threat model, runbook, Compose, migrations, contract tests, `make verify`, and `make compose-smoke` match implemented behavior.
+- Credential-owned outbox sequence barriers, security audit for every successful plaintext provisioning-material read, malformed `/s` path equivalence, and expired-status behavior have PostgreSQL/Redis/Kafka regression coverage.
 
 Risks and dependencies:
 
@@ -214,6 +218,12 @@ Non-goals:
 - No node registry, capacity selection, desired-state reconciliation, node-agent, Xray configuration changes, or production VPS access.
 - No Happ Provider ID, HWID/device enforcement, traffic accounting, or advanced app-management flags.
 - No Telegram delivery changes; telegram-bot integration with the synchronous issue API is a later approved change.
+
+Verification completed for the Stage 5 remediation on 2026-07-19:
+
+- `make verify`
+- `make compose-smoke`
+- final review of lifecycle ordering, PostgreSQL transaction boundaries, delayed provisioning, revoke proof, outbox claims, global idempotency, Redis atomicity, redaction, and public response compatibility
 
 ### Stage 6 - Provisioning control plane and node-agent
 

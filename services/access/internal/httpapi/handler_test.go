@@ -57,6 +57,26 @@ func TestUnavailableTokensAreIndistinguishable(t *testing.T) {
 	}
 }
 
+func TestMalformedSubscriptionPathsUseGenericNoStoreResponse(t *testing.T) {
+	handler := New(&fakeService{profileErr: domain.ErrNotFound}, "VPN", "", 6, nil)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /s/{token}", handler.GetHappSubscription)
+	mux.HandleFunc("GET /s/", handler.GetUnavailableHappSubscription)
+	mux.HandleFunc("GET /s", handler.GetUnavailableHappSubscription)
+	var baseline string
+	for _, path := range []string{"/s/unknown", "/s", "/s/", "/s/a/b"} {
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		fingerprint := strings.Join([]string{response.Result().Status, response.Header().Get("Content-Type"), response.Header().Get("Cache-Control"), response.Header().Get("Pragma"), response.Body.String()}, "|")
+		if baseline == "" {
+			baseline = fingerprint
+		}
+		if response.Code != http.StatusNotFound || fingerprint != baseline {
+			t.Fatalf("malformed path %q differs: %q vs %q", path, fingerprint, baseline)
+		}
+	}
+}
+
 func TestRequestLoggingUsesRouteTemplateNotToken(t *testing.T) {
 	secret := "do-not-log-this-subscription-token"
 	var output bytes.Buffer
@@ -107,6 +127,6 @@ func (f *fakeService) GetAccessStatus(context.Context, string) (domain.AccessSta
 func (f *fakeService) GetProfile(context.Context, string) (application.Profile, error) {
 	return f.profile, f.profileErr
 }
-func (f *fakeService) GetProvisioningMaterial(context.Context, string) (application.ProvisioningMaterial, error) {
+func (f *fakeService) GetProvisioningMaterial(context.Context, string, string) (application.ProvisioningMaterial, error) {
 	return application.ProvisioningMaterial{}, errors.New("not implemented")
 }

@@ -12,12 +12,26 @@ import (
 	"github.com/ZheglY/vpn-platform/services/access/internal/credential"
 )
 
-var incrementScript = goredis.NewScript(`
-local current = redis.call('INCR', KEYS[1])
-if current == 1 then
-  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+var allowScript = goredis.NewScript(`
+local ip_current = tonumber(redis.call('GET', KEYS[1]) or '0')
+local token_current = tonumber(redis.call('GET', KEYS[2]) or '0')
+local ip_limit = tonumber(ARGV[1])
+local token_limit = tonumber(ARGV[2])
+local window_ms = tonumber(ARGV[3])
+
+if ip_current >= ip_limit or token_current >= token_limit then
+  return 0
 end
-return current
+
+ip_current = redis.call('INCR', KEYS[1])
+token_current = redis.call('INCR', KEYS[2])
+if ip_current == 1 or redis.call('PTTL', KEYS[1]) < 0 then
+  redis.call('PEXPIRE', KEYS[1], window_ms)
+end
+if token_current == 1 or redis.call('PTTL', KEYS[2]) < 0 then
+  redis.call('PEXPIRE', KEYS[2], window_ms)
+end
+return 1
 `)
 
 type Limiter struct {
@@ -43,23 +57,11 @@ func (l *Limiter) Allow(ctx context.Context, remoteAddr, token string) (bool, er
 	ip := remoteIP(remoteAddr)
 	ipKey := l.prefix + "ip:" + fmt.Sprintf("%x", l.hasher.Sum("rate-ip\x00"+ip))
 	tokenKey := l.prefix + "token:" + fmt.Sprintf("%x", l.hasher.Sum("rate-token\x00"+token))
-	ipAllowed, err := l.increment(ctx, ipKey, l.ipLimit)
-	if err != nil {
-		return false, err
-	}
-	tokenAllowed, err := l.increment(ctx, tokenKey, l.tokenLimit)
-	if err != nil {
-		return false, err
-	}
-	return ipAllowed && tokenAllowed, nil
-}
-
-func (l *Limiter) increment(ctx context.Context, key string, limit int64) (bool, error) {
-	count, err := incrementScript.Run(ctx, l.client, []string{key}, l.window.Milliseconds()).Int64()
+	allowed, err := allowScript.Run(ctx, l.client, []string{ipKey, tokenKey}, l.ipLimit, l.tokenLimit, l.window.Milliseconds()).Int64()
 	if err != nil {
 		return false, fmt.Errorf("apply public subscription rate limit: %w", err)
 	}
-	return count <= limit, nil
+	return allowed == 1, nil
 }
 
 func remoteIP(remoteAddr string) string {

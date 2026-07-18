@@ -460,6 +460,17 @@ try {
     }
     Remove-Item $profileHeaders, $profileBody -Force
 
+    $subscriptionBase = $issuedURL.Substring(0, $issuedURL.LastIndexOf('/'))
+    foreach ($malformedPath in @("$subscriptionBase", "$subscriptionBase/", "$subscriptionBase/a/b")) {
+        $malformedHeaders = Join-Path (Resolve-Path "tmp") "stage5-malformed-headers.txt"
+        $malformedBody = Join-Path (Resolve-Path "tmp") "stage5-malformed-body.txt"
+        $malformedStatus = & curl.exe -sS -D $malformedHeaders -o $malformedBody -w "%{http_code}" --cacert "secrets/dev-mtls/ca.crt" --ssl-no-revoke $malformedPath
+        if ($malformedStatus -ne "404" -or !(Select-String -Path $malformedHeaders -Pattern '^Cache-Control: no-store' -Quiet) -or (Get-Content -Raw $malformedBody) -ne "subscription unavailable`n") {
+            throw "malformed subscription path did not use the generic no-store 404"
+        }
+        Remove-Item $malformedHeaders, $malformedBody -Force
+    }
+
     $outOfOrderWebhook = '{"type":"notification","event":"payment.canceled","object":{"id":"' + $providerPaymentID + '","status":"canceled"}}'
     if ((Invoke-YooKassaWebhookStatus $outOfOrderWebhook) -ne 200) {
         throw "out-of-order webhook did not return 200"
@@ -536,6 +547,10 @@ try {
     go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:8087/internal/v1/credentials/$accessCredentialID/provisioning-material" secrets/dev-mtls/identity-health.crt secrets/dev-mtls/identity-health.key secrets/dev-mtls/ca.crt 403
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
+    }
+    $materialAuditCount = Invoke-ScalarSQL "access_service" "SELECT count(*) FROM security_audit_events WHERE credential_id='$accessCredentialID' AND actor_service='provisioning-service' AND action='credential_material.read' AND outcome='succeeded'"
+    if ($materialAuditCount -ne "1") {
+        throw "provisioning material read was not audited exactly once"
     }
 } finally {
     docker compose --profile core --profile app down -v

@@ -25,3 +25,4 @@ ADRs are immutable decision records. If a decision changes after implementation 
 | [0019](0019-stage3-billing-state-and-idempotency.md) | Stage 3 billing state and idempotency | Accepted |
 | [0020](0020-stage4-subscription-lifecycle.md) | Stage 4 subscription lifecycle | Accepted |
 | [0021](0021-stage5-access-token-and-profile-delivery.md) | Stage 5 access token and profile delivery | Accepted |
+| [0022](0022-stage5-ordering-revoke-and-public-edge-hardening.md) | Stage 5 ordering, revoke proof, and public edge hardening | Accepted |

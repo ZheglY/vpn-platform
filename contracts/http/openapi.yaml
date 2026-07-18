@@ -614,7 +614,9 @@ paths:
         revision. Provisioning-service uses this mTLS endpoint to fetch the
         minimum required VLESS client material. Placement and public endpoint
         data remain provisioning-service concerns. REALITY private keys remain
-        on VPN nodes and are never returned by this API.
+        on VPN nodes and are never returned by this API. Every successful
+        plaintext material read creates a durable security audit event before
+        the response is returned.
       parameters:
         - $ref: '#/components/parameters/RequestId'
         - name: credential_id
@@ -650,7 +652,8 @@ paths:
       description: >
         The bearer credential is carried in the path for Happ compatibility.
         Logs, metrics, traces, and reverse-proxy access logs must treat the path
-        segment as a secret and record only the route template.
+        segment as a secret and record only the route template. Empty or nested
+        malformed `/s/` paths receive the same generic no-store 404 response.
       parameters:
         - name: token
           in: path
@@ -687,7 +690,7 @@ paths:
                 type: string
                 description: Happ-compatible lines and VLESS URIs. Must not be logged.
         '404':
-          description: Same response for unknown, expired, and revoked tokens
+          description: Same response for malformed paths and unknown, expired, or revoked tokens
           headers:
             Cache-Control:
               schema:
@@ -1078,8 +1081,8 @@ components:
           format: uuid
         access_status:
           type: string
-          enum: [pending, ready, active, revoking, revoked, failed]
-          description: "`ready` means VPN is provisioned and a URL may be issued."
+          enum: [pending, ready, active, expired, revoking, revoked, failed]
+          description: "`ready` means VPN is provisioned, entitlement time remains, and a URL may be issued."
         provisioning_status:
           type: string
           enum: [provisioning, active, degraded, failed, revoking, revoked]

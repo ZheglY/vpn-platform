@@ -35,19 +35,19 @@ func (s *Store) ApplyPeriod(ctx context.Context, meta domain.EventMeta, event do
 		return fmt.Errorf("begin period event: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := lockAggregate(ctx, tx, event.SubscriptionID); err != nil {
+	apply, err := prepareLifecycle(ctx, tx, meta, event.SubscriptionID, event.UserID)
+	if err != nil {
 		return err
 	}
-	inserted, err := insertInbox(ctx, tx, meta)
-	if err != nil || !inserted {
-		if err != nil {
-			return err
-		}
+	if !apply {
 		return tx.Commit(ctx)
 	}
 	now, err := transactionTime(ctx, tx)
 	if err != nil {
 		return err
+	}
+	if !event.GraceEndsAt.After(now) {
+		return commit(ctx, tx, "elapsed period event")
 	}
 
 	var credentialID, userID, status string
@@ -66,7 +66,7 @@ INSERT INTO access_credentials (
 			seed.CredentialID, event.SubscriptionID, event.UserID, seed.Ciphertext, seed.KeyVersion, event.GraceEndsAt.UTC(), now); err != nil {
 			return fmt.Errorf("insert access credential: %w", err)
 		}
-		if err := insertOperation(ctx, tx, seed.OperationID, seed.CredentialID, "provision", 1, meta.EventID, now); err != nil {
+		if err := insertOperation(ctx, tx, seed.OperationID, seed.CredentialID, "provision", 1, nil, meta.EventID, now); err != nil {
 			return err
 		}
 		if err := insertOperationOutbox(ctx, tx, meta, now, "access.provision.request.v1", seed.OperationID, seed.CredentialID, 1); err != nil {
@@ -85,6 +85,7 @@ INSERT INTO access_credentials (
 		if _, err := tx.Exec(ctx, `
 UPDATE access_credentials
 SET status = 'provisioning', credential_version = $2,
+    allocation_revision = 0,
     entitlement_expires_at = GREATEST(entitlement_expires_at, $3),
     revoked_at = NULL, updated_at = $4
 WHERE id = $1`, credentialID, revision, event.GraceEndsAt.UTC(), now); err != nil {
@@ -93,7 +94,7 @@ WHERE id = $1`, credentialID, revision, event.GraceEndsAt.UTC(), now); err != ni
 		if _, err := tx.Exec(ctx, `DELETE FROM access_endpoint_snapshots WHERE credential_id = $1`, credentialID); err != nil {
 			return fmt.Errorf("clear stale endpoint snapshots: %w", err)
 		}
-		if err := insertOperation(ctx, tx, seed.OperationID, credentialID, "provision", revision, meta.EventID, now); err != nil {
+		if err := insertOperation(ctx, tx, seed.OperationID, credentialID, "provision", revision, nil, meta.EventID, now); err != nil {
 			return err
 		}
 		if err := insertOperationOutbox(ctx, tx, meta, now, "access.provision.request.v1", seed.OperationID, credentialID, revision); err != nil {
@@ -122,24 +123,21 @@ func (s *Store) ApplyTerminal(ctx context.Context, meta domain.EventMeta, event 
 		return fmt.Errorf("begin terminal event: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := lockAggregate(ctx, tx, event.SubscriptionID); err != nil {
+	apply, err := prepareLifecycle(ctx, tx, meta, event.SubscriptionID, event.UserID)
+	if err != nil {
 		return err
 	}
-	inserted, err := insertInbox(ctx, tx, meta)
-	if err != nil || !inserted {
-		if err != nil {
-			return err
-		}
+	if !apply {
 		return tx.Commit(ctx)
 	}
 	var credentialID, status string
-	var revision int
+	var revision, allocationRevision int
 	var entitlementExpires time.Time
 	err = tx.QueryRow(ctx, `
-SELECT id, status, credential_version, entitlement_expires_at
+SELECT id, status, credential_version, allocation_revision, entitlement_expires_at
 FROM access_credentials
 WHERE subscription_id = $1 AND status <> 'revoked'
-FOR UPDATE`, event.SubscriptionID).Scan(&credentialID, &status, &revision, &entitlementExpires)
+FOR UPDATE`, event.SubscriptionID).Scan(&credentialID, &status, &revision, &allocationRevision, &entitlementExpires)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return tx.Commit(ctx)
 	}
@@ -166,7 +164,7 @@ UPDATE subscription_tokens SET status = 'revoked', revoked_at = $2
 WHERE credential_id = $1 AND status = 'active'`, credentialID, now); err != nil {
 		return fmt.Errorf("revoke active tokens: %w", err)
 	}
-	if err := insertOperation(ctx, tx, operationID, credentialID, "revoke", revision, meta.EventID, now); err != nil {
+	if err := insertOperation(ctx, tx, operationID, credentialID, "revoke", revision, &allocationRevision, meta.EventID, now); err != nil {
 		return err
 	}
 	if err := insertOperationOutbox(ctx, tx, meta, now, "access.revoke.request.v1", operationID, credentialID, revision); err != nil {
@@ -192,53 +190,104 @@ func (s *Store) ApplyProvisionSucceeded(ctx context.Context, meta domain.EventMe
 		return tx.Commit(ctx)
 	}
 	var subscriptionID, userID, credentialStatus, operationStatus string
-	var revision int
+	var revision, currentAllocationRevision int
+	var entitlementExpires time.Time
 	err = tx.QueryRow(ctx, `
-SELECT c.subscription_id, c.user_id, c.status, c.credential_version, o.status
+SELECT c.subscription_id, c.user_id, c.status, c.credential_version, c.allocation_revision, c.entitlement_expires_at, o.status
 FROM access_credentials c JOIN access_operations o ON o.credential_id = c.id
 WHERE c.id = $1 AND o.id = $2 AND o.kind = 'provision' AND o.desired_revision = $3
-FOR UPDATE OF c, o`, event.CredentialID, event.OperationID, event.AppliedRevision).Scan(&subscriptionID, &userID, &credentialStatus, &revision, &operationStatus)
+FOR UPDATE OF c, o`, event.CredentialID, event.OperationID, event.AppliedRevision).Scan(&subscriptionID, &userID, &credentialStatus, &revision, &currentAllocationRevision, &entitlementExpires, &operationStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ErrDurableStateConflict
 	}
 	if err != nil {
 		return fmt.Errorf("select provisioning operation: %w", err)
 	}
-	if revision != event.AppliedRevision || credentialStatus == domain.StatusRevoking || credentialStatus == domain.StatusRevoked {
-		return tx.Commit(ctx)
-	}
 	if operationStatus != "pending" {
 		return tx.Commit(ctx)
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM access_endpoint_snapshots WHERE credential_id = $1`, event.CredentialID); err != nil {
-		return fmt.Errorf("replace endpoint snapshots: %w", err)
+	if credentialStatus == domain.StatusRevoked {
+		return tx.Commit(ctx)
 	}
-	for _, endpoint := range event.Endpoints {
-		if _, err := tx.Exec(ctx, `
-INSERT INTO access_endpoint_snapshots (
-    credential_id, node_id, role, address, port, server_name,
-    reality_public_key, short_id, spider_x, label, created_at
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-			event.CredentialID, endpoint.NodeID, endpoint.Role, endpoint.Address, endpoint.Port,
-			endpoint.ServerName, endpoint.RealityPublicKey, endpoint.ShortID, endpoint.SpiderX, endpoint.Label, event.AppliedAt.UTC()); err != nil {
-			return fmt.Errorf("insert endpoint snapshot: %w", err)
-		}
-	}
-	if _, err := tx.Exec(ctx, `UPDATE access_credentials SET status = $2, updated_at = $3 WHERE id = $1`, event.CredentialID, event.Status, event.AppliedAt.UTC()); err != nil {
-		return fmt.Errorf("mark credential ready: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `UPDATE access_operations SET status = 'succeeded', completed_at = $2 WHERE id = $1`, event.OperationID, event.AppliedAt.UTC()); err != nil {
-		return fmt.Errorf("complete provisioning operation: %w", err)
-	}
-	readyData := map[string]any{
-		"subscription_id": subscriptionID, "credential_id": event.CredentialID, "user_id": userID,
-		"provisioning_status": event.Status, "ready_at": event.AppliedAt.UTC(), "link_issuance_required": true,
-	}
-	outboxTime, err := transactionTime(ctx, tx)
+	now, err := transactionTime(ctx, tx)
 	if err != nil {
 		return err
 	}
-	if err := insertOutbox(ctx, tx, meta, outboxTime, "access.ready.v1", "user:"+userID, event.CredentialID, "ready:"+event.OperationID, "access", readyData); err != nil {
+	if credentialStatus == domain.StatusRevoking {
+		if revision <= event.AppliedRevision {
+			return tx.Commit(ctx)
+		}
+		if event.AppliedRevision <= currentAllocationRevision {
+			if _, err := tx.Exec(ctx, `UPDATE access_operations SET status = 'succeeded', completed_at = $2 WHERE id = $1`, event.OperationID, now); err != nil {
+				return fmt.Errorf("complete superseded provisioning operation: %w", err)
+			}
+			return commit(ctx, tx, "superseded provisioning success while revoking")
+		}
+		if err := replaceEndpointSnapshots(ctx, tx, event, now); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE access_operations SET status = 'succeeded', completed_at = $2 WHERE id = $1`, event.OperationID, now); err != nil {
+			return fmt.Errorf("complete late provisioning operation: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE access_credentials SET allocation_revision = $2, updated_at = $3 WHERE id = $1 AND status = 'revoking'`, event.CredentialID, event.AppliedRevision, now); err != nil {
+			return fmt.Errorf("capture late provisioning allocation: %w", err)
+		}
+		tag, err := tx.Exec(ctx, `
+UPDATE access_operations SET allocation_revision = $3
+WHERE credential_id = $1 AND kind = 'revoke' AND desired_revision = $2 AND status = 'pending'`, event.CredentialID, revision, event.AppliedRevision)
+		if err != nil {
+			return fmt.Errorf("bind pending revoke to late allocation: %w", err)
+		}
+		if tag.RowsAffected() != 1 {
+			return domain.ErrDurableStateConflict
+		}
+		return commit(ctx, tx, "late provisioning success while revoking")
+	}
+	if revision != event.AppliedRevision {
+		return tx.Commit(ctx)
+	}
+	if err := replaceEndpointSnapshots(ctx, tx, event, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE access_operations SET status = 'succeeded', completed_at = $2 WHERE id = $1`, event.OperationID, now); err != nil {
+		return fmt.Errorf("complete provisioning operation: %w", err)
+	}
+	if !entitlementExpires.After(now) {
+		revokeOperationID, err := cryptoutil.RandomUUID()
+		if err != nil {
+			return err
+		}
+		revokeRevision := event.AppliedRevision + 1
+		if _, err := tx.Exec(ctx, `
+UPDATE access_credentials
+SET status = 'revoking', credential_version = $2, allocation_revision = $3, updated_at = $4
+WHERE id = $1`, event.CredentialID, revokeRevision, event.AppliedRevision, now); err != nil {
+			return fmt.Errorf("start revoke after elapsed provisioning: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+UPDATE subscription_tokens SET status = 'expired', revoked_at = $2
+WHERE credential_id = $1 AND status = 'active'`, event.CredentialID, now); err != nil {
+			return fmt.Errorf("expire tokens after delayed provisioning: %w", err)
+		}
+		allocationRevision := event.AppliedRevision
+		if err := insertOperation(ctx, tx, revokeOperationID, event.CredentialID, "revoke", revokeRevision, &allocationRevision, meta.EventID, now); err != nil {
+			return err
+		}
+		if err := insertOperationOutbox(ctx, tx, meta, now, "access.revoke.request.v1", revokeOperationID, event.CredentialID, revokeRevision); err != nil {
+			return err
+		}
+		return commit(ctx, tx, "elapsed provisioning success")
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE access_credentials SET status = $2, allocation_revision = $3, updated_at = $4 WHERE id = $1`,
+		event.CredentialID, event.Status, event.AppliedRevision, now); err != nil {
+		return fmt.Errorf("mark credential ready: %w", err)
+	}
+	readyData := map[string]any{
+		"subscription_id": subscriptionID, "credential_id": event.CredentialID, "user_id": userID,
+		"provisioning_status": event.Status, "ready_at": now, "link_issuance_required": true,
+	}
+	if err := insertOutbox(ctx, tx, meta, now, "access.ready.v1", "user:"+userID, event.CredentialID, "ready:"+event.OperationID, "access", readyData); err != nil {
 		return err
 	}
 	return commit(ctx, tx, "provisioning success")
@@ -306,25 +355,40 @@ func (s *Store) ApplyRevokeSucceeded(ctx context.Context, meta domain.EventMeta,
 		return tx.Commit(ctx)
 	}
 	var operationStatus string
-	var revision int
+	var revision, credentialAllocationRevision, operationAllocationRevision int
 	err = tx.QueryRow(ctx, `
-SELECT c.credential_version, o.status
+SELECT c.credential_version, c.allocation_revision, o.status, o.allocation_revision
 FROM access_credentials c JOIN access_operations o ON o.credential_id = c.id
 WHERE c.id = $1 AND o.id = $2 AND o.kind = 'revoke' AND o.desired_revision = $3
-FOR UPDATE OF c, o`, event.CredentialID, event.OperationID, event.RevokedRevision).Scan(&revision, &operationStatus)
+FOR UPDATE OF c, o`, event.CredentialID, event.OperationID, event.DesiredRevision).Scan(
+		&revision, &credentialAllocationRevision, &operationStatus, &operationAllocationRevision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ErrDurableStateConflict
 	}
 	if err != nil {
 		return fmt.Errorf("select revoke operation: %w", err)
 	}
-	if revision != event.RevokedRevision || operationStatus != "pending" {
+	if revision != event.DesiredRevision || operationStatus != "pending" {
 		return tx.Commit(ctx)
 	}
-	if _, err := tx.Exec(ctx, `UPDATE access_credentials SET status = 'revoked', revoked_at = $2, updated_at = $2 WHERE id = $1`, event.CredentialID, event.RevokedAt.UTC()); err != nil {
+	if credentialAllocationRevision != event.AllocationRevision || operationAllocationRevision != event.AllocationRevision {
+		return domain.ErrDurableStateConflict
+	}
+	assignedNodeIDs, err := listAssignedNodeIDs(ctx, tx, event.CredentialID, event.AllocationRevision)
+	if err != nil {
+		return err
+	}
+	if !sameNodeSet(assignedNodeIDs, event.NodeIDs) {
+		return domain.ErrDurableStateConflict
+	}
+	now, err := transactionTime(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE access_credentials SET status = 'revoked', revoked_at = $2, updated_at = $2 WHERE id = $1`, event.CredentialID, now); err != nil {
 		return fmt.Errorf("mark credential revoked: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `UPDATE access_operations SET status = 'succeeded', completed_at = $2 WHERE id = $1`, event.OperationID, event.RevokedAt.UTC()); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE access_operations SET status = 'succeeded', completed_at = $2 WHERE id = $1`, event.OperationID, now); err != nil {
 		return fmt.Errorf("complete revoke operation: %w", err)
 	}
 	return commit(ctx, tx, "revoke success")
@@ -336,7 +400,10 @@ func (s *Store) IssueToken(ctx context.Context, subscriptionID, operation string
 		return fmt.Errorf("begin URL issuance: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := lockAggregate(ctx, tx, subscriptionID); err != nil {
+	if err := lockAggregate(ctx, tx, "url-idempotency:"+seed.IdempotencyKey); err != nil {
+		return err
+	}
+	if err := lockAggregate(ctx, tx, "subscription:"+subscriptionID); err != nil {
 		return err
 	}
 	var existingSubscription, existingOperation, existingHash string
@@ -405,14 +472,15 @@ VALUES ($1,$2,$3,$4,$5,$6)`, seed.IdempotencyKey, subscriptionID, operation, see
 
 func (s *Store) GetAccessStatus(ctx context.Context, subscriptionID string) (domain.AccessStatus, error) {
 	var credentialStatus, tokenStatus string
+	var entitlementElapsed bool
 	err := s.pool.QueryRow(ctx, `
-SELECT c.status, COALESCE((
-    SELECT CASE WHEN t.status = 'active' AND t.expires_at <= now() THEN 'expired' ELSE t.status END
+SELECT c.status, c.entitlement_expires_at <= clock_timestamp(), COALESCE((
+    SELECT CASE WHEN t.status = 'active' AND (t.expires_at <= clock_timestamp() OR c.entitlement_expires_at <= clock_timestamp()) THEN 'expired' ELSE t.status END
     FROM subscription_tokens t WHERE t.credential_id = c.id ORDER BY t.created_at DESC LIMIT 1
 ), 'not_issued')
 FROM access_credentials c
 WHERE c.subscription_id = $1
-ORDER BY c.created_at DESC LIMIT 1`, subscriptionID).Scan(&credentialStatus, &tokenStatus)
+ORDER BY c.created_at DESC LIMIT 1`, subscriptionID).Scan(&credentialStatus, &entitlementElapsed, &tokenStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.AccessStatus{}, domain.ErrNotFound
 	}
@@ -420,17 +488,19 @@ ORDER BY c.created_at DESC LIMIT 1`, subscriptionID).Scan(&credentialStatus, &to
 		return domain.AccessStatus{}, fmt.Errorf("get access status: %w", err)
 	}
 	accessStatus := "pending"
-	switch credentialStatus {
-	case domain.StatusActive, domain.StatusDegraded:
+	switch {
+	case entitlementElapsed && credentialStatus != domain.StatusRevoking && credentialStatus != domain.StatusRevoked:
+		accessStatus = "expired"
+	case credentialStatus == domain.StatusActive || credentialStatus == domain.StatusDegraded:
 		accessStatus = "ready"
 		if tokenStatus == "active" {
 			accessStatus = "active"
 		}
-	case domain.StatusFailed:
+	case credentialStatus == domain.StatusFailed:
 		accessStatus = "failed"
-	case domain.StatusRevoking:
+	case credentialStatus == domain.StatusRevoking:
 		accessStatus = "revoking"
-	case domain.StatusRevoked:
+	case credentialStatus == domain.StatusRevoked:
 		accessStatus = "revoked"
 	}
 	return domain.AccessStatus{SubscriptionID: subscriptionID, AccessStatus: accessStatus, ProvisioningStatus: credentialStatus, TokenStatus: tokenStatus}, nil
@@ -490,6 +560,20 @@ FROM access_credentials WHERE id = $1 AND status <> 'revoked'`, credentialID).Sc
 	return record, nil
 }
 
+func (s *Store) RecordCredentialMaterialAccess(ctx context.Context, credentialID, actorService string) error {
+	eventID, err := cryptoutil.RandomUUID()
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `
+INSERT INTO security_audit_events (event_id, action, outcome, actor_service, credential_id, occurred_at)
+VALUES ($1, 'credential_material.read', 'succeeded', $2, $3, clock_timestamp())`, eventID, actorService, credentialID)
+	if err != nil {
+		return fmt.Errorf("record credential material security audit: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) RecordDeadLetter(ctx context.Context, topic string, partition int32, offset int64, payloadSHA256, reason string) error {
 	_, err := s.pool.Exec(ctx, `
 INSERT INTO consumer_dead_letters (topic, partition, record_offset, payload_sha256, reason_code)
@@ -513,9 +597,9 @@ WITH candidate AS (
       AND NOT EXISTS (
           SELECT 1 FROM outbox older
           WHERE older.aggregate_id = o.aggregate_id AND older.state <> 'published'
-            AND (older.created_at, older.event_id) < (o.created_at, o.event_id)
+            AND older.aggregate_sequence < o.aggregate_sequence
       )
-    ORDER BY o.created_at, o.event_id
+    ORDER BY o.created_at, o.aggregate_id, o.aggregate_sequence
     FOR UPDATE SKIP LOCKED
     LIMIT 1
 )
@@ -563,15 +647,56 @@ func lockAggregate(ctx context.Context, tx pgx.Tx, id string) error {
 	return nil
 }
 
+func prepareLifecycle(ctx context.Context, tx pgx.Tx, meta domain.EventMeta, subscriptionID, userID string) (bool, error) {
+	if meta.AggregateSequence < 1 {
+		return false, domain.ErrDurableStateConflict
+	}
+	if err := lockAggregate(ctx, tx, "subscription:"+subscriptionID); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx, `
+INSERT INTO subscription_lifecycle_state (subscription_id, user_id, last_applied_sequence)
+VALUES ($1,$2,0) ON CONFLICT (subscription_id) DO NOTHING`, subscriptionID, userID); err != nil {
+		return false, fmt.Errorf("initialize subscription lifecycle cursor: %w", err)
+	}
+	var storedUserID string
+	var lastApplied int64
+	if err := tx.QueryRow(ctx, `
+SELECT user_id, last_applied_sequence
+FROM subscription_lifecycle_state WHERE subscription_id = $1 FOR UPDATE`, subscriptionID).Scan(&storedUserID, &lastApplied); err != nil {
+		return false, fmt.Errorf("lock subscription lifecycle cursor: %w", err)
+	}
+	if storedUserID != userID {
+		return false, domain.ErrDurableStateConflict
+	}
+	if meta.AggregateSequence > lastApplied+1 {
+		return false, domain.ErrLifecycleSequenceGap
+	}
+	inserted, err := insertInbox(ctx, tx, meta)
+	if err != nil || !inserted {
+		return false, err
+	}
+	if meta.AggregateSequence <= lastApplied {
+		return false, domain.ErrDurableStateConflict
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE subscription_lifecycle_state
+SET last_applied_sequence = $2, updated_at = clock_timestamp()
+WHERE subscription_id = $1`, subscriptionID, meta.AggregateSequence); err != nil {
+		return false, fmt.Errorf("advance subscription lifecycle cursor: %w", err)
+	}
+	return true, nil
+}
+
 func insertInbox(ctx context.Context, tx pgx.Tx, meta domain.EventMeta) (bool, error) {
 	var inserted int
 	err := tx.QueryRow(ctx, `
 INSERT INTO inbox (
     event_id, event_type, aggregate_id, correlation_id,
-    source_topic, source_partition, source_offset, payload_sha256
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    source_topic, source_partition, source_offset, payload_sha256, aggregate_sequence
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,0))
 ON CONFLICT DO NOTHING RETURNING 1`, meta.EventID, meta.EventType, meta.AggregateID, meta.CorrelationID,
-		meta.SourceTopic, meta.SourcePartition, meta.SourceOffset, meta.PayloadSHA256).Scan(&inserted)
+		meta.SourceTopic, meta.SourcePartition, meta.SourceOffset, meta.PayloadSHA256, meta.AggregateSequence).Scan(&inserted)
 	if err == nil {
 		return true, nil
 	}
@@ -582,20 +707,21 @@ ON CONFLICT DO NOTHING RETURNING 1`, meta.EventID, meta.EventType, meta.Aggregat
 	err = tx.QueryRow(ctx, `
 SELECT event_id, event_type, payload_sha256 FROM inbox
 WHERE event_id = $1 OR (source_topic = $2 AND source_partition = $3 AND source_offset = $4)
-LIMIT 1`, meta.EventID, meta.SourceTopic, meta.SourcePartition, meta.SourceOffset).Scan(&eventID, &eventType, &payloadHash)
+   OR (aggregate_id = $5 AND aggregate_sequence = NULLIF($6,0))
+LIMIT 1`, meta.EventID, meta.SourceTopic, meta.SourcePartition, meta.SourceOffset, meta.AggregateID, meta.AggregateSequence).Scan(&eventID, &eventType, &payloadHash)
 	if err != nil {
 		return false, fmt.Errorf("resolve access inbox conflict: %w", err)
 	}
-	if eventType != meta.EventType || payloadHash != meta.PayloadSHA256 {
+	if eventID != meta.EventID || eventType != meta.EventType || payloadHash != meta.PayloadSHA256 {
 		return false, domain.ErrDurableStateConflict
 	}
 	return false, nil
 }
 
-func insertOperation(ctx context.Context, tx pgx.Tx, operationID, credentialID, kind string, revision int, causationID string, now time.Time) error {
+func insertOperation(ctx context.Context, tx pgx.Tx, operationID, credentialID, kind string, revision int, allocationRevision *int, causationID string, now time.Time) error {
 	if _, err := tx.Exec(ctx, `
-INSERT INTO access_operations (id, credential_id, kind, desired_revision, status, causation_event_id, created_at)
-VALUES ($1,$2,$3,$4,'pending',$5,$6)`, operationID, credentialID, kind, revision, causationID, now); err != nil {
+INSERT INTO access_operations (id, credential_id, kind, desired_revision, allocation_revision, status, causation_event_id, created_at)
+VALUES ($1,$2,$3,$4,$5,'pending',$6,$7)`, operationID, credentialID, kind, revision, allocationRevision, causationID, now); err != nil {
 		return fmt.Errorf("insert access operation: %w", err)
 	}
 	return nil
@@ -612,10 +738,16 @@ func insertOutbox(ctx context.Context, tx pgx.Tx, meta domain.EventMeta, occurre
 		return err
 	}
 	causationID := meta.EventID
+	var sequence int64
+	if err := tx.QueryRow(ctx, `
+UPDATE access_credentials SET outbox_sequence = outbox_sequence + 1
+WHERE id = $1 RETURNING outbox_sequence`, aggregateID).Scan(&sequence); err != nil {
+		return fmt.Errorf("advance access aggregate sequence: %w", err)
+	}
 	envelope := platformkafka.Envelope{
 		EventID: eventID, EventType: topic, SchemaVersion: 1, OccurredAt: occurredAt,
 		Producer: "access-service", CorrelationID: meta.CorrelationID, CausationID: &causationID,
-		AggregateType: aggregateType, AggregateID: aggregateID, PartitionKey: partitionKey,
+		AggregateType: aggregateType, AggregateID: aggregateID, AggregateSequence: sequence, PartitionKey: partitionKey,
 	}
 	envelope.Data, err = json.Marshal(data)
 	if err != nil {
@@ -626,8 +758,8 @@ func insertOutbox(ctx context.Context, tx pgx.Tx, meta domain.EventMeta, occurre
 		return fmt.Errorf("encode access outbox envelope: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
-INSERT INTO outbox (event_id, topic, partition_key, aggregate_id, dedupe_key, payload, created_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7)`, eventID, topic, partitionKey, aggregateID, dedupeKey, payload, occurredAt); err != nil {
+INSERT INTO outbox (event_id, topic, partition_key, aggregate_id, aggregate_sequence, dedupe_key, payload, created_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, eventID, topic, partitionKey, aggregateID, sequence, dedupeKey, payload, occurredAt); err != nil {
 		return fmt.Errorf("insert access outbox: %w", err)
 	}
 	return nil
@@ -635,10 +767,70 @@ VALUES ($1,$2,$3,$4,$5,$6,$7)`, eventID, topic, partitionKey, aggregateID, dedup
 
 func transactionTime(ctx context.Context, tx pgx.Tx) (time.Time, error) {
 	var now time.Time
-	if err := tx.QueryRow(ctx, `SELECT now()`).Scan(&now); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
 		return time.Time{}, fmt.Errorf("read transaction time: %w", err)
 	}
 	return now.UTC(), nil
+}
+
+func replaceEndpointSnapshots(ctx context.Context, tx pgx.Tx, event domain.ProvisionSucceeded, now time.Time) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM access_endpoint_snapshots WHERE credential_id = $1`, event.CredentialID); err != nil {
+		return fmt.Errorf("replace endpoint snapshots: %w", err)
+	}
+	for _, endpoint := range event.Endpoints {
+		if _, err := tx.Exec(ctx, `
+INSERT INTO access_endpoint_snapshots (
+    credential_id, node_id, allocation_revision, role, address, port, server_name,
+    reality_public_key, short_id, spider_x, label, created_at
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+			event.CredentialID, endpoint.NodeID, event.AppliedRevision, endpoint.Role, endpoint.Address, endpoint.Port,
+			endpoint.ServerName, endpoint.RealityPublicKey, endpoint.ShortID, endpoint.SpiderX, endpoint.Label, now); err != nil {
+			return fmt.Errorf("insert endpoint snapshot: %w", err)
+		}
+	}
+	return nil
+}
+
+func listAssignedNodeIDs(ctx context.Context, tx pgx.Tx, credentialID string, allocationRevision int) ([]string, error) {
+	rows, err := tx.Query(ctx, `
+SELECT node_id FROM access_endpoint_snapshots
+WHERE credential_id = $1 AND allocation_revision = $2
+ORDER BY node_id`, credentialID, allocationRevision)
+	if err != nil {
+		return nil, fmt.Errorf("list assigned revoke nodes: %w", err)
+	}
+	defer rows.Close()
+	var nodeIDs []string
+	for rows.Next() {
+		var nodeID string
+		if err := rows.Scan(&nodeID); err != nil {
+			return nil, fmt.Errorf("scan assigned revoke node: %w", err)
+		}
+		nodeIDs = append(nodeIDs, nodeID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate assigned revoke nodes: %w", err)
+	}
+	return nodeIDs, nil
+}
+
+func sameNodeSet(expected, actual []string) bool {
+	if len(expected) != len(actual) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(actual))
+	for _, nodeID := range actual {
+		if _, exists := seen[nodeID]; exists {
+			return false
+		}
+		seen[nodeID] = struct{}{}
+	}
+	for _, nodeID := range expected {
+		if _, exists := seen[nodeID]; !exists {
+			return false
+		}
+	}
+	return true
 }
 
 func commit(ctx context.Context, tx pgx.Tx, operation string) error {

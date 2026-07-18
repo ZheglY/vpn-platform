@@ -12,7 +12,7 @@ Current milestone: Stage 5 access and Happ subscription delivery.
 - `catalog-service` with immutable versioned plans, prices, regions, and published Telegram catalog queries.
 - `billing-service` with immutable order snapshots, idempotent payment creation, YooKassa sandbox verification, webhook inbox, reconciliation, and transactional Kafka outbox.
 - `subscription-service` with a separate database, payment/refund inbox, immutable entitlement periods, activation/extension, grace/expiry scheduler, refund recalculation, and transactional Kafka outbox.
-- `access-service` with a separate database, encrypted VLESS credentials, lifecycle/provisioning inbox, transactional outbox, one-time URL issuance/rotation, and a Happ-compatible no-store endpoint.
+- `access-service` with a separate database, ordered lifecycle cursor, encrypted VLESS credentials, revision-bound revoke proof, sequenced transactional outbox, audited provisioning reads, one-time URL issuance/rotation, and a Happ-compatible no-store endpoint.
 - `telegram-bot` with Telegram webhook dedupe, consent, `/plans`, and `/buy` sandbox purchase flow.
 - Local Compose stack with isolated service databases, Kafka, Redis, fake Telegram API, and fake YooKassa API.
 - Goose migration runner tool.

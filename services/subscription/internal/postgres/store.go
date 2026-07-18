@@ -736,13 +736,13 @@ func insertOutbox(ctx context.Context, tx pgx.Tx, topic, subscriptionID, userID,
 	if err != nil {
 		return err
 	}
-	payload, err := buildEventPayload(topic, eventID, subscriptionID, userID, correlationID, causationID, occurredAt, data)
-	if err != nil {
-		return err
-	}
 	var sequence int64
 	if err := tx.QueryRow(ctx, `UPDATE subscriptions SET aggregate_sequence = aggregate_sequence + 1 WHERE id = $1 RETURNING aggregate_sequence`, subscriptionID).Scan(&sequence); err != nil {
 		return fmt.Errorf("advance subscription aggregate sequence: %w", err)
+	}
+	payload, err := buildEventPayload(topic, eventID, subscriptionID, userID, correlationID, causationID, sequence, occurredAt, data)
+	if err != nil {
+		return err
 	}
 	command, err := tx.Exec(ctx, `
 INSERT INTO outbox (event_id, topic, partition_key, aggregate_id, aggregate_sequence, dedupe_key, payload)
@@ -756,7 +756,7 @@ VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (dedupe_key) DO NOTHING`, eventID, top
 	return nil
 }
 
-func buildEventPayload(topic, eventID, subscriptionID, userID, correlationID string, causationID *string, occurredAt time.Time, data any) ([]byte, error) {
+func buildEventPayload(topic, eventID, subscriptionID, userID, correlationID string, causationID *string, aggregateSequence int64, occurredAt time.Time, data any) ([]byte, error) {
 	if correlationID == "" {
 		correlationID = eventID
 	}
@@ -764,7 +764,7 @@ func buildEventPayload(topic, eventID, subscriptionID, userID, correlationID str
 	if err != nil {
 		return nil, fmt.Errorf("encode subscription event data: %w", err)
 	}
-	envelope := platformkafka.Envelope{EventID: eventID, EventType: topic, SchemaVersion: 1, OccurredAt: occurredAt.UTC(), Producer: "subscription-service", CorrelationID: correlationID, CausationID: causationID, AggregateType: "subscription", AggregateID: subscriptionID, PartitionKey: "user:" + userID, Data: dataJSON}
+	envelope := platformkafka.Envelope{EventID: eventID, EventType: topic, SchemaVersion: 1, OccurredAt: occurredAt.UTC(), Producer: "subscription-service", CorrelationID: correlationID, CausationID: causationID, AggregateType: "subscription", AggregateID: subscriptionID, AggregateSequence: aggregateSequence, PartitionKey: "user:" + userID, Data: dataJSON}
 	payload, err := json.Marshal(envelope)
 	if err != nil {
 		return nil, fmt.Errorf("encode subscription event envelope: %w", err)

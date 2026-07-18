@@ -126,6 +126,8 @@ func run(ctx context.Context) error {
 	mux.Handle("GET /internal/v1/subscriptions/{subscription_id}/access", statusAuth(http.HandlerFunc(api.GetAccessStatus)))
 	mux.Handle("GET /internal/v1/credentials/{credential_id}/provisioning-material", provisioningAuth(http.HandlerFunc(api.GetProvisioningMaterial)))
 	mux.Handle("GET /s/{token}", http.HandlerFunc(api.GetHappSubscription))
+	mux.Handle("GET /s/", http.HandlerFunc(api.GetUnavailableHappSubscription))
+	mux.Handle("GET /s", http.HandlerFunc(api.GetUnavailableHappSubscription))
 	handler := httpserver.Chain(mux, httpserver.RequestID, httpserver.LimitBody(cfg.MaxBodyBytes), httpserver.Recover(logger), httpserver.LogRequests(logger))
 	srv := httpserver.New(cfg.HTTP, handler)
 	srv.TLSConfig = cfg.TLS

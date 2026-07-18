@@ -41,7 +41,7 @@ Forbidden data:
 | Data class | Retention |
 |---|---:|
 | Application logs | 14 days |
-| Security/admin audit | 365 days |
+| Security/admin audit, including provisioning-material read metadata without credential payload | 365 days |
 | Diagnostic data | 30 days |
 | Aggregate traffic statistics | 30 days |
 | Payment records | No automatic deletion until legal requirements are known |

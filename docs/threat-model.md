@@ -258,6 +258,32 @@ Mitigation:
 - Provisioning material is returned only to the verified `provisioning-service` SPIFFE identity over mTLS.
 - Public REALITY endpoint parameters are stored as a client snapshot; the REALITY private key remains node-local.
 
+### T16 - Cross-topic lifecycle reordering restores stale access
+
+Risk: activation, extension, expiry, and revoke use different Kafka topics. A terminal event can arrive before an earlier activation, be applied as a no-op, and then allow the stale activation to provision expired access. A delayed refund-gap revoke can similarly override a newer period.
+
+Mitigation:
+
+- Subscription-service places its monotonic subscription-owned `aggregate_sequence` in every lifecycle envelope and outbox row.
+- Access persists `last_applied_sequence` with the inbox and state effect in one transaction.
+- A gap is never acknowledged or classified as poison. The consumer pauses that source partition, continues other lifecycle topics, and retries after the predecessor applies.
+- Duplicate events are no-ops; a different event attempting to reuse an applied sequence is a durable conflict.
+- Before provisioning, Access requires `grace_ends_at > clock_timestamp()` in PostgreSQL.
+- Access outbox uses a separate credential-owned sequence and lower-sequence claim barrier, not transaction timestamps.
+
+### T17 - Delayed provisioning or partial revoke creates false terminal state
+
+Risk: a provisioning success delayed beyond entitlement expiry can produce a usable profile, or a revoke success can name only some nodes and still make Access report `revoked`.
+
+Mitigation:
+
+- Provisioning success locks current credential/operation state and compares entitlement with PostgreSQL time in the same transaction.
+- An elapsed success stores the actual allocation only to atomically start a higher-revision revoke; if revoke already started, a late success can only advance the pending revoke's allocation snapshot and cannot overwrite a newer allocation. It emits no readiness event.
+- Revoke operations capture allocation revision. Success carries desired revision, allocation revision, an explicit all-removed assertion, and unique node IDs.
+- Access requires exact set equality with its revisioned endpoint snapshot. Empty proof is accepted only for zero allocations; partial or duplicate proof cannot become terminal success.
+- Access status derives expiry from PostgreSQL time and cannot report ready after the entitlement boundary.
+- PostgreSQL tests cover delayed success, partial proof, zero-allocation proof, and stale operation results.
+
 ## Initial Security Requirements
 
 - TLS everywhere.

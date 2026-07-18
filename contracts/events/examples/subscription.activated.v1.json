@@ -8,6 +8,7 @@
   "causation_id": "55555555-5555-4555-8555-555555555555",
   "aggregate_type": "subscription",
   "aggregate_id": "99999999-9999-4999-8999-999999999999",
+  "aggregate_sequence": 1,
   "partition_key": "user:33333333-3333-4333-8333-333333333333",
   "data": {
     "subscription_id": "99999999-9999-4999-8999-999999999999",

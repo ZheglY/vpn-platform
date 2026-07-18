@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ZheglY/vpn-platform/internal/platform/httpauth"
 	"github.com/ZheglY/vpn-platform/internal/platform/httperror"
 	"github.com/ZheglY/vpn-platform/services/access/internal/application"
 	"github.com/ZheglY/vpn-platform/services/access/internal/domain"
@@ -24,7 +25,7 @@ type Service interface {
 	IssueSubscriptionURL(rctx context.Context, subscriptionID, idempotencyKey, operation string) (string, error)
 	GetAccessStatus(context.Context, string) (domain.AccessStatus, error)
 	GetProfile(context.Context, string) (application.Profile, error)
-	GetProvisioningMaterial(context.Context, string) (application.ProvisioningMaterial, error)
+	GetProvisioningMaterial(context.Context, string, string) (application.ProvisioningMaterial, error)
 }
 
 type PublicRateLimiter interface {
@@ -109,7 +110,11 @@ func (h *Handler) GetProvisioningMaterial(w http.ResponseWriter, r *http.Request
 		httperror.Write(w, r, http.StatusBadRequest, "invalid_credential_id", "credential id is invalid")
 		return
 	}
-	material, err := h.service.GetProvisioningMaterial(r.Context(), credentialID)
+	actorService := "dev-insecure"
+	if identity, ok := httpauth.FromContext(r.Context()); ok {
+		actorService = identity.Name
+	}
+	material, err := h.service.GetProvisioningMaterial(r.Context(), credentialID, actorService)
 	if errors.Is(err, domain.ErrNotFound) {
 		httperror.Write(w, r, http.StatusNotFound, "credential_not_found", "credential was not found")
 		return
@@ -156,6 +161,11 @@ func (h *Handler) GetHappSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(profile.Body))
+}
+
+func (h *Handler) GetUnavailableHappSubscription(w http.ResponseWriter, _ *http.Request) {
+	setPublicSecurityHeaders(w)
+	writeUnavailable(w)
 }
 
 func setPublicSecurityHeaders(w http.ResponseWriter) {

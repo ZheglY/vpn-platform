@@ -12,13 +12,13 @@
     }
   },
   "type": "object",
-  "required": ["event_id", "event_type", "schema_version", "occurred_at", "producer", "correlation_id", "causation_id", "aggregate_type", "aggregate_id", "partition_key", "data"],
+  "required": ["event_id", "event_type", "schema_version", "occurred_at", "producer", "correlation_id", "causation_id", "aggregate_type", "aggregate_id", "aggregate_sequence", "partition_key", "data"],
   "additionalProperties": false,
   "properties": {
     "event_id": {"type": "string", "format": "uuid"}, "event_type": {"const": "subscription.expired.v1"}, "schema_version": {"const": 1},
     "occurred_at": {"type": "string", "format": "date-time"}, "producer": {"const": "subscription-service"},
     "correlation_id": {"type": "string", "format": "uuid"}, "causation_id": {"type": ["string", "null"], "format": "uuid"},
-    "aggregate_type": {"const": "subscription"}, "aggregate_id": {"type": "string", "format": "uuid"},
+    "aggregate_type": {"const": "subscription"}, "aggregate_id": {"type": "string", "format": "uuid"}, "aggregate_sequence": {"type": "integer", "minimum": 1},
     "partition_key": {"type": "string", "pattern": "^user:[0-9a-fA-F-]{36}$"}, "data": {"$ref": "#/$defs/terminalData"}
   }
 }

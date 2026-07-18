@@ -13,6 +13,7 @@ var (
 	ErrIdempotencyReplay    = errors.New("idempotency response is unavailable")
 	ErrIdempotencyConflict  = errors.New("idempotency key conflicts with request")
 	ErrDurableStateConflict = errors.New("event conflicts with durable access state")
+	ErrLifecycleSequenceGap = errors.New("subscription lifecycle sequence gap")
 )
 
 const (
@@ -25,17 +26,18 @@ const (
 )
 
 type EventMeta struct {
-	EventID         string
-	EventType       string
-	AggregateID     string
-	PartitionKey    string
-	CorrelationID   string
-	CausationID     *string
-	OccurredAt      time.Time
-	SourceTopic     string
-	SourcePartition int32
-	SourceOffset    int64
-	PayloadSHA256   string
+	EventID           string
+	EventType         string
+	AggregateID       string
+	AggregateSequence int64
+	PartitionKey      string
+	CorrelationID     string
+	CausationID       *string
+	OccurredAt        time.Time
+	SourceTopic       string
+	SourcePartition   int32
+	SourceOffset      int64
+	PayloadSHA256     string
 }
 
 type PeriodEvent struct {
@@ -90,11 +92,13 @@ type OperationFailed struct {
 }
 
 type RevokeSucceeded struct {
-	OperationID     string    `json:"operation_id"`
-	CredentialID    string    `json:"credential_id"`
-	RevokedRevision int       `json:"revoked_revision"`
-	NodeIDs         []string  `json:"node_ids"`
-	RevokedAt       time.Time `json:"revoked_at"`
+	OperationID             string    `json:"operation_id"`
+	CredentialID            string    `json:"credential_id"`
+	DesiredRevision         int       `json:"desired_revision"`
+	AllocationRevision      int       `json:"allocation_revision"`
+	AllAssignedNodesRemoved bool      `json:"all_assigned_nodes_removed"`
+	NodeIDs                 []string  `json:"node_ids"`
+	RevokedAt               time.Time `json:"revoked_at"`
 }
 
 type CredentialSeed struct {
@@ -152,6 +156,7 @@ type Store interface {
 	GetAccessStatus(context.Context, string) (AccessStatus, error)
 	GetProfileByTokenHMAC(context.Context, []byte) (ProfileRecord, error)
 	GetProvisioningRecord(context.Context, string) (ProvisioningRecord, error)
+	RecordCredentialMaterialAccess(context.Context, string, string) error
 	RecordDeadLetter(context.Context, string, int32, int64, string, string) error
 	ClaimOutbox(context.Context, time.Duration) (OutboxMessage, bool, error)
 	CompleteOutbox(context.Context, string) error

@@ -36,6 +36,13 @@ type consumerClient interface {
 	AllowRebalance()
 	CommitRecords(context.Context, ...*kgo.Record) error
 	SetOffsets(map[string]map[int32]kgo.EpochOffset)
+	PauseFetchPartitions(map[string][]int32) map[string][]int32
+	ResumeFetchPartitions(map[string][]int32)
+}
+
+type topicPartition struct {
+	topic     string
+	partition int32
 }
 
 type Consumer struct {
@@ -44,10 +51,11 @@ type Consumer struct {
 	store      deadLetterStore
 	logger     *zap.Logger
 	retryDelay time.Duration
+	deferred   map[topicPartition]*kgo.Record
 }
 
 func NewConsumer(client consumerClient, processor Processor, store deadLetterStore, logger *zap.Logger, retryDelay time.Duration) *Consumer {
-	return &Consumer{client: client, processor: processor, store: store, logger: logger, retryDelay: retryDelay}
+	return &Consumer{client: client, processor: processor, store: store, logger: logger, retryDelay: retryDelay, deferred: make(map[topicPartition]*kgo.Record)}
 }
 
 func (c *Consumer) Run(ctx context.Context) {
@@ -56,7 +64,13 @@ func (c *Consumer) Run(ctx context.Context) {
 }
 
 func (c *Consumer) pollOnce(ctx context.Context) bool {
-	fetches := c.client.PollRecords(ctx, 1)
+	pollCtx := ctx
+	cancelPoll := func() {}
+	if len(c.deferred) > 0 {
+		pollCtx, cancelPoll = context.WithTimeout(ctx, c.retryDelay)
+	}
+	fetches := c.client.PollRecords(pollCtx, 1)
+	cancelPoll()
 	defer c.client.AllowRebalance()
 	for _, fetchErr := range fetches.Errors() {
 		if ctx.Err() == nil {
@@ -71,6 +85,10 @@ func (c *Consumer) pollOnce(ctx context.Context) bool {
 		}
 		err := c.process(ctx, record)
 		if err != nil {
+			if errors.Is(err, domain.ErrLifecycleSequenceGap) {
+				c.deferGap(record)
+				continue
+			}
 			if code, poison := application.ContractErrorCode(err); poison {
 				sum := sha256.Sum256(record.Value)
 				if deadErr := c.store.RecordDeadLetter(ctx, record.Topic, record.Partition, record.Offset, hex.EncodeToString(sum[:]), code); deadErr != nil {
@@ -92,6 +110,10 @@ func (c *Consumer) pollOnce(ctx context.Context) bool {
 			c.waitRetry(ctx, err)
 			return ctx.Err() == nil
 		}
+		c.retryDeferred(ctx)
+	}
+	if len(records) == 0 && len(c.deferred) > 0 {
+		c.retryDeferred(ctx)
 	}
 	return ctx.Err() == nil
 }
@@ -107,7 +129,7 @@ func (c *Consumer) process(ctx context.Context, record *kgo.Record) error {
 	sum := sha256.Sum256(record.Value)
 	meta := domain.EventMeta{
 		EventID: envelope.EventID, EventType: envelope.EventType, AggregateID: envelope.AggregateID,
-		PartitionKey:  envelope.PartitionKey,
+		AggregateSequence: envelope.AggregateSequence, PartitionKey: envelope.PartitionKey,
 		CorrelationID: envelope.CorrelationID, CausationID: envelope.CausationID, OccurredAt: envelope.OccurredAt.UTC(),
 		SourceTopic: record.Topic, SourcePartition: record.Partition, SourceOffset: record.Offset,
 		PayloadSHA256: hex.EncodeToString(sum[:]),
@@ -149,6 +171,12 @@ func validateEnvelope(record *kgo.Record, envelope platformkafka.Envelope) error
 	if rule.partitionPrefix == "credential:" && partitionID(envelope.PartitionKey) != envelope.AggregateID {
 		return errors.New("invalid_envelope_aggregate_key")
 	}
+	if rule.aggregateType == "subscription" && envelope.AggregateSequence < 1 {
+		return errors.New("invalid_envelope_sequence")
+	}
+	if envelope.AggregateSequence < 0 {
+		return errors.New("invalid_envelope_sequence")
+	}
 	if len(envelope.Data) == 0 || bytes.Equal(envelope.Data, []byte("null")) {
 		return errors.New("invalid_envelope_data")
 	}
@@ -187,6 +215,53 @@ func (c *Consumer) rewind(records []*kgo.Record) {
 		}
 	}
 	c.client.SetOffsets(offsets)
+}
+
+func (c *Consumer) deferGap(record *kgo.Record) {
+	key := topicPartition{topic: record.Topic, partition: record.Partition}
+	if _, exists := c.deferred[key]; exists {
+		return
+	}
+	c.deferred[key] = record
+	c.client.PauseFetchPartitions(map[string][]int32{record.Topic: {record.Partition}})
+	c.logger.Warn("access lifecycle sequence gap deferred", zap.String("topic", record.Topic), zap.Int32("partition", record.Partition), zap.Int64("offset", record.Offset))
+}
+
+func (c *Consumer) retryDeferred(ctx context.Context) {
+	for {
+		progressed := false
+		for key, record := range c.deferred {
+			if ctx.Err() != nil {
+				return
+			}
+			err := c.process(ctx, record)
+			if errors.Is(err, domain.ErrLifecycleSequenceGap) {
+				continue
+			}
+			if err != nil {
+				code, poison := application.ContractErrorCode(err)
+				if !poison {
+					continue
+				}
+				sum := sha256.Sum256(record.Value)
+				if err := c.store.RecordDeadLetter(ctx, record.Topic, record.Partition, record.Offset, hex.EncodeToString(sum[:]), code); err != nil {
+					continue
+				}
+			}
+			commitCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			err = c.client.CommitRecords(commitCtx, record)
+			cancel()
+			if err != nil {
+				continue
+			}
+			delete(c.deferred, key)
+			c.client.ResumeFetchPartitions(map[string][]int32{record.Topic: {record.Partition}})
+			progressed = true
+		}
+		if !progressed {
+			return
+		}
+	}
 }
 
 func (c *Consumer) waitRetry(ctx context.Context, err error) {

@@ -93,7 +93,7 @@ func (s *Service) ProcessEvent(ctx context.Context, meta domain.EventMeta, data 
 		if err := strictDecode(data, &event); err != nil {
 			return ContractError("invalid_event_data", err)
 		}
-		if event.CredentialID != meta.AggregateID || !validUUIDs(event.OperationID, event.CredentialID) || event.FailedRevision < 1 || event.ReasonCode == "" || len(event.ReasonCode) > 64 || event.FailedAt.IsZero() || !validFailureScope(event.FailureScope) || !validUUIDs(event.PendingNodeIDs...) {
+		if event.CredentialID != meta.AggregateID || !validUUIDs(event.OperationID, event.CredentialID) || event.FailedRevision < 1 || event.ReasonCode == "" || len(event.ReasonCode) > 64 || event.FailedAt.IsZero() || !validFailureScope(event.FailureScope) || !validUniqueUUIDs(event.PendingNodeIDs) {
 			return ContractError("event_invariant_failed", domain.ErrDurableStateConflict)
 		}
 		kind := "provision"
@@ -106,7 +106,7 @@ func (s *Service) ProcessEvent(ctx context.Context, meta domain.EventMeta, data 
 		if err := strictDecode(data, &event); err != nil {
 			return ContractError("invalid_event_data", err)
 		}
-		if event.CredentialID != meta.AggregateID || !validUUIDs(event.OperationID, event.CredentialID) || event.RevokedRevision < 1 || event.RevokedAt.IsZero() || len(event.NodeIDs) == 0 || !validUUIDs(event.NodeIDs...) {
+		if event.CredentialID != meta.AggregateID || !validUUIDs(event.OperationID, event.CredentialID) || event.DesiredRevision < 1 || event.AllocationRevision < 0 || !event.AllAssignedNodesRemoved || event.RevokedAt.IsZero() || !validUniqueUUIDs(event.NodeIDs) {
 			return ContractError("event_invariant_failed", domain.ErrDurableStateConflict)
 		}
 		return s.store.ApplyRevokeSucceeded(ctx, meta, event)
@@ -162,7 +162,10 @@ func (s *Service) GetProfile(ctx context.Context, token string) (Profile, error)
 	return Profile{Body: body, ExpiresAt: record.EntitlementExpiresAt}, nil
 }
 
-func (s *Service) GetProvisioningMaterial(ctx context.Context, credentialID string) (ProvisioningMaterial, error) {
+func (s *Service) GetProvisioningMaterial(ctx context.Context, credentialID, actorService string) (ProvisioningMaterial, error) {
+	if actorService == "" || len(actorService) > 64 {
+		return ProvisioningMaterial{}, fmt.Errorf("provisioning actor identity is invalid")
+	}
 	record, err := s.store.GetProvisioningRecord(ctx, credentialID)
 	if err != nil {
 		return ProvisioningMaterial{}, err
@@ -170,6 +173,9 @@ func (s *Service) GetProvisioningMaterial(ctx context.Context, credentialID stri
 	vlessUUID, err := s.keyring.Decrypt(record.KeyVersion, record.Ciphertext, record.CredentialID)
 	if err != nil {
 		return ProvisioningMaterial{}, fmt.Errorf("decrypt provisioning credential: %w", err)
+	}
+	if err := s.store.RecordCredentialMaterialAccess(ctx, record.CredentialID, actorService); err != nil {
+		return ProvisioningMaterial{}, err
 	}
 	return ProvisioningMaterial{CredentialID: record.CredentialID, Revision: record.Revision, Protocol: "vless_reality", VLESSClientUUID: vlessUUID}, nil
 }
@@ -229,6 +235,20 @@ func validUUIDs(values ...string) bool {
 		if !uuidPattern.MatchString(value) {
 			return false
 		}
+	}
+	return true
+}
+
+func validUniqueUUIDs(values []string) bool {
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if !validUUIDs(value) {
+			return false
+		}
+		if _, exists := seen[value]; exists {
+			return false
+		}
+		seen[value] = struct{}{}
 	}
 	return true
 }

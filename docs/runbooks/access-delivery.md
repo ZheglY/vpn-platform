@@ -27,6 +27,27 @@ Useful state fields from the allowlisted internal API are `access_status`, `prov
 
 If public profile requests return 503 while PostgreSQL and Kafka are healthy, check Redis readiness and the ephemeral rate-limit Lua operation. Do not bypass the limiter in production; restore Redis or drain traffic to a healthy instance.
 
+## Lifecycle Sequence Gap
+
+Access requires every subscription lifecycle `aggregate_sequence` in order even though activation, extension, expiry, and revoke use separate topics. A gap is retryable: the consumer pauses only the source partition containing the later event, leaves its offset uncommitted, and continues consuming other topic partitions. After the predecessor commits, the deferred event is retried and its partition resumes.
+
+1. Check lag and safe counts for all four subscription lifecycle topics and the Subscription outbox. Do not dump message payloads.
+2. Confirm whether the missing sequence is pending, processing, or published in the Subscription outbox using aggregate ID and sequence only.
+3. Restore Kafka or the Subscription outbox publisher when the predecessor is unpublished.
+4. If the predecessor is absent from durable Subscription state, stop Access consumers and escalate as a producer consistency incident.
+5. Never edit `last_applied_sequence`, insert an inbox row, commit the deferred Kafka offset, or replay a later event as a workaround.
+
+An old event with a sequence already owned by another event is a durable conflict and may appear in payload-free dead-letter metadata. Verify producer identity and schema before any approved replay.
+
+## Delayed Provisioning and Revoke Proof
+
+- A provisioning success received after entitlement expiry must leave Access `revoking`, emit no `access.ready.v1`, and either create a later-revision revoke command or bind an already pending revoke to the newly confirmed allocation revision.
+- Revoke success is terminal only when desired revision, allocation revision, the explicit complete-removal flag, and the unique node set exactly match the Access snapshot.
+- An empty node set is valid for an operation that captured allocation revision zero. Do not synthesize node IDs for a no-op.
+- Partial confirmation remains `revoking`; hand it to the Stage 6 reconciliation procedure once that milestone is approved.
+
+Every successful provisioning-material response creates a secret-free row in `security_audit_events`. Inspect only action, outcome, actor service, and timestamp during an incident. Never select ciphertext or attach credential material to tickets.
+
 ## Lost One-Time Issue Response
 
 The plaintext URL is intentionally not recoverable. A replay of the completed idempotency key returns `409 idempotency_response_unavailable`.
@@ -61,7 +82,7 @@ make compose-config
 make compose-smoke
 ```
 
-Compose smoke injects a contract-valid provisioning result, tests mTLS authorization, one-time issue replay, Happ headers/body, token log redaction, and Access PostgreSQL invariants. It does not prove a live VPN connection.
+Compose smoke injects a contract-valid provisioning result, tests mTLS authorization and security audit, one-time issue replay, Happ headers/body, token log redaction, lifecycle ordering, revoke proof, atomic rate limiting, global idempotency, and Access PostgreSQL invariants. It does not prove a live VPN connection.
 
 ## Rollback
 

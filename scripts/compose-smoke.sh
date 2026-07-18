@@ -345,6 +345,16 @@ if docker compose logs access-service | grep -Fq "$issued_token"; then
 fi
 rm -f tmp/stage5-profile-headers.txt tmp/stage5-profile-body.txt
 
+subscription_base="${issued_url%/*}"
+for malformed_path in "$subscription_base" "$subscription_base/" "$subscription_base/a/b"; do
+  malformed_status="$(curl -sS -D tmp/stage5-malformed-headers.txt -o tmp/stage5-malformed-body.txt -w '%{http_code}' --cacert secrets/dev-mtls/ca.crt "$malformed_path")"
+  if [[ "$malformed_status" != "404" ]] || ! grep -qi '^cache-control: no-store' tmp/stage5-malformed-headers.txt || [[ "$(cat tmp/stage5-malformed-body.txt)" != "subscription unavailable" ]]; then
+    echo "malformed subscription path did not use the generic no-store 404" >&2
+    exit 1
+  fi
+done
+rm -f tmp/stage5-malformed-headers.txt tmp/stage5-malformed-body.txt
+
 out_of_order_webhook='{"type":"notification","event":"payment.canceled","object":{"id":"'"${provider_payment_id}"'","status":"canceled"}}'
 if [[ "$(yookassa_webhook_status "$out_of_order_webhook")" != "200" ]]; then
   echo "out-of-order webhook did not return 200" >&2
@@ -377,3 +387,8 @@ go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:8086/internal/v1/u
 go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:8086/internal/v1/users/${subscription_user_id}/subscription" secrets/dev-mtls/identity-health.crt secrets/dev-mtls/identity-health.key secrets/dev-mtls/ca.crt 403
 go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:8087/internal/v1/credentials/${access_credential_id}/provisioning-material" secrets/dev-mtls/provisioning-service.crt secrets/dev-mtls/provisioning-service.key secrets/dev-mtls/ca.crt 200
 go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:8087/internal/v1/credentials/${access_credential_id}/provisioning-material" secrets/dev-mtls/identity-health.crt secrets/dev-mtls/identity-health.key secrets/dev-mtls/ca.crt 403
+material_audit_count="$(scalar_sql access_service "SELECT count(*) FROM security_audit_events WHERE credential_id='${access_credential_id}' AND actor_service='provisioning-service' AND action='credential_material.read' AND outcome='succeeded'")"
+if [[ "$material_audit_count" != "1" ]]; then
+  echo "provisioning material read was not audited exactly once" >&2
+  exit 1
+fi

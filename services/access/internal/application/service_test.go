@@ -65,6 +65,40 @@ func TestProvisionSuccessRejectsReadyWithoutExpectedTopology(t *testing.T) {
 	}
 }
 
+func TestRevokeSuccessAcceptsZeroAllocationsAndRejectsDuplicates(t *testing.T) {
+	store := &fakeStore{}
+	service, _ := newTestService(t, store)
+	credentialID := "018f0e61-bca5-7a40-a06f-e4c0f53128ad"
+	meta := domain.EventMeta{EventType: "access.revoke.succeeded.v1", AggregateID: credentialID}
+	zeroAllocation := []byte(`{"operation_id":"018f0e61-bca5-7a40-a06f-e4c0f53128ae","credential_id":"018f0e61-bca5-7a40-a06f-e4c0f53128ad","desired_revision":2,"allocation_revision":0,"all_assigned_nodes_removed":true,"node_ids":[],"revoked_at":"2026-07-18T12:00:00Z"}`)
+	if err := service.ProcessEvent(context.Background(), meta, zeroAllocation); err != nil || !store.revokeApplied {
+		t.Fatalf("zero-allocation revoke = %v", err)
+	}
+	store.revokeApplied = false
+	duplicateNodes := []byte(`{"operation_id":"018f0e61-bca5-7a40-a06f-e4c0f53128ae","credential_id":"018f0e61-bca5-7a40-a06f-e4c0f53128ad","desired_revision":2,"allocation_revision":1,"all_assigned_nodes_removed":true,"node_ids":["018f0e61-bca5-7a40-a06f-e4c0f53128af","018f0e61-bca5-7a40-a06f-e4c0f53128af"],"revoked_at":"2026-07-18T12:00:00Z"}`)
+	if err := service.ProcessEvent(context.Background(), meta, duplicateNodes); err == nil || store.revokeApplied {
+		t.Fatal("duplicate revoke node proof was accepted")
+	}
+}
+
+func TestProvisioningMaterialReadIsAuditedBeforeReturn(t *testing.T) {
+	store := &fakeStore{}
+	service, _ := newTestService(t, store)
+	credentialID := "018f0e61-bca5-7a40-a06f-e4c0f53128ae"
+	ciphertext, version, err := service.keyring.Encrypt("018f0e61-bca5-7a40-a06f-e4c0f53128ad", bytes.Repeat([]byte{4}, 12), credentialID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.provisioning = domain.ProvisioningRecord{CredentialID: credentialID, Revision: 1, Ciphertext: ciphertext, KeyVersion: version}
+	material, err := service.GetProvisioningMaterial(context.Background(), credentialID, "provisioning-service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if material.VLESSClientUUID == "" || store.auditActor != "provisioning-service" || store.auditCredentialID != credentialID {
+		t.Fatal("credential material access was not audited")
+	}
+}
+
 func newTestService(t *testing.T, store *fakeStore) (*Service, *credential.TokenHasher) {
 	t.Helper()
 	keyring, err := credential.NewKeyring(1, map[int][]byte{1: bytes.Repeat([]byte{1}, 32)})
@@ -83,10 +117,14 @@ func newTestService(t *testing.T, store *fakeStore) (*Service, *credential.Token
 }
 
 type fakeStore struct {
-	tokenSeed        domain.TokenSeed
-	tokenOperation   string
-	profile          domain.ProfileRecord
-	provisionApplied bool
+	tokenSeed         domain.TokenSeed
+	tokenOperation    string
+	profile           domain.ProfileRecord
+	provisioning      domain.ProvisioningRecord
+	provisionApplied  bool
+	revokeApplied     bool
+	auditActor        string
+	auditCredentialID string
 }
 
 func (f *fakeStore) Ping(context.Context) error { return nil }
@@ -104,6 +142,7 @@ func (f *fakeStore) ApplyOperationFailed(context.Context, domain.EventMeta, doma
 	return nil
 }
 func (f *fakeStore) ApplyRevokeSucceeded(context.Context, domain.EventMeta, domain.RevokeSucceeded) error {
+	f.revokeApplied = true
 	return nil
 }
 func (f *fakeStore) IssueToken(_ context.Context, _ string, operation string, seed domain.TokenSeed) error {
@@ -120,7 +159,14 @@ func (f *fakeStore) GetProfileByTokenHMAC(context.Context, []byte) (domain.Profi
 	return f.profile, nil
 }
 func (f *fakeStore) GetProvisioningRecord(context.Context, string) (domain.ProvisioningRecord, error) {
-	return domain.ProvisioningRecord{}, domain.ErrNotFound
+	if f.provisioning.CredentialID == "" {
+		return domain.ProvisioningRecord{}, domain.ErrNotFound
+	}
+	return f.provisioning, nil
+}
+func (f *fakeStore) RecordCredentialMaterialAccess(_ context.Context, credentialID, actor string) error {
+	f.auditCredentialID, f.auditActor = credentialID, actor
+	return nil
 }
 func (f *fakeStore) RecordDeadLetter(context.Context, string, int32, int64, string, string) error {
 	return nil

@@ -58,9 +58,15 @@ This Definition of Done applies to every implementation task after Stage 0. Stag
 - Credential creation, operation creation, inbox completion, and secret-free provisioning outbox insertion are one PostgreSQL transaction.
 - VLESS UUIDs are versioned AES-256-GCM ciphertext at rest; tokens are 256 random bits with only a separate-key HMAC-SHA-256 persisted.
 - Provisioning success is current-revision checked, validates exactly one primary and at most one failover, stores endpoint snapshots atomically, and emits one `access.ready.v1`.
+- Lifecycle facts carry a monotonic subscription sequence; Access persists its last applied sequence, defers gaps without committing them, and rejects stale sequence collisions.
+- Database time prevents elapsed activation from provisioning and prevents a delayed provisioning success from emitting readiness; a delayed physical success atomically starts revoke.
+- Revoke success is bound to desired/allocation revisions and exactly matches the unique assigned-node snapshot; zero-allocation no-op and partial-removal cases are tested.
+- Access outbox rows and envelopes carry a credential-owned sequence, and no later sequence is claimable while an earlier one is unpublished.
 - Issue and rotation serialize per subscription; duplicate/concurrent effects cannot create multiple active tokens, and completed idempotency replay never reconstructs a plaintext URL.
+- Global idempotency-key reuse across subscriptions resolves deterministically under concurrency without a unique-violation 500.
 - Malformed, unknown, expired, and revoked tokens have the same no-store 404 fingerprint; logs contain only the route template.
 - Happ headers and VLESS + REALITY URI encoding have golden and security tests against the current official documentation.
-- Provisioning material is mTLS allowlisted and contains no REALITY private key; Kafka contains no VLESS UUID, token, or URL.
+- Provisioning material is mTLS allowlisted, every successful plaintext read is durably audited without secret material, and Kafka contains no VLESS UUID, token, or URL.
+- The Redis IP/token decision is one atomic script; a blocked dimension cannot consume the other dimension's budget.
 - Migration-from-zero, Access PostgreSQL integration, Compose delivery smoke, contracts, service image, and image scan pass before acceptance.
 - No Stage 6 node registry, placement, node-agent, Xray mutation, or live connection is present or claimed.

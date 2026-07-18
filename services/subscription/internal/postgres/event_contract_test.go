@@ -19,7 +19,7 @@ func TestBuildSubscriptionPeriodEventContract(t *testing.T) {
 		SourcePaymentID: "66666666-6666-4666-8666-666666666666",
 		PeriodStart:     start, PeriodEnd: start.Add(30 * 24 * time.Hour), GraceEndsAt: start.Add(31 * 24 * time.Hour),
 	}
-	payload, err := buildEventPayload("subscription.activated.v1", "77777777-7777-4777-8777-777777777777", data.SubscriptionID, data.UserID, "88888888-8888-4888-8888-888888888888", &causationID, start, data)
+	payload, err := buildEventPayload("subscription.activated.v1", "77777777-7777-4777-8777-777777777777", data.SubscriptionID, data.UserID, "88888888-8888-4888-8888-888888888888", &causationID, 1, start, data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +27,7 @@ func TestBuildSubscriptionPeriodEventContract(t *testing.T) {
 	if err := json.Unmarshal(payload, &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if envelope.SchemaVersion != 1 || envelope.Producer != "subscription-service" || envelope.AggregateType != "subscription" || envelope.AggregateID != data.SubscriptionID || envelope.PartitionKey != "user:"+data.UserID {
+	if envelope.SchemaVersion != 1 || envelope.Producer != "subscription-service" || envelope.AggregateType != "subscription" || envelope.AggregateID != data.SubscriptionID || envelope.AggregateSequence != 1 || envelope.PartitionKey != "user:"+data.UserID {
 		t.Fatalf("unexpected envelope: %+v", envelope)
 	}
 	var decoded periodEventData
@@ -42,7 +42,7 @@ func TestBuildSubscriptionPeriodEventContract(t *testing.T) {
 func TestBuildSubscriptionTerminalEventContract(t *testing.T) {
 	effectiveAt := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
 	data := terminalEventData{SubscriptionID: "22222222-2222-4222-8222-222222222222", UserID: "33333333-3333-4333-8333-333333333333", Reason: "expired", EffectiveAt: effectiveAt}
-	payload, err := buildEventPayload("subscription.expired.v1", "77777777-7777-4777-8777-777777777777", data.SubscriptionID, data.UserID, "", nil, effectiveAt, data)
+	payload, err := buildEventPayload("subscription.expired.v1", "77777777-7777-4777-8777-777777777777", data.SubscriptionID, data.UserID, "", nil, 1, effectiveAt, data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestBuildSubscriptionTerminalEventContract(t *testing.T) {
 	if err := json.Unmarshal(payload, &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if envelope.CorrelationID != envelope.EventID || envelope.CausationID != nil || envelope.EventType != "subscription.expired.v1" {
+	if envelope.CorrelationID != envelope.EventID || envelope.CausationID != nil || envelope.EventType != "subscription.expired.v1" || envelope.AggregateSequence != 1 {
 		t.Fatalf("unexpected terminal envelope: %+v", envelope)
 	}
 	var decoded terminalEventData

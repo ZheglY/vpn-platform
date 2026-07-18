@@ -8,7 +8,7 @@ Happ is only the user client. It is not the VPN provider. User VPN traffic must 
 
 ## Current Scope
 
-Stage 5 adds access credential and Happ delivery to onboarding, the sandbox purchase boundary, and subscription entitlement lifecycle. `identity-service`, `catalog-service`, `billing-service`, `subscription-service`, `access-service`, and `telegram-bot` run locally with separate logical PostgreSQL databases. Access consumes lifecycle and provisioning outcomes through a payload-free inbox, stores encrypted VLESS credentials and public endpoint snapshots, publishes secret-free commands/readiness through an outbox, and owns one-time subscription URL issuance and rotation.
+Stage 5 adds access credential and Happ delivery to onboarding, the sandbox purchase boundary, and subscription entitlement lifecycle. `identity-service`, `catalog-service`, `billing-service`, `subscription-service`, `access-service`, and `telegram-bot` run locally with separate logical PostgreSQL databases. Access consumes lifecycle and provisioning outcomes through a payload-free inbox, stores a monotonic lifecycle cursor, encrypted VLESS credentials and revisioned public endpoint snapshots, publishes secret-free sequenced commands/readiness through an outbox, and owns one-time subscription URL issuance and rotation.
 
 The current environment is portfolio/sandbox only. It does not use real YooKassa credentials, issue receipts, initiate provider refunds, allocate VPN nodes, mutate Xray-core, or prove a live VPN connection. Compose injects a provisioning result before exercising Happ URL delivery. Active entitlement explicitly does not mean VPN access is ready.
 
@@ -214,18 +214,20 @@ sequenceDiagram
     participant Xray
     Kafka->>Sub: billing.payment.succeeded.v1
     Sub->>Kafka: subscription.activated.v1 or subscription.extended.v1
-    Kafka->>Access: subscription event
+    Kafka->>Access: subscription event with aggregate_sequence
+    Access->>Access: require previous sequence and unexpired DB-time entitlement
     Access->>Access: create credential only; no subscription token yet
     Access->>Kafka: access.provision.request.v1
     Kafka->>Prov: provision command
     Prov->>Access: GET credential material over mTLS
+    Access->>Access: append secret-free security audit event
     Access-->>Prov: minimum VLESS material; no REALITY private key
     Prov->>Agent: PUT credential over mTLS
     Agent->>Xray: validate, atomic apply, reload
     Agent-->>Prov: operation result
     Prov->>Kafka: access.provision.succeeded.v1 or failed.v1
     Kafka->>Access: provisioning result
-    Access->>Kafka: access.ready.v1 when primary node applied
+    Access->>Kafka: access.ready.v1 only if entitlement still valid
 ```
 
 Subscription entitlement can be `active` while VPN access is still pending. VPN access becomes `ready` only after the primary node successfully applies the credential. If failover is not ready, provisioning is `degraded`, access may be issued through the one-time link flow, and the failure must be visible in metrics, admin CLI, and alerting. If the primary node fails, access must not become `ready`.
@@ -269,7 +271,7 @@ sequenceDiagram
     Kafka->>Prov: revoke command
     Prov->>Agent: DELETE credential over mTLS
     Agent-->>Prov: removed or redacted failure
-    Prov->>Kafka: access.revoke.succeeded.v1 or failed.v1
+    Prov->>Kafka: exact allocation-revision removal proof or failed.v1
     Kafka->>Access: revoke result
     Access->>Access: mark revoked only after all assigned nodes confirm removal
 ```
@@ -283,6 +285,7 @@ Reconciliation periodically compares access state, provisioning allocations, and
 Implemented Stage 5 behavior:
 
 - Unknown, expired, and revoked tokens return the same external response.
+- Empty and nested malformed `/s` paths return that same response without redirecting to a distinguishable document.
 - Response does not reveal user or subscription existence.
 - Use `404 Not Found`, `Content-Type: text/plain; charset=utf-8`, `Cache-Control: no-store`.
 - Response body is generic and contains no token, user ID, credential ID, or reason.
@@ -290,6 +293,7 @@ Implemented Stage 5 behavior:
 - Happ standard headers are `profile-title`, `profile-update-interval`, `subscription-userinfo`, and optional `support-url`.
 - The body contains one deterministic VLESS + REALITY share URI per validated primary/failover endpoint snapshot.
 - Provisioning success is the only event that stores an endpoint snapshot and moves access to `active` or `degraded`.
+- A delayed physical provisioning success after entitlement expiry stores the allocation only to initiate revoke and never makes access ready.
 - Placement, node state, Xray changes, and live connection verification remain Stage 6.
 
 ## Security Boundaries
