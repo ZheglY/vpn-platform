@@ -56,9 +56,10 @@ Stage 2 smoke also verifies:
 
 Stage 3 smoke also verifies:
 
+- PostgreSQL concurrency, uniqueness, trigger, transaction rollback, lease recovery, and provider-create deadline behavior
 - configured plan seed and immutable order snapshot flow through `/buy`
 - provider create committed before an ambiguous `500` is recovered with the same provider idempotency key
-- a second purchase update reuses one open order, one payment, and one provider object
+- concurrent purchase updates with different command keys reuse one open order, one payment, and one provider object
 - duplicate YooKassa webhook is durably deduplicated
 - terminal state is accepted only after provider GET verifies account, test mode, amount, currency, metadata, and status
 - an out-of-order canceled notification cannot reverse a succeeded payment or create another event

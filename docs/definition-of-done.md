@@ -32,7 +32,10 @@ This Definition of Done applies to every implementation task after Stage 0. Stag
 - Money is stored as integer minor units and an uppercase ISO-style three-letter currency; no `float` crosses a contract or transaction.
 - A provider idempotency key is persisted before the first create call and reused for all ambiguous retries.
 - Duplicate clicks, idempotency replay with a changed request, duplicate webhook, delayed webhook, and out-of-order terminal notification are tested.
+- PostgreSQL and service tests cover concurrent payment commands with different keys, one-payment-per-order constraints, state triggers, terminal/outbox rollback, worker lease recovery, and the 23-hour internal/24-hour provider-window boundaries.
+- Exact same-key replay returns the stored resource before current Identity/Catalog availability checks.
 - Webhook fulfillment requires provider GET verification of ID, account, amount, currency, internal metadata, status, and capture time.
 - Terminal payment/order transition and versioned outbox insert are one PostgreSQL transaction.
 - Full provider/webhook payloads, confirmation URLs, credentials, and payment secrets are absent from logs and durable inbox data.
+- Confirmation URLs are cleared on succeeded, canceled, and failed payment transitions.
 - Migration from zero, fake-provider E2E, contract examples, service images, and image scans pass before acceptance.

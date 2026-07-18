@@ -9,6 +9,7 @@ function Set-DefaultEnv([string]$name, [string]$value) {
 Set-DefaultEnv "POSTGRES_USER" "vpn_local"
 Set-DefaultEnv "POSTGRES_PASSWORD" "local-compose-password"
 Set-DefaultEnv "POSTGRES_DB" "vpn_platform"
+Set-DefaultEnv "POSTGRES_PORT" "5432"
 Set-DefaultEnv "REDIS_PASSWORD" "local-compose-redis"
 Set-DefaultEnv "KAFKA_PORT" "9094"
 Set-DefaultEnv "IDENTITY_DB_PASSWORD" "local-compose-identity"
@@ -23,6 +24,7 @@ Set-DefaultEnv "YOOKASSA_SECRET_KEY" "local-compose-yookassa-key"
 Set-DefaultEnv "PAYMENT_RETURN_URL" "https://example.invalid/payment-return"
 Set-DefaultEnv "COMPOSE_PARALLEL_LIMIT" "2"
 Set-DefaultEnv "COMPOSE_BAKE" "false"
+Set-DefaultEnv "COMPOSE_PROFILES" "core,app"
 
 function Invoke-WebhookStatus([string]$body) {
     $responsePath = Join-Path $env:TEMP "vpn-platform-webhook-response.json"
@@ -99,6 +101,11 @@ try {
         exit $LASTEXITCODE
     }
 
+    docker compose --profile core --profile app down -v --remove-orphans
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+
     $buildServices = @("identity-migrate", "identity-service", "catalog-service", "billing-service", "yookassa-api", "telegram-api", "telegram-bot")
     foreach ($service in $buildServices) {
         docker compose --profile core --profile app build $service
@@ -134,6 +141,36 @@ try {
         if ($attempt -eq 60) {
             docker compose --profile core --profile app ps
             throw "Compose services did not become healthy: $($statuses -join ', ')"
+        }
+        Start-Sleep -Seconds 2
+    }
+
+    docker stop "vpn-service-telegram-bot-1" "vpn-service-billing-service-1" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+    $previousBillingTestDatabaseURL = $env:BILLING_TEST_DATABASE_URL
+    try {
+        $env:BILLING_TEST_DATABASE_URL = "postgres://billing_app:$($env:BILLING_DB_PASSWORD)@127.0.0.1:$($env:POSTGRES_PORT)/billing_service?sslmode=disable"
+        go test ./services/billing/internal/postgres -run '^TestIntegration' -count=1
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
+    } finally {
+        $env:BILLING_TEST_DATABASE_URL = $previousBillingTestDatabaseURL
+    }
+    docker start "vpn-service-billing-service-1" "vpn-service-telegram-bot-1" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+    foreach ($attempt in 1..60) {
+        $billingStatus = docker inspect -f "{{.State.Health.Status}}" "vpn-service-billing-service-1"
+        $botStatus = docker inspect -f "{{.State.Health.Status}}" "vpn-service-telegram-bot-1"
+        if ($billingStatus -eq "healthy" -and $botStatus -eq "healthy") {
+            break
+        }
+        if ($attempt -eq 60) {
+            throw "Billing services did not recover after integration tests: billing=$billingStatus bot=$botStatus"
         }
         Start-Sleep -Seconds 2
     }
@@ -209,9 +246,32 @@ try {
     Invoke-RestMethod -Uri "http://127.0.0.1:8085/test/fail-next" -Method Post -ContentType "application/json" -Body '{"mode":"ambiguous_after_commit"}' -TimeoutSec 10 | Out-Null
 
     $buyBody = '{"update_id":2003,"message":{"message_id":3,"text":"/buy","chat":{"id":9001},"from":{"id":4200001,"first_name":"Smoke","language_code":"en"}}}'
-    $buyStatus = Invoke-WebhookStatus $buyBody
-    if ($buyStatus -ne 200) {
-        throw "buy webhook status=$buyStatus, want 200"
+    $concurrentBuyBody = '{"update_id":2004,"message":{"message_id":4,"text":"/buy","chat":{"id":9001},"from":{"id":4200001,"first_name":"Smoke","language_code":"en"}}}'
+    $buyJob = Start-Job -ScriptBlock {
+        param([string]$secret, [string]$body)
+        $responsePath = Join-Path $env:TEMP "vpn-platform-buy-first-response.json"
+        $requestPath = Join-Path $env:TEMP "vpn-platform-buy-first-request.json"
+        try {
+            [System.IO.File]::WriteAllText($requestPath, $body, [System.Text.UTF8Encoding]::new($false))
+            $status = & curl.exe -sS -o $responsePath -w "%{http_code}" -H "X-Telegram-Bot-Api-Secret-Token: $secret" -H "Content-Type: application/json" --data-binary "@$requestPath" "http://127.0.0.1:8081/webhooks/telegram"
+            if ($LASTEXITCODE -ne 0) {
+                throw "curl webhook request failed with exit code $LASTEXITCODE"
+            }
+            [int]$status
+        } finally {
+            if (Test-Path $responsePath) {
+                Remove-Item $responsePath -Force
+            }
+            if (Test-Path $requestPath) {
+                Remove-Item $requestPath -Force
+            }
+        }
+    } -ArgumentList $env:TELEGRAM_WEBHOOK_SECRET, $buyBody
+    $concurrentBuyStatus = Invoke-WebhookStatus $concurrentBuyBody
+    $buyStatus = Receive-Job -Job $buyJob -Wait
+    Remove-Job -Job $buyJob
+    if ([int]$buyStatus -ne 200 -or $concurrentBuyStatus -ne 200) {
+        throw "concurrent buy statuses: first=$buyStatus second=$concurrentBuyStatus, want 200/200"
     }
 
     $providerPaymentID = ""
@@ -228,10 +288,6 @@ try {
         throw "ambiguous provider create was not reconciled exactly once"
     }
 
-    $retryBuyBody = '{"update_id":2004,"message":{"message_id":4,"text":"/buy","chat":{"id":9001},"from":{"id":4200001,"first_name":"Smoke","language_code":"en"}}}'
-    if ((Invoke-WebhookStatus $retryBuyBody) -ne 200) {
-        throw "retry buy webhook did not return 200"
-    }
     $orderCount = Invoke-ScalarSQL "billing_service" "SELECT count(*) FROM orders"
     $paymentCount = Invoke-ScalarSQL "billing_service" "SELECT count(*) FROM payments"
     $providerState = Invoke-RestMethod -Uri "http://127.0.0.1:8085/test/payments" -TimeoutSec 10

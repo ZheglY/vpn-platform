@@ -56,7 +56,10 @@ CREATE TABLE payments (
     status text NOT NULL CHECK (status IN ('created', 'verification_pending', 'pending', 'succeeded', 'canceled', 'failed')),
     amount_minor bigint NOT NULL CHECK (amount_minor > 0),
     currency char(3) NOT NULL CHECK (currency ~ '^[A-Z]{3}$'),
-    confirmation_url text NULL CHECK (confirmation_url IS NULL OR length(confirmation_url) <= 2048),
+    confirmation_url text NULL CHECK (
+        (confirmation_url IS NULL OR length(confirmation_url) <= 2048)
+        AND (status NOT IN ('succeeded', 'canceled', 'failed') OR confirmation_url IS NULL)
+    ),
     provider_create_deadline timestamptz NOT NULL,
     next_reconcile_at timestamptz NOT NULL DEFAULT now(),
     reconcile_lease_until timestamptz NULL,

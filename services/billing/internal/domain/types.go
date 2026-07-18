@@ -111,11 +111,14 @@ type OutboxMessage struct {
 
 type Store interface {
 	Ping(context.Context) error
+	FindOrderReplay(context.Context, string, string, string) (Order, bool, error)
 	CreateOrder(context.Context, CreateOrderInput) (Order, bool, error)
 	GetOrder(context.Context, string, string) (Order, error)
+	FindPaymentReplay(context.Context, string, string, string) (PaymentOperation, bool, error)
 	CreatePayment(context.Context, CreatePaymentInput, string, time.Duration) (PaymentOperation, bool, error)
 	GetPayment(context.Context, string) (PaymentOperation, error)
 	GetPaymentByProviderID(context.Context, string) (PaymentOperation, error)
+	PrepareProviderCreate(context.Context, string, time.Time) (PaymentOperation, bool, error)
 	ApplyProviderCreate(context.Context, string, ProviderPayment) (PaymentOperation, error)
 	MarkProviderCreateAmbiguous(context.Context, string, string, time.Duration) error
 	MarkProviderCreateFailed(context.Context, string, string) error

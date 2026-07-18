@@ -59,7 +59,7 @@ The telegram-bot service listens on `http://localhost:8081` by default:
 
 Catalog and billing listen on `https://localhost:8083` and `https://localhost:8084`. The YooKassa webhook is public TLS ingress on billing; internal order and payment endpoints require an allowlisted service certificate.
 
-`make compose-smoke` exercises onboarding and a complete sandbox purchase. It verifies ambiguous provider response recovery, repeated purchase clicks, duplicate and out-of-order webhooks, provider GET verification, a single terminal database transition, and one Kafka event.
+`make compose-smoke` exercises onboarding and a complete sandbox purchase. It first runs real PostgreSQL concurrency, deadline, lease, trigger, and transaction tests, then verifies concurrent purchase clicks, ambiguous provider response recovery, duplicate and out-of-order webhooks, provider GET verification, a single terminal database transition, and one Kafka event.
 
 ## Repository Rules
 

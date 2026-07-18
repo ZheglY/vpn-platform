@@ -4,6 +4,7 @@ set -euo pipefail
 export POSTGRES_USER="${POSTGRES_USER:-vpn_local}"
 export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-local-compose-password}"
 export POSTGRES_DB="${POSTGRES_DB:-vpn_platform}"
+export POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 export REDIS_PASSWORD="${REDIS_PASSWORD:-local-compose-redis}"
 export KAFKA_PORT="${KAFKA_PORT:-9094}"
 export IDENTITY_DB_PASSWORD="${IDENTITY_DB_PASSWORD:-local-compose-identity}"
@@ -18,8 +19,11 @@ export YOOKASSA_SECRET_KEY="${YOOKASSA_SECRET_KEY:-local-compose-yookassa-key}"
 export PAYMENT_RETURN_URL="${PAYMENT_RETURN_URL:-https://example.invalid/payment-return}"
 export COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-2}"
 export COMPOSE_BAKE="${COMPOSE_BAKE:-false}"
+export COMPOSE_PROFILES="${COMPOSE_PROFILES:-core,app}"
 
 bash scripts/dev-mtls.sh
+
+docker compose --profile core --profile app down -v --remove-orphans
 
 cleanup() {
   docker compose --profile core --profile app down -v
@@ -107,6 +111,23 @@ for container in "${containers[@]}"; do
   fi
 done
 
+docker stop vpn-service-telegram-bot-1 vpn-service-billing-service-1 >/dev/null
+BILLING_TEST_DATABASE_URL="postgres://billing_app:${BILLING_DB_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/billing_service?sslmode=disable" \
+  go test ./services/billing/internal/postgres -run '^TestIntegration' -count=1
+docker start vpn-service-billing-service-1 vpn-service-telegram-bot-1 >/dev/null
+for _ in $(seq 1 60); do
+  billing_status="$(docker inspect -f '{{.State.Health.Status}}' vpn-service-billing-service-1)"
+  bot_status="$(docker inspect -f '{{.State.Health.Status}}' vpn-service-telegram-bot-1)"
+  if [[ "$billing_status" == "healthy" && "$bot_status" == "healthy" ]]; then
+    break
+  fi
+  sleep 2
+done
+if [[ "$billing_status" != "healthy" || "$bot_status" != "healthy" ]]; then
+  echo "billing services did not recover after integration tests: billing=$billing_status bot=$bot_status" >&2
+  exit 1
+fi
+
 docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9094 --list >/dev/null
 docker compose exec -T identity-service /identity-service healthcheck >/dev/null
 
@@ -169,9 +190,14 @@ curl -fsS -X POST http://127.0.0.1:8085/test/reset >/dev/null
 curl -fsS -X POST -H "Content-Type: application/json" --data-binary '{"mode":"ambiguous_after_commit"}' http://127.0.0.1:8085/test/fail-next >/dev/null
 
 buy_body='{"update_id":2003,"message":{"message_id":3,"text":"/buy","chat":{"id":9001},"from":{"id":4200001,"first_name":"Smoke","language_code":"en"}}}'
-buy_status="$(webhook_status "$buy_body")"
-if [[ "$buy_status" != "200" ]]; then
-  echo "buy webhook status=$buy_status, want 200" >&2
+concurrent_buy_body='{"update_id":2004,"message":{"message_id":4,"text":"/buy","chat":{"id":9001},"from":{"id":4200001,"first_name":"Smoke","language_code":"en"}}}'
+webhook_status "$buy_body" >/tmp/vpn-service-first-buy-status.txt &
+first_buy_pid=$!
+concurrent_buy_status="$(webhook_status "$concurrent_buy_body")"
+wait "$first_buy_pid"
+buy_status="$(cat /tmp/vpn-service-first-buy-status.txt)"
+if [[ "$buy_status" != "200" || "$concurrent_buy_status" != "200" ]]; then
+  echo "concurrent buy statuses: first=$buy_status second=$concurrent_buy_status, want 200/200" >&2
   exit 1
 fi
 
@@ -193,11 +219,6 @@ if ! grep -q '"count":1' /tmp/vpn-service-fake-yookassa.json ||
   exit 1
 fi
 
-retry_buy_body='{"update_id":2004,"message":{"message_id":4,"text":"/buy","chat":{"id":9001},"from":{"id":4200001,"first_name":"Smoke","language_code":"en"}}}'
-if [[ "$(webhook_status "$retry_buy_body")" != "200" ]]; then
-  echo "retry buy webhook did not return 200" >&2
-  exit 1
-fi
 order_count="$(scalar_sql billing_service "SELECT count(*) FROM orders")"
 payment_count="$(scalar_sql billing_service "SELECT count(*) FROM payments")"
 curl -fsS http://127.0.0.1:8085/test/payments >/tmp/vpn-service-fake-yookassa.json

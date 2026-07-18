@@ -92,11 +92,11 @@ func (w *Worker) reconcilePayment(ctx context.Context) error {
 		return err
 	}
 	if operation.ProviderPaymentID == nil {
-		if !w.service.now().Before(operation.ProviderCreateDeadline) {
-			return w.store.MarkProviderCreateFailed(ctx, operation.PaymentID, "create_window_expired")
-		}
 		created, err := w.service.createAtProvider(ctx, operation)
 		if err != nil {
+			return err
+		}
+		if created.Status != domain.PaymentStatusCreated && created.Status != domain.PaymentStatusVerificationPending && created.Status != domain.PaymentStatusPending {
 			return nil
 		}
 		return w.store.ReschedulePayment(ctx, created.PaymentID, "", retryBackoff(w.service.retryDelay, operation.ReconcileAttempts, operation.PaymentID))

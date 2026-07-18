@@ -30,6 +30,15 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 func (s *Store) Close()                         { s.pool.Close() }
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 
+func (s *Store) FindOrderReplay(ctx context.Context, userID, idempotencyKey, requestHash string) (domain.Order, bool, error) {
+	resourceID, found, err := lookupIdempotency(ctx, s.pool, userID, "create_order", idempotencyKey, requestHash)
+	if err != nil || !found {
+		return domain.Order{}, false, err
+	}
+	order, err := getOrder(ctx, s.pool, userID, resourceID)
+	return order, err == nil, err
+}
+
 func (s *Store) CreateOrder(ctx context.Context, input domain.CreateOrderInput) (domain.Order, bool, error) {
 	orderID, err := cryptoutil.RandomUUID()
 	if err != nil {
@@ -105,6 +114,15 @@ func (s *Store) GetOrder(ctx context.Context, userID, orderID string) (domain.Or
 	return getOrder(ctx, s.pool, userID, orderID)
 }
 
+func (s *Store) FindPaymentReplay(ctx context.Context, userID, idempotencyKey, requestHash string) (domain.PaymentOperation, bool, error) {
+	resourceID, found, err := lookupIdempotency(ctx, s.pool, userID, "create_payment", idempotencyKey, requestHash)
+	if err != nil || !found {
+		return domain.PaymentOperation{}, false, err
+	}
+	payment, err := getPayment(ctx, s.pool, "p.id=$1", resourceID)
+	return payment, err == nil, err
+}
+
 func (s *Store) CreatePayment(ctx context.Context, input domain.CreatePaymentInput, provider string, createWindow time.Duration) (domain.PaymentOperation, bool, error) {
 	paymentID, err := cryptoutil.RandomUUID()
 	if err != nil {
@@ -135,6 +153,9 @@ func (s *Store) CreatePayment(ctx context.Context, input domain.CreatePaymentInp
 			return domain.PaymentOperation{}, false, fmt.Errorf("commit payment replay: %w", err)
 		}
 		return payment, false, nil
+	}
+	if _, err := tx.Exec(ctx, `SELECT id FROM orders WHERE id=$1 AND user_id=$2 FOR UPDATE`, input.OrderID, input.UserID); err != nil {
+		return domain.PaymentOperation{}, false, fmt.Errorf("lock payment order: %w", err)
 	}
 	order, err := getOrder(ctx, tx, input.UserID, input.OrderID)
 	if err != nil {
@@ -180,6 +201,48 @@ func (s *Store) GetPaymentByProviderID(ctx context.Context, providerID string) (
 	return getPayment(ctx, s.pool, "p.provider_payment_id=$1", providerID)
 }
 
+func (s *Store) PrepareProviderCreate(ctx context.Context, paymentID string, observedAt time.Time) (domain.PaymentOperation, bool, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.PaymentOperation{}, false, fmt.Errorf("begin provider create guard: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	payment, err := getPayment(ctx, tx, "p.id=$1 FOR UPDATE OF p,o", paymentID)
+	if err != nil {
+		return domain.PaymentOperation{}, false, err
+	}
+	active := payment.Status == domain.PaymentStatusCreated || payment.Status == domain.PaymentStatusVerificationPending
+	if !active || payment.ProviderPaymentID != nil {
+		if err := tx.Commit(ctx); err != nil {
+			return domain.PaymentOperation{}, false, fmt.Errorf("commit provider create guard: %w", err)
+		}
+		return payment, false, nil
+	}
+	if !observedAt.Before(payment.ProviderCreateDeadline) {
+		if _, err := tx.Exec(ctx, `
+UPDATE payments SET status='failed',confirmation_url=NULL,last_error_code='create_window_expired',reconcile_lease_until=NULL,updated_at=now()
+WHERE id=$1`, paymentID); err != nil {
+			return domain.PaymentOperation{}, false, fmt.Errorf("expire provider create: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE orders SET status='canceled',updated_at=now() WHERE id=$1 AND status IN ('created','payment_pending')`, payment.OrderID); err != nil {
+			return domain.PaymentOperation{}, false, fmt.Errorf("cancel expired order: %w", err)
+		}
+		payment, err = getPayment(ctx, tx, "p.id=$1", paymentID)
+		if err != nil {
+			return domain.PaymentOperation{}, false, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return domain.PaymentOperation{}, false, fmt.Errorf("commit expired provider create: %w", err)
+		}
+		return payment, false, nil
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.PaymentOperation{}, false, fmt.Errorf("commit provider create guard: %w", err)
+	}
+	return payment, true, nil
+}
+
 func (s *Store) ApplyProviderCreate(ctx context.Context, paymentID string, providerPayment domain.ProviderPayment) (domain.PaymentOperation, error) {
 	status := domain.PaymentStatusPending
 	if providerPayment.Status != "pending" {
@@ -214,7 +277,7 @@ func (s *Store) MarkProviderCreateFailed(ctx context.Context, paymentID, code st
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var orderID string
-	if err := tx.QueryRow(ctx, `UPDATE payments SET status='failed',last_error_code=$2,reconcile_lease_until=NULL,updated_at=now() WHERE id=$1 AND status IN ('created','verification_pending','pending') RETURNING order_id`, paymentID, code).Scan(&orderID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	if err := tx.QueryRow(ctx, `UPDATE payments SET status='failed',confirmation_url=NULL,last_error_code=$2,reconcile_lease_until=NULL,updated_at=now() WHERE id=$1 AND status IN ('created','verification_pending','pending') RETURNING order_id`, paymentID, code).Scan(&orderID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("fail payment: %w", err)
 	}
 	if orderID != "" {
@@ -339,14 +402,14 @@ func (s *Store) ApplyVerifiedPayment(ctx context.Context, expected domain.Paymen
 		return err
 	}
 	if provider.Status == "succeeded" {
-		if _, err := tx.Exec(ctx, `UPDATE payments SET status='succeeded',paid_at=$2,reconcile_lease_until=NULL,last_error_code=NULL,updated_at=now() WHERE id=$1`, current.PaymentID, occurredAt); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE payments SET status='succeeded',confirmation_url=NULL,paid_at=$2,reconcile_lease_until=NULL,last_error_code=NULL,updated_at=now() WHERE id=$1`, current.PaymentID, occurredAt); err != nil {
 			return fmt.Errorf("succeed payment: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `UPDATE orders SET status='paid',updated_at=now() WHERE id=$1`, current.OrderID); err != nil {
 			return fmt.Errorf("pay order: %w", err)
 		}
 	} else {
-		if _, err := tx.Exec(ctx, `UPDATE payments SET status='canceled',canceled_at=$2,reconcile_lease_until=NULL,last_error_code=NULL,updated_at=now() WHERE id=$1`, current.PaymentID, occurredAt); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE payments SET status='canceled',confirmation_url=NULL,canceled_at=$2,reconcile_lease_until=NULL,last_error_code=NULL,updated_at=now() WHERE id=$1`, current.PaymentID, occurredAt); err != nil {
 			return fmt.Errorf("cancel payment: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `UPDATE orders SET status='canceled',updated_at=now() WHERE id=$1`, current.OrderID); err != nil {

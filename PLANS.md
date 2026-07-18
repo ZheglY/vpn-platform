@@ -136,7 +136,7 @@ Notes:
 
 ### Stage 3 - Catalog, Billing, and YooKassa sandbox
 
-Status: implementation and required verification completed on `codex/stage3-catalog-billing`; pending user acceptance. Stage 4 remains blocked until explicit approval.
+Status: acceptance-review remediation implemented on `codex/stage3-catalog-billing`; required verification completed and pending user acceptance. Stage 4 remains blocked until explicit approval.
 
 Depends on Stage 2 and sandbox payment decisions. Adds immutable plan/order snapshots, YooKassa sandbox adapter, payment idempotency, webhook inbox, verification, reconciliation, and fake provider tests.
 
@@ -152,6 +152,7 @@ Acceptance criteria:
 
 Verification completed:
 
+- PostgreSQL integration suite for concurrent different-key payment creation, constraints/triggers, atomic terminal outbox behavior, lease recovery, and provider-create deadline boundaries
 - `make verify`
 - `make compose-smoke`
 - Final review of transaction boundaries, idempotency, state monotonicity, mTLS allowlists, contract compatibility, redaction, and service ownership

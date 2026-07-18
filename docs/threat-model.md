@@ -75,6 +75,7 @@ Risk: an attacker sends a forged `payment.succeeded` webhook.
 Mitigation:
 
 - Store normalized webhook dedupe/inbox record and return fast 2xx for accepted or duplicate notifications.
+- Keep sandbox ingress bound to loopback. Before production, enforce an edge rate limit and the current official YooKassa IPv4/IPv6 allowlist so arbitrary unique provider IDs cannot cause unbounded inbox growth.
 - Idempotent worker fetches payment/refund from YooKassa API before fulfillment.
 - Verify provider payment ID, status, amount, currency, shop/account, and metadata.
 - Transition payment/order and write outbox in one PostgreSQL transaction.
@@ -208,8 +209,10 @@ Mitigation:
 - Generate and persist a UUID v4 provider idempotency key before the first network call.
 - Move ambiguous results to durable `verification_pending`, never to succeeded or failed by assumption.
 - Reconciliation repeats create with the same key inside a 23-hour window and validates the returned object.
-- One payment per order and provider-key uniqueness prevent parallel local creation.
-- Fake-provider E2E forces an ambiguous response after commit and asserts one provider object.
+- The common HTTP/worker create path checks the durable deadline before every provider POST; at the boundary it atomically fails the payment and cancels the still-open order.
+- One payment per order, order-row serialization, and provider-key uniqueness prevent parallel local creation under different command keys.
+- Provider-result recovery writes use a separate bounded context after client cancellation and never discard persistence errors.
+- PostgreSQL concurrency/boundary tests plus fake-provider E2E force competing requests and an ambiguous response after commit while asserting one provider object.
 
 ### T13 - Provider payload or confirmation URL leaks from billing
 
@@ -220,6 +223,7 @@ Mitigation:
 - YooKassa adapter returns classified errors without wrapping credential-bearing URLs or raw bodies.
 - Webhook ingress persists only event type, provider object ID, and observed status.
 - Confirmation URL is excluded from events and forbidden from structured logs, metrics, and traces.
+- Confirmation URL is cleared in the same transaction that makes a payment succeeded, canceled, or failed.
 - Provider responses are body-limited; error and redaction tests include synthetic secrets.
 
 ## Initial Security Requirements
@@ -233,6 +237,7 @@ Mitigation:
 - Secrets via secret mounts or secret manager, never Git or image.
 - Request body limits per public endpoint.
 - Telegram webhook ingress rate limit before business processing.
+- YooKassa webhook edge rate limit and current official source-IP allowlist before public production exposure; authenticated provider GET remains mandatory.
 - `Idempotency-Key` required for payment/order/token issue/rotation commands.
 - Manual commit after successful Kafka processing and inbox persistence.
 - DLQ is actionable with alert, reason, replay tooling, and runbook.

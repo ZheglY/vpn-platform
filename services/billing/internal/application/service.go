@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/ZheglY/vpn-platform/services/billing/internal/domain"
 )
+
+const providerRecoveryTimeout = 5 * time.Second
 
 type Service struct {
 	store        domain.Store
@@ -28,6 +31,14 @@ func NewService(store domain.Store, identity domain.IdentityVerifier, catalog do
 }
 
 func (s *Service) CreateOrder(ctx context.Context, userID, planID, region, termsVersion, idempotencyKey string) (domain.Order, bool, error) {
+	requestHash := hashParts(userID, planID, region, termsVersion)
+	replayed, found, err := s.store.FindOrderReplay(ctx, userID, idempotencyKey, requestHash)
+	if err != nil {
+		return domain.Order{}, false, err
+	}
+	if found {
+		return replayed, false, nil
+	}
 	if err := s.identity.VerifyActiveWithConsent(ctx, userID, termsVersion); err != nil {
 		return domain.Order{}, false, err
 	}
@@ -35,7 +46,6 @@ func (s *Service) CreateOrder(ctx context.Context, userID, planID, region, terms
 	if err != nil {
 		return domain.Order{}, false, err
 	}
-	requestHash := hashParts(userID, planID, region, termsVersion)
 	return s.store.CreateOrder(ctx, domain.CreateOrderInput{UserID: userID, PlanID: planID, Region: region, AcceptedTermsVersion: termsVersion, IdempotencyKey: idempotencyKey, RequestHash: requestHash, Snapshot: snapshot})
 }
 
@@ -44,6 +54,14 @@ func (s *Service) GetOrder(ctx context.Context, userID, orderID string) (domain.
 }
 
 func (s *Service) CreatePayment(ctx context.Context, userID, orderID, idempotencyKey string) (domain.Payment, bool, error) {
+	requestHash := hashParts(userID, orderID)
+	replayed, found, err := s.store.FindPaymentReplay(ctx, userID, idempotencyKey, requestHash)
+	if err != nil {
+		return domain.Payment{}, false, err
+	}
+	if found {
+		return replayed.Payment, false, nil
+	}
 	order, err := s.store.GetOrder(ctx, userID, orderID)
 	if err != nil {
 		return domain.Payment{}, false, err
@@ -51,7 +69,7 @@ func (s *Service) CreatePayment(ctx context.Context, userID, orderID, idempotenc
 	if err := s.identity.VerifyActiveWithConsent(ctx, userID, order.AcceptedTermsVersion); err != nil {
 		return domain.Payment{}, false, err
 	}
-	operation, created, err := s.store.CreatePayment(ctx, domain.CreatePaymentInput{UserID: userID, OrderID: orderID, IdempotencyKey: idempotencyKey, RequestHash: hashParts(userID, orderID)}, "yookassa", s.createWindow)
+	operation, created, err := s.store.CreatePayment(ctx, domain.CreatePaymentInput{UserID: userID, OrderID: orderID, IdempotencyKey: idempotencyKey, RequestHash: requestHash}, "yookassa", s.createWindow)
 	if err != nil {
 		return domain.Payment{}, false, err
 	}
@@ -66,24 +84,58 @@ func (s *Service) CreatePayment(ctx context.Context, userID, orderID, idempotenc
 }
 
 func (s *Service) createAtProvider(ctx context.Context, operation domain.PaymentOperation) (domain.PaymentOperation, error) {
+	if err := ctx.Err(); err != nil {
+		return domain.PaymentOperation{}, err
+	}
+	operation, allowed, err := s.store.PrepareProviderCreate(ctx, operation.PaymentID, s.now())
+	if err != nil {
+		return domain.PaymentOperation{}, err
+	}
+	if !allowed {
+		return operation, nil
+	}
+
 	providerPayment, err := s.provider.CreatePayment(ctx, domain.ProviderCreateRequest{IdempotencyKey: operation.ProviderIdempotencyKey, OrderID: operation.OrderID, PaymentID: operation.PaymentID, AmountMinor: operation.AmountMinor, Currency: operation.Currency})
 	if err != nil {
 		if domain.IsProviderRetryable(err) {
-			_ = s.store.MarkProviderCreateAmbiguous(ctx, operation.PaymentID, providerErrorCode(err), s.retryDelay)
-			current, getErr := s.store.GetPayment(ctx, operation.PaymentID)
+			recoveryCtx, cancel := s.recoveryContext(ctx)
+			defer cancel()
+			if markErr := s.store.MarkProviderCreateAmbiguous(recoveryCtx, operation.PaymentID, providerErrorCode(err), s.retryDelay); markErr != nil {
+				return domain.PaymentOperation{}, errors.Join(err, fmt.Errorf("persist ambiguous provider create: %w", markErr))
+			}
+			current, getErr := s.store.GetPayment(recoveryCtx, operation.PaymentID)
 			if getErr != nil {
-				return domain.PaymentOperation{}, getErr
+				return domain.PaymentOperation{}, errors.Join(err, fmt.Errorf("load ambiguous provider create: %w", getErr))
 			}
 			return current, nil
 		}
-		_ = s.store.MarkProviderCreateFailed(ctx, operation.PaymentID, providerErrorCode(err))
+		if markErr := s.markProviderCreateFailed(ctx, operation.PaymentID, providerErrorCode(err)); markErr != nil {
+			return domain.PaymentOperation{}, errors.Join(err, markErr)
+		}
 		return domain.PaymentOperation{}, err
 	}
 	if err := s.validateProviderPayment(operation, providerPayment, true); err != nil {
-		_ = s.store.MarkProviderCreateFailed(ctx, operation.PaymentID, "provider_mismatch")
+		if markErr := s.markProviderCreateFailed(ctx, operation.PaymentID, "provider_mismatch"); markErr != nil {
+			return domain.PaymentOperation{}, errors.Join(err, markErr)
+		}
 		return domain.PaymentOperation{}, err
 	}
-	return s.store.ApplyProviderCreate(ctx, operation.PaymentID, providerPayment)
+	recoveryCtx, cancel := s.recoveryContext(ctx)
+	defer cancel()
+	return s.store.ApplyProviderCreate(recoveryCtx, operation.PaymentID, providerPayment)
+}
+
+func (s *Service) markProviderCreateFailed(ctx context.Context, paymentID, code string) error {
+	recoveryCtx, cancel := s.recoveryContext(ctx)
+	defer cancel()
+	if err := s.store.MarkProviderCreateFailed(recoveryCtx, paymentID, code); err != nil {
+		return fmt.Errorf("persist failed provider create: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) recoveryContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), providerRecoveryTimeout)
 }
 
 func (s *Service) validateProviderPayment(expected domain.PaymentOperation, actual domain.ProviderPayment, requireConfirmation bool) error {
