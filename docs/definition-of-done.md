@@ -51,3 +51,16 @@ This Definition of Done applies to every implementation task after Stage 0. Stag
 - Concurrent outbox workers cannot publish a later aggregate sequence before an earlier unpublished sequence.
 - Kafka poison handling retains no raw payload; transient failures do not advance the committed partition offset.
 - Subscription HTTP and event contracts, migration-from-zero, PostgreSQL integration suite, Compose E2E, service image, and image scan pass before acceptance.
+
+## Stage 5 Specific
+
+- Access owns a separate database and never reads Subscription, Provisioning, Identity, or Billing databases.
+- Credential creation, operation creation, inbox completion, and secret-free provisioning outbox insertion are one PostgreSQL transaction.
+- VLESS UUIDs are versioned AES-256-GCM ciphertext at rest; tokens are 256 random bits with only a separate-key HMAC-SHA-256 persisted.
+- Provisioning success is current-revision checked, validates exactly one primary and at most one failover, stores endpoint snapshots atomically, and emits one `access.ready.v1`.
+- Issue and rotation serialize per subscription; duplicate/concurrent effects cannot create multiple active tokens, and completed idempotency replay never reconstructs a plaintext URL.
+- Malformed, unknown, expired, and revoked tokens have the same no-store 404 fingerprint; logs contain only the route template.
+- Happ headers and VLESS + REALITY URI encoding have golden and security tests against the current official documentation.
+- Provisioning material is mTLS allowlisted and contains no REALITY private key; Kafka contains no VLESS UUID, token, or URL.
+- Migration-from-zero, Access PostgreSQL integration, Compose delivery smoke, contracts, service image, and image scan pass before acceptance.
+- No Stage 6 node registry, placement, node-agent, Xray mutation, or live connection is present or claimed.

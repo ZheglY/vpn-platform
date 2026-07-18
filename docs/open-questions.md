@@ -11,6 +11,9 @@ Open questions must be resolved before the milestone where they affect code, con
 | OQ-005 | What exact admin authentication will the CLI/internal API use? | Stage 7 admin operations | Decide between short-lived mTLS certs, SSO/OIDC, or hardware-backed credentials. |
 | OQ-006 | What support and abuse contacts are real for production? | Stage 8/9 operations | Add contacts and response process before launch. |
 | OQ-007 | What is the production lawful request process? | Stage 9 production readiness | Define process with legal counsel. |
-| OQ-008 | What is the Xray-core version pin and validation command? | Stage 5/6 | Re-check official Xray-core release and security notes before implementation. |
-| OQ-009 | Does Happ UX require changing invalid token response from `404` to another strategy? | Stage 5 | Run compatibility tests against official Happ behavior. |
+| OQ-008 | What is the Xray-core version pin and validation command? | Stage 6 | Re-check official Xray-core release and security notes before implementing node-agent or a real Xray e2e. |
 | OQ-010 | What are production backup encryption keys and restore ownership? | Stage 8 | Define key management and restore drill. |
+
+## Resolved During Stage 5
+
+- OQ-009: retain a uniform `404 text/plain` response for malformed, unknown, expired, and revoked tokens. Happ accepts the standard subscription response, and the uniform failure minimizes account/token oracle behavior. ADR 0021 records the decision.

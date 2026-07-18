@@ -26,6 +26,9 @@ func TestRunWritesPrivateKeysWithOwnerOnlyPermissions(t *testing.T) {
 	assertMode(t, filepath.Join(outDir, "catalog-service.key"), 0o600)
 	assertMode(t, filepath.Join(outDir, "billing-service.key"), 0o600)
 	assertMode(t, filepath.Join(outDir, "subscription-service.key"), 0o600)
+	assertMode(t, filepath.Join(outDir, "access-service.key"), 0o600)
+	assertMode(t, filepath.Join(outDir, "provisioning-service.key"), 0o600)
+	assertMode(t, filepath.Join(outDir, "admin-cli.key"), 0o600)
 }
 
 func assertMode(t *testing.T, path string, want os.FileMode) {

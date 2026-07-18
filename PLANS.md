@@ -2,9 +2,9 @@
 
 ## Current Approval
 
-Approved milestone: Stage 4 - Subscription lifecycle.
+Approved milestone: Stage 5 - Access and Happ subscription delivery.
 
-Not approved yet: Stage 5 and later implementation milestones. Do not create access credential delivery, provisioning, notification delivery, or VPN business logic until the relevant milestone is explicitly approved.
+Stage 4 was accepted by the user's instruction to begin the next milestone. Stage 6 and later implementation milestones are not approved. Do not create node placement, Xray mutation, notification delivery, or production VPN infrastructure until the relevant milestone is explicitly approved.
 
 ## Stage 0 Plan
 
@@ -165,7 +165,7 @@ Notes:
 
 Depends on Stage 3 payment events. Adds entitlement state machine, extension/expiry/revocation logic, scheduler/reconciler, inbox, and time-boundary tests.
 
-Status: hardening implementation and required verification completed on `codex/stage4-subscription-lifecycle` after review of commit `3ab6bdc`; Stage 4 remains pending user acceptance. Stage 5 remains blocked until explicit approval.
+Status: accepted. Hardening implementation and required verification completed on `codex/stage4-subscription-lifecycle` after review of commit `3ab6bdc`; the user explicitly approved beginning the next milestone on 2026-07-18.
 
 Acceptance criteria:
 
@@ -188,6 +188,32 @@ Non-goals:
 ### Stage 5 - Access and Happ subscription delivery
 
 Depends on Stage 4. Adds token generation/hash/rotation, subscription endpoint, VLESS + REALITY URI rendering, Happ compatibility tests, no-store responses, and redaction tests.
+
+Status: implementation and required verification completed on `codex/stage5-access-happ`; pending user acceptance. Stage 6 remains blocked until explicit approval.
+
+Acceptance criteria:
+
+- `access-service` owns a separate PostgreSQL database and consumes subscription lifecycle and provisioning outcome events through a durable, payload-free inbox.
+- Activation or extension creates at most one current encrypted VLESS credential and atomically emits a secret-free `access.provision.request.v1` through a transactional outbox.
+- Provisioning success is the only transition to `active` or `degraded`; it stores a validated public endpoint snapshot and emits one secret-free `access.ready.v1` event.
+- VLESS UUIDs use versioned AES-256-GCM encryption at rest. Subscription tokens use 256 bits from `crypto/rand`; only an HMAC-SHA-256 lookup value is persisted.
+- URL issuance and rotation are serialized per subscription. Plaintext URLs exist only in the successful response; replay of a completed idempotency key returns a safe conflict because the plaintext cannot be reconstructed.
+- Unknown, expired, revoked, and malformed public tokens receive the same `404 text/plain` response with `Cache-Control: no-store`; request logs record only `GET /s/{token}`.
+- Happ responses include compatible profile and expiry headers and deterministic VLESS + REALITY share URIs backed by golden tests.
+- Terminal entitlement events invalidate tokens synchronously and emit a revoke command; actual node allocation, Xray mutation, reconciliation, and real-Xray e2e remain Stage 6.
+- OpenAPI, AsyncAPI/JSON Schema, ADRs, threat model, runbook, Compose, migrations, contract tests, `make verify`, and `make compose-smoke` match implemented behavior.
+
+Risks and dependencies:
+
+- Stage 5 cannot prove a live VPN connection without Stage 6. Tests inject a contract-valid provisioning result and never report access ready before that result.
+- The Stage 4 lifecycle event does not contain the selected region. Stage 6 must version the placement command or obtain the immutable region through an approved service API before node allocation; Stage 5 does not guess a region.
+- Loss of an issued plaintext URL before Telegram delivery requires explicit rotation. Storing a replayable encrypted URL is rejected because it increases credential exposure.
+
+Non-goals:
+
+- No node registry, capacity selection, desired-state reconciliation, node-agent, Xray configuration changes, or production VPS access.
+- No Happ Provider ID, HWID/device enforcement, traffic accounting, or advanced app-management flags.
+- No Telegram delivery changes; telegram-bot integration with the synchronous issue API is a later approved change.
 
 ### Stage 6 - Provisioning control plane and node-agent
 

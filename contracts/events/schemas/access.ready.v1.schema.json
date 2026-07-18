@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vpn-platform.invalid/schemas/access.ready.v1.schema.json",
+  "type": "object",
+  "required": ["event_id", "event_type", "schema_version", "occurred_at", "producer", "correlation_id", "causation_id", "aggregate_type", "aggregate_id", "partition_key", "data"],
+  "additionalProperties": false,
+  "properties": {
+    "event_id": {"type": "string", "format": "uuid"}, "event_type": {"const": "access.ready.v1"}, "schema_version": {"const": 1},
+    "occurred_at": {"type": "string", "format": "date-time"}, "producer": {"const": "access-service"},
+    "correlation_id": {"type": "string", "format": "uuid"}, "causation_id": {"type": ["string", "null"], "format": "uuid"},
+    "aggregate_type": {"const": "access"}, "aggregate_id": {"type": "string", "format": "uuid"},
+    "partition_key": {"type": "string", "pattern": "^user:[0-9a-fA-F-]{36}$"}, "data": {"$ref": "#/$defs/ready"}
+  },
+  "$defs": {"ready": {"type": "object", "required": ["subscription_id", "credential_id", "user_id", "provisioning_status", "ready_at", "link_issuance_required"], "additionalProperties": false, "properties": {
+    "subscription_id": {"type": "string", "format": "uuid"}, "credential_id": {"type": "string", "format": "uuid"}, "user_id": {"type": "string", "format": "uuid"},
+    "provisioning_status": {"enum": ["active", "degraded"]}, "ready_at": {"type": "string", "format": "date-time"}, "link_issuance_required": {"const": true}
+  }}}
+}

@@ -1,6 +1,6 @@
 # External Sources Checked
 
-Checked on 2026-07-17.
+Checked through 2026-07-18.
 
 These sources are used only to shape Stage 0 decisions. Implementation stages must re-check the relevant official documentation before coding an integration.
 
@@ -18,10 +18,13 @@ These sources are used only to shape Stage 0 decisions. Implementation stages mu
 | YooKassa testing | https://yookassa.ru/developers/payment-acceptance/testing-and-going-live/testing | Stage 3 requires a test shop/payment object and rejects any provider response without `test=true`; no real money or production credentials are used. |
 | YooKassa webhook delivery | https://yookassa.ru/developers/using-api/webhooks | Stage 3 acknowledges only after durable normalized inbox storage and verifies current object state through an authenticated API request before a terminal effect. Non-2xx delivery may be retried for up to 24 hours. |
 | Happ developer docs | https://www.happ.su/main/dev-docs | Happ supports subscription delivery through a URL returning proxy links and parameters. |
-| Happ app management | https://www.happ.su/main/dev-docs/app-management | Happ accepts subscription parameters via headers or body, including `profile-title`, `subscription-userinfo`, `support-url`, and fallback behavior. A fallback URL may be used if the primary URL returns 300-599 or times out. |
-| Happ link examples | https://www.happ.su/main/dev-docs/examples-of-links-and-parameters | Subscription body compatibility must be verified with official examples during Stage 5. |
+| Happ app management | https://www.happ.su/main/dev-docs/app-management | Stage 5 re-checked 2026-07-18: Happ accepts `profile-title` (plain text or base64, max 25 characters), hourly `profile-update-interval`, semicolon-separated `subscription-userinfo`, and `support-url` as headers or body directives. The official page includes VLESS + REALITY URI examples. Provider ID is needed only for advanced controls and is intentionally omitted. |
+| Happ link examples | https://www.happ.su/main/dev-docs/examples-of-links-and-parameters | Stage 5 golden tests use a plain-text list with one VLESS URI per endpoint and standard headers; no HWID or Provider ID behavior is enabled. |
 | Xray-core | https://github.com/XTLS/Xray-core | The official Xray-core project is the source for pinned release selection, config validation, and security review. |
 | Xray examples | https://github.com/XTLS/Xray-examples | VLESS + REALITY examples are reference material for Stage 5/6 golden tests, not a substitute for implementation validation. |
+| Xray VLESS outbound | https://xtls.github.io/en/config/outbounds/vless.html | Stage 5 re-checked 2026-07-18: client IDs are UUIDs, VLESS encryption is explicitly `none`, and public deployment requires an authenticated transport such as REALITY. |
+| Xray REALITY transport | https://xtls.github.io/en/config/transports/reality.html | Stage 5 re-checked 2026-07-18: current client fields include server name, fingerprint, public-side password/key, short ID, and optional spider path; short IDs are even-length hexadecimal up to 16 characters. REALITY private keys remain server-side. |
+| XTLS share-link proposal | https://github.com/XTLS/Xray-core/discussions/716 | Stage 5 uses the official XTLS VLESS URI parameter mapping (`security=reality`, `pbk`, `sid`, optional `spx`) and URL encoding in deterministic golden tests. |
 | Go releases/downloads | https://go.dev/dl/ | Stage 1 pins stable Go 1.26.5 after `govulncheck` found standard-library vulnerabilities in 1.26.2. Release candidates are not used. |
 | Go vulnerability database | https://go.dev/security/vuln/database | Stage 1 `make vuln` uses the official Go vulnerability database through `govulncheck`; the Windows fallback mirrors only the needed official JSON endpoints into a temporary local database. |
 | govulncheck versions | `go list -m -versions golang.org/x/vuln` | Stage 1 pins `golang.org/x/vuln/cmd/govulncheck` v1.6.0. |

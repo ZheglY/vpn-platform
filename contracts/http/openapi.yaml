@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: VPN Subscription Platform API
-  version: 0.4.0-stage4
+  version: 0.5.0-stage5
   license:
     name: UNLICENSED
     identifier: LicenseRef-UNLICENSED
@@ -516,14 +516,16 @@ paths:
       tags: [Access]
       summary: Issue a subscription URL exactly once after access is ready
       operationId: issueSubscriptionUrl
-      x-contract-status: skeleton
+      x-contract-status: implemented-stage5
       security:
         - ServiceMTLS: []
       x-allowed-service-identities: [telegram-bot]
       description: >
         Called synchronously by telegram-bot after the user presses "get VPN
-        link". Access-service generates a new token, stores only its lookup HMAC
-        or hash, returns the URL once, and never persists plaintext.
+        link". Access-service generates a new token, stores only its lookup
+        HMAC-SHA-256, returns the URL once, and never persists plaintext. A replay of
+        a completed idempotency key returns 409 because the secret response is
+        intentionally not retained.
       parameters:
         - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -548,7 +550,7 @@ paths:
       tags: [Access]
       summary: Revoke old subscription URL token and issue a replacement
       operationId: rotateSubscriptionUrl
-      x-contract-status: skeleton
+      x-contract-status: implemented-stage5
       security:
         - ServiceMTLS: []
       x-allowed-service-identities: [telegram-bot, admin-cli]
@@ -576,9 +578,10 @@ paths:
       tags: [Access]
       summary: Get access state without returning plaintext token
       operationId: getSubscriptionAccess
-      x-contract-status: skeleton
+      x-contract-status: implemented-stage5
       security:
         - ServiceMTLS: []
+      x-allowed-service-identities: [telegram-bot, admin-cli]
       parameters:
         - $ref: '#/components/parameters/RequestId'
         - $ref: '#/components/parameters/SubscriptionId'
@@ -593,6 +596,8 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
         default:
           $ref: '#/components/responses/Error'
   /internal/v1/credentials/{credential_id}/provisioning-material:
@@ -600,15 +605,16 @@ paths:
       tags: [Provisioning]
       summary: Fetch encrypted-at-rest credential material for node provisioning
       operationId: getProvisioningCredentialMaterial
-      x-contract-status: skeleton
+      x-contract-status: implemented-stage5
       security:
         - ProvisioningMTLS: []
       x-allowed-service-identities: [provisioning-service]
       description: >
         Kafka provisioning commands carry only credential_id, operation_id, and
         revision. Provisioning-service uses this mTLS endpoint to fetch the
-        minimum required VLESS client material. REALITY private keys remain on
-        VPN nodes and are never returned by this API.
+        minimum required VLESS client material. Placement and public endpoint
+        data remain provisioning-service concerns. REALITY private keys remain
+        on VPN nodes and are never returned by this API.
       parameters:
         - $ref: '#/components/parameters/RequestId'
         - name: credential_id
@@ -637,7 +643,7 @@ paths:
       tags: [Access]
       summary: Return Happ-compatible subscription document
       operationId: getHappSubscription
-      x-contract-status: skeleton
+      x-contract-status: implemented-stage5
       x-sensitive-path-parameter: token
       security:
         - SubscriptionUrlBearer: []
@@ -661,6 +667,20 @@ paths:
               schema:
                 type: string
                 const: no-store
+            profile-title:
+              schema:
+                type: string
+                maxLength: 25
+            profile-update-interval:
+              schema:
+                type: string
+                pattern: '^[0-9]+$'
+            subscription-userinfo:
+              schema:
+                type: string
+            support-url:
+              schema:
+                type: string
           content:
             text/plain:
               schema:
@@ -678,6 +698,23 @@ paths:
               schema:
                 type: string
                 description: Generic unavailable response without identifiers.
+        '429':
+          description: Ephemeral public rate limit exceeded
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Retry-After:
+              schema:
+                type: string
+        '503':
+          description: Temporary internal failure with no credential details
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
         default:
           $ref: '#/components/responses/Error'
 components:
@@ -1045,10 +1082,10 @@ components:
           description: "`ready` means VPN is provisioned and a URL may be issued."
         provisioning_status:
           type: string
-          enum: [pending, active, degraded, failed, revoking, revoked]
+          enum: [provisioning, active, degraded, failed, revoking, revoked]
         token_status:
           type: string
-          enum: [not_issued, active, rotated, revoked]
+          enum: [not_issued, active, rotated, revoked, expired]
     SubscriptionUrlIssued:
       type: object
       required: [subscription_url]
@@ -1060,7 +1097,7 @@ components:
           description: Returned only at issuance or rotation. Must not be logged or persisted by caller.
     ProvisioningCredentialMaterial:
       type: object
-      required: [credential_id, revision, protocol, vless_client_uuid, target_nodes]
+      required: [credential_id, revision, protocol, vless_client_uuid]
       additionalProperties: false
       properties:
         credential_id:
@@ -1076,38 +1113,6 @@ components:
           type: string
           format: uuid
           description: Sensitive VPN credential. Must be encrypted at rest and never logged.
-        target_nodes:
-          type: array
-          minItems: 1
-          maxItems: 2
-          items:
-            type: object
-            required: [node_id, role, public_endpoint, reality_public_params]
-            additionalProperties: false
-            properties:
-              node_id:
-                type: string
-                format: uuid
-              role:
-                type: string
-                enum: [primary, failover]
-              public_endpoint:
-                type: string
-                maxLength: 255
-              reality_public_params:
-                type: object
-                additionalProperties: false
-                required: [server_name, public_key, short_id]
-                properties:
-                  server_name:
-                    type: string
-                    maxLength: 255
-                  public_key:
-                    type: string
-                    maxLength: 128
-                  short_id:
-                    type: string
-                    maxLength: 32
     AdminReasonRequest:
       type: object
       required: [reason]

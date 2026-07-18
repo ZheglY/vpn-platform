@@ -12,6 +12,7 @@ services:
       CATALOG_DB_PASSWORD: ${CATALOG_DB_PASSWORD:?set CATALOG_DB_PASSWORD}
       BILLING_DB_PASSWORD: ${BILLING_DB_PASSWORD:?set BILLING_DB_PASSWORD}
       SUBSCRIPTION_DB_PASSWORD: ${SUBSCRIPTION_DB_PASSWORD:?set SUBSCRIPTION_DB_PASSWORD}
+      ACCESS_DB_PASSWORD: ${ACCESS_DB_PASSWORD:?set ACCESS_DB_PASSWORD}
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     healthcheck:
@@ -84,6 +85,13 @@ services:
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic subscription.extended.v1 --partitions 3 --replication-factor 1
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic subscription.expired.v1 --partitions 3 --replication-factor 1
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic subscription.revoked.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic access.provision.request.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic access.revoke.request.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic access.provision.succeeded.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic access.provision.failed.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic access.revoke.succeeded.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic access.revoke.failed.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic access.ready.v1 --partitions 3 --replication-factor 1
     depends_on:
       kafka:
         condition: service_healthy
@@ -368,6 +376,76 @@ services:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
+    networks:
+      - backend
+
+  access-migrate:
+    image: vpn-service/migrate:local
+    build:
+      context: .
+      dockerfile: tools/migrate/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      DATABASE_URL: postgres://access_app:${ACCESS_DB_PASSWORD:?set ACCESS_DB_PASSWORD}@postgres:5432/access_service?sslmode=disable
+      MIGRATIONS_DIR: /migrations/access
+      MIGRATION_COMMAND: up
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+
+  access-service:
+    image: vpn-service/access-service:local
+    build:
+      context: .
+      dockerfile: services/access/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      APP_ENV: local
+      LOG_LEVEL: info
+      HTTP_ADDR: ":8087"
+      DATABASE_URL: postgres://access_app:${ACCESS_DB_PASSWORD:?set ACCESS_DB_PASSWORD}@postgres:5432/access_service?sslmode=disable
+      INTERNAL_AUTH_MODE: mtls
+      MTLS_TRUST_DOMAIN: vpn-service
+      MTLS_NAMESPACE: local
+      SERVER_TLS_CERT_FILE: /run/mtls/access-service.crt
+      SERVER_TLS_KEY_FILE: /run/mtls/access-service.key
+      CLIENT_CA_FILE: /run/mtls/ca.crt
+      HEALTHCHECK_CA_FILE: /run/mtls/ca.crt
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_CONSUMER_GROUP: access-service-v1
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+      REDIS_DB: 1
+      ACCESS_CREDENTIAL_KEY_VERSION: 1
+      ACCESS_CREDENTIAL_KEYS: 1:${ACCESS_CREDENTIAL_KEY_BASE64:?set ACCESS_CREDENTIAL_KEY_BASE64}
+      ACCESS_TOKEN_HMAC_KEY_BASE64: ${ACCESS_TOKEN_HMAC_KEY_BASE64:?set ACCESS_TOKEN_HMAC_KEY_BASE64}
+      SUBSCRIPTION_PUBLIC_BASE_URL: ${SUBSCRIPTION_PUBLIC_BASE_URL:-https://127.0.0.1:8087}
+      HAPP_PROFILE_TITLE: ${HAPP_PROFILE_TITLE:-VPN Platform}
+      HAPP_SUPPORT_URL: ${HAPP_SUPPORT_URL:-https://example.invalid/support}
+      HAPP_PROFILE_UPDATE_HOURS: 6
+      ACCESS_WORKER_POLL_INTERVAL: 250ms
+      ACCESS_WORKER_RETRY_DELAY: 500ms
+    ports:
+      - "127.0.0.1:${ACCESS_HTTP_PORT:-8087}:8087"
+    volumes:
+      - ./secrets/dev-mtls/ca.crt:/run/mtls/ca.crt:ro
+      - ./secrets/dev-mtls/access-service.crt:/run/mtls/access-service.crt:ro
+      - ./secrets/dev-mtls/access-service.key:/run/mtls/access-service.key:ro
+    depends_on:
+      access-migrate:
+        condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     networks:
       - backend
 

@@ -16,6 +16,10 @@ Set-DefaultEnv "IDENTITY_DB_PASSWORD" "local-compose-identity"
 Set-DefaultEnv "CATALOG_DB_PASSWORD" "local-compose-catalog"
 Set-DefaultEnv "BILLING_DB_PASSWORD" "local-compose-billing"
 Set-DefaultEnv "SUBSCRIPTION_DB_PASSWORD" "local-compose-subscription"
+Set-DefaultEnv "ACCESS_DB_PASSWORD" "local-compose-access"
+Set-DefaultEnv "ACCESS_CREDENTIAL_KEY_BASE64" "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+Set-DefaultEnv "ACCESS_TOKEN_HMAC_KEY_BASE64" "ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA="
+Set-DefaultEnv "SUBSCRIPTION_PUBLIC_BASE_URL" "https://127.0.0.1:8087"
 Set-DefaultEnv "TELEGRAM_WEBHOOK_SECRET" "local-compose-webhook-secret"
 Set-DefaultEnv "TELEGRAM_BOT_TOKEN" "local-compose-fake-bot-token"
 Set-DefaultEnv "FAKE_TELEGRAM_SEND_DELAY" "1s"
@@ -86,7 +90,7 @@ function Invoke-YooKassaWebhookStatus([string]$body) {
 
 function Wait-RedisProcessingKey([int64]$updateID) {
     $key = "telegram:dedupe:processing:$updateID"
-    foreach ($attempt in 1..100) {
+    foreach ($attempt in 1..300) {
         $exists = docker compose exec -T -e "REDISCLI_AUTH=$env:REDIS_PASSWORD" redis redis-cli --raw EXISTS $key
         if ("$exists".Trim() -eq "1") {
             return
@@ -107,7 +111,7 @@ try {
         exit $LASTEXITCODE
     }
 
-    $buildServices = @("identity-migrate", "identity-service", "catalog-service", "billing-service", "subscription-service", "yookassa-api", "telegram-api", "telegram-bot")
+    $buildServices = @("identity-migrate", "identity-service", "catalog-service", "billing-service", "subscription-service", "access-service", "yookassa-api", "telegram-api", "telegram-bot")
     foreach ($service in $buildServices) {
         docker compose --profile core --profile app build $service
         if ($LASTEXITCODE -ne 0) {
@@ -129,6 +133,7 @@ try {
         "vpn-service-yookassa-api-1",
         "vpn-service-billing-service-1",
         "vpn-service-subscription-service-1",
+        "vpn-service-access-service-1",
         "vpn-service-telegram-api-1",
         "vpn-service-telegram-bot-1"
     )
@@ -147,7 +152,7 @@ try {
         Start-Sleep -Seconds 2
     }
 
-    docker stop "vpn-service-telegram-bot-1" "vpn-service-subscription-service-1" "vpn-service-billing-service-1" | Out-Null
+    docker stop "vpn-service-telegram-bot-1" "vpn-service-access-service-1" "vpn-service-subscription-service-1" "vpn-service-billing-service-1" | Out-Null
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
@@ -171,19 +176,43 @@ try {
     } finally {
         $env:SUBSCRIPTION_TEST_DATABASE_URL = $previousSubscriptionTestDatabaseURL
     }
-    docker start "vpn-service-billing-service-1" "vpn-service-subscription-service-1" "vpn-service-telegram-bot-1" | Out-Null
+    $previousAccessTestDatabaseURL = $env:ACCESS_TEST_DATABASE_URL
+    try {
+        $env:ACCESS_TEST_DATABASE_URL = "postgres://access_app:$($env:ACCESS_DB_PASSWORD)@127.0.0.1:$($env:POSTGRES_PORT)/access_service?sslmode=disable"
+        go test ./services/access/internal/postgres -run '^TestIntegration' -count=1
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
+    } finally {
+        $env:ACCESS_TEST_DATABASE_URL = $previousAccessTestDatabaseURL
+    }
+    $previousAccessRedisAddr = $env:ACCESS_TEST_REDIS_ADDR
+    $previousAccessRedisPassword = $env:ACCESS_TEST_REDIS_PASSWORD
+    try {
+        $env:ACCESS_TEST_REDIS_ADDR = "127.0.0.1:6379"
+        $env:ACCESS_TEST_REDIS_PASSWORD = $env:REDIS_PASSWORD
+        go test ./services/access/internal/ratelimit -run '^TestIntegration' -count=1
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
+    } finally {
+        $env:ACCESS_TEST_REDIS_ADDR = $previousAccessRedisAddr
+        $env:ACCESS_TEST_REDIS_PASSWORD = $previousAccessRedisPassword
+    }
+    docker start "vpn-service-billing-service-1" "vpn-service-subscription-service-1" "vpn-service-access-service-1" "vpn-service-telegram-bot-1" | Out-Null
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
     foreach ($attempt in 1..60) {
         $billingStatus = docker inspect -f "{{.State.Health.Status}}" "vpn-service-billing-service-1"
         $subscriptionStatus = docker inspect -f "{{.State.Health.Status}}" "vpn-service-subscription-service-1"
+        $accessStatus = docker inspect -f "{{.State.Health.Status}}" "vpn-service-access-service-1"
         $botStatus = docker inspect -f "{{.State.Health.Status}}" "vpn-service-telegram-bot-1"
-        if ($billingStatus -eq "healthy" -and $subscriptionStatus -eq "healthy" -and $botStatus -eq "healthy") {
+        if ($billingStatus -eq "healthy" -and $subscriptionStatus -eq "healthy" -and $accessStatus -eq "healthy" -and $botStatus -eq "healthy") {
             break
         }
         if ($attempt -eq 60) {
-            throw "Services did not recover after integration tests: billing=$billingStatus subscription=$subscriptionStatus bot=$botStatus"
+            throw "Services did not recover after integration tests: billing=$billingStatus subscription=$subscriptionStatus access=$accessStatus bot=$botStatus"
         }
         Start-Sleep -Seconds 2
     }
@@ -345,6 +374,91 @@ try {
         throw "subscription activation did not converge exactly once: status=$subscriptionStatus periods=$subscriptionPeriodCount inbox=$subscriptionInboxCount activation=$activationPublishedCount"
     }
     $subscriptionUserID = Invoke-ScalarSQL "subscription_service" "SELECT user_id FROM subscriptions LIMIT 1"
+    $subscriptionID = Invoke-ScalarSQL "subscription_service" "SELECT id FROM subscriptions LIMIT 1"
+
+    $accessCredentialID = ""
+    foreach ($attempt in 1..80) {
+        $accessCredentialID = Invoke-ScalarSQL "access_service" "SELECT COALESCE((SELECT id::text FROM access_credentials WHERE subscription_id='$subscriptionID' LIMIT 1),'')"
+        $accessProvisionPublished = Invoke-ScalarSQL "access_service" "SELECT count(*) FROM outbox WHERE topic='access.provision.request.v1' AND state='published' AND aggregate_id IN (SELECT id FROM access_credentials WHERE subscription_id='$subscriptionID')"
+        if (![string]::IsNullOrWhiteSpace($accessCredentialID) -and $accessProvisionPublished -eq "1") {
+            break
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    if ([string]::IsNullOrWhiteSpace($accessCredentialID) -or $accessProvisionPublished -ne "1") {
+        throw "access provisioning request was not created exactly once"
+    }
+    $accessOperationID = Invoke-ScalarSQL "access_service" "SELECT id FROM access_operations WHERE kind='provision' LIMIT 1"
+    $accessCommandEventID = Invoke-ScalarSQL "access_service" "SELECT event_id FROM outbox WHERE topic='access.provision.request.v1' LIMIT 1"
+    $provisionResult = @{
+        event_id = "51000000-0000-4000-8000-000000000001"
+        event_type = "access.provision.succeeded.v1"
+        schema_version = 1
+        occurred_at = "2026-07-18T12:00:05Z"
+        producer = "provisioning-service"
+        correlation_id = "51000000-0000-4000-8000-000000000002"
+        causation_id = $accessCommandEventID
+        aggregate_type = "credential"
+        aggregate_id = $accessCredentialID
+        partition_key = "credential:$accessCredentialID"
+        data = @{
+            operation_id = $accessOperationID
+            credential_id = $accessCredentialID
+            applied_revision = 1
+            status = "active"
+            endpoints = @(
+                @{ node_id = "51000000-0000-4000-8000-000000000003"; role = "primary"; address = "vpn.example.invalid"; port = 443; server_name = "cdn.example.invalid"; reality_public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"; short_id = "0011aabb"; spider_x = "/"; label = "VPN Primary" },
+                @{ node_id = "51000000-0000-4000-8000-000000000004"; role = "failover"; address = "backup.example.invalid"; port = 443; server_name = "www.example.invalid"; reality_public_key = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"; short_id = "2233ccdd"; label = "VPN Failover" }
+            )
+            applied_at = "2026-07-18T12:00:05Z"
+        }
+    } | ConvertTo-Json -Compress -Depth 8
+    $kafkaRecord = "credential:$accessCredentialID|$provisionResult`n"
+    $kafkaRecordBase64 = [Convert]::ToBase64String([System.Text.UTF8Encoding]::new($false).GetBytes($kafkaRecord))
+    docker compose exec -T -e "KAFKA_RECORD_BASE64=$kafkaRecordBase64" kafka sh -c 'printf %s $KAFKA_RECORD_BASE64 | base64 -d | /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic access.provision.succeeded.v1 --reader-property parse.key=true --reader-property key.separator=\|'
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+    foreach ($attempt in 1..80) {
+        $accessCredentialStatus = Invoke-ScalarSQL "access_service" "SELECT status FROM access_credentials WHERE id='$accessCredentialID'"
+        $accessReadyPublished = Invoke-ScalarSQL "access_service" "SELECT count(*) FROM outbox WHERE topic='access.ready.v1' AND state='published'"
+        if ($accessCredentialStatus -eq "active" -and $accessReadyPublished -eq "1") {
+            break
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    if ($accessCredentialStatus -ne "active" -or $accessReadyPublished -ne "1") {
+        $accessProvisionInbox = Invoke-ScalarSQL "access_service" "SELECT count(*) FROM inbox WHERE event_type='access.provision.succeeded.v1'"
+        $accessDeadLetterReasons = Invoke-ScalarSQL "access_service" "SELECT COALESCE(string_agg(reason_code,','),'') FROM consumer_dead_letters WHERE topic='access.provision.succeeded.v1'"
+        $accessOperationStatus = Invoke-ScalarSQL "access_service" "SELECT status FROM access_operations WHERE id='$accessOperationID'"
+        docker compose logs --tail=80 access-service
+        throw "access provisioning result did not converge: credential=$accessCredentialStatus ready=$accessReadyPublished inbox=$accessProvisionInbox operation=$accessOperationStatus dead_letters=$accessDeadLetterReasons"
+    }
+
+    $issueJSON = & go run ./tools/mtlsprobe/cmd/mtlsprobe POST "https://127.0.0.1:8087/internal/v1/subscriptions/$subscriptionID/subscription-url/issue" secrets/dev-mtls/telegram-bot.crt secrets/dev-mtls/telegram-bot.key secrets/dev-mtls/ca.crt 200 Idempotency-Key smoke-issue-0001 print-body
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+    $issuedURL = ($issueJSON | ConvertFrom-Json).subscription_url
+    if ([string]::IsNullOrWhiteSpace($issuedURL)) {
+        throw "access issue endpoint did not return a subscription URL"
+    }
+    go run ./tools/mtlsprobe/cmd/mtlsprobe POST "https://127.0.0.1:8087/internal/v1/subscriptions/$subscriptionID/subscription-url/issue" secrets/dev-mtls/telegram-bot.crt secrets/dev-mtls/telegram-bot.key secrets/dev-mtls/ca.crt 409 Idempotency-Key smoke-issue-0001
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+    $profileHeaders = Join-Path (Resolve-Path "tmp") "stage5-profile-headers.txt"
+    $profileBody = Join-Path (Resolve-Path "tmp") "stage5-profile-body.txt"
+    $profileStatus = & curl.exe -sS -D $profileHeaders -o $profileBody -w "%{http_code}" --cacert "secrets/dev-mtls/ca.crt" --ssl-no-revoke $issuedURL
+    if ($profileStatus -ne "200" -or !(Select-String -Path $profileHeaders -Pattern '^Cache-Control: no-store' -Quiet) -or !(Select-String -Path $profileHeaders -Pattern '^profile-title: VPN Platform' -Quiet) -or !(Select-String -Path $profileBody -Pattern '^vless://' -Quiet)) {
+        throw "Happ subscription response was not compatible or no-store"
+    }
+    $issuedToken = $issuedURL.Substring($issuedURL.LastIndexOf('/') + 1)
+    $accessLogs = docker compose logs access-service
+    if ("$accessLogs".Contains($issuedToken)) {
+        throw "subscription token leaked into access-service logs"
+    }
+    Remove-Item $profileHeaders, $profileBody -Force
 
     $outOfOrderWebhook = '{"type":"notification","event":"payment.canceled","object":{"id":"' + $providerPaymentID + '","status":"canceled"}}'
     if ((Invoke-YooKassaWebhookStatus $outOfOrderWebhook) -ne 200) {
@@ -412,6 +526,14 @@ try {
         exit $LASTEXITCODE
     }
     go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:8086/internal/v1/users/$subscriptionUserID/subscription" secrets/dev-mtls/identity-health.crt secrets/dev-mtls/identity-health.key secrets/dev-mtls/ca.crt 403
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+    go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:8087/internal/v1/credentials/$accessCredentialID/provisioning-material" secrets/dev-mtls/provisioning-service.crt secrets/dev-mtls/provisioning-service.key secrets/dev-mtls/ca.crt 200
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+    go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:8087/internal/v1/credentials/$accessCredentialID/provisioning-material" secrets/dev-mtls/identity-health.crt secrets/dev-mtls/identity-health.key secrets/dev-mtls/ca.crt 403
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }

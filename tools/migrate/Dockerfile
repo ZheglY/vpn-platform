@@ -19,5 +19,6 @@ COPY services/identity/migrations /migrations/identity
 COPY services/catalog/migrations /migrations/catalog
 COPY services/billing/migrations /migrations/billing
 COPY services/subscription/migrations /migrations/subscription
+COPY services/access/migrations /migrations/access
 USER nonroot:nonroot
 ENTRYPOINT ["/migrate"]

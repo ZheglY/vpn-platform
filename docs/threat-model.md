@@ -231,6 +231,33 @@ Mitigation:
 - Confirmation URL is cleared in the same transaction that makes a payment succeeded, canceled, or failed.
 - Provider responses are body-limited; error and redaction tests include synthetic secrets.
 
+### T14 - Subscription token leaks through URL paths or idempotency replay
+
+Risk: Happ requires a bearer token in the URL path. Access logs, proxies, traces, referrers, or replayable idempotency responses could retain it.
+
+Mitigation:
+
+- Access-service stores only HMAC-SHA-256 under a dedicated external key; the plaintext token is never persisted.
+- Request middleware records the route template `GET /s/{token}`, not the raw path; a security test fails if the token appears.
+- Success and generic 404 responses use `Cache-Control: no-store`, `Pragma: no-cache`, `Referrer-Policy: no-referrer`, and `X-Content-Type-Options: nosniff`.
+- Completed issue/rotate idempotency keys return a safe 409 instead of replaying a retained secret response.
+- Unknown, malformed, expired, and revoked tokens are externally indistinguishable.
+- Production edge configuration must disable or redact URI access logs before exposing the subscription hostname.
+- An application-level Redis limiter stores only HMAC-derived ephemeral keys with TTL and fails closed; production edge rate limiting remains an additional control.
+
+### T15 - Database theft reveals VLESS access or enables offline token recovery
+
+Risk: a database snapshot contains reusable VPN credentials or allows token lookup without the application secret.
+
+Mitigation:
+
+- VLESS UUIDs use versioned AES-256-GCM envelope encryption under a key supplied outside PostgreSQL.
+- Token lookup uses a separate 32-byte HMAC key; encryption and HMAC keys must differ.
+- Tokens contain 256 random bits, preventing practical guessing even if lookup HMACs leak.
+- Provisioning commands and readiness events contain no UUID, token, URL, or REALITY private key.
+- Provisioning material is returned only to the verified `provisioning-service` SPIFFE identity over mTLS.
+- Public REALITY endpoint parameters are stored as a client snapshot; the REALITY private key remains node-local.
+
 ## Initial Security Requirements
 
 - TLS everywhere.

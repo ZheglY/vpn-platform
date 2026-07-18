@@ -18,7 +18,7 @@ Allowed data:
 - Consent document type, version, accepted time, and source.
 - Orders, payments, and refund records required for financial correctness.
 - Subscription state and period ledger.
-- Access credential records and token lookup hashes.
+- AES-256-GCM-encrypted access credential records, token lookup HMACs, and client-facing endpoint snapshots.
 - Aggregate bytes by credential/node.
 - Node state, load, active credential count, health snapshots, config revision.
 - Security/admin audit records.
@@ -34,6 +34,7 @@ Forbidden data:
 - Full YooKassa webhook/provider payloads unless a later ADR proves necessity, redaction, and retention.
 - Subscription URL/token in plaintext storage, logs, metrics, traces, or support views.
 - VLESS UUIDs and REALITY private keys in logs, metrics, traces, or support views.
+- Happ Provider ID or HWID/device identifiers in Stage 5.
 
 ## Sandbox Retention
 

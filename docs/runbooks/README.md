@@ -6,6 +6,7 @@ Implemented local and sandbox runbooks are listed below. Production operations s
 - [Development mTLS](dev-mtls.md)
 - [YooKassa sandbox and billing recovery](yookassa-sandbox.md)
 - [Subscription lifecycle recovery](subscription-lifecycle.md)
+- [Access delivery and leaked-token response](access-delivery.md)
 - [Support and abuse](support-abuse.md)
 
 Required before production:
@@ -18,6 +19,6 @@ Required before production:
 - Node heartbeat loss.
 - Capacity threshold.
 - Xray reload failure.
-- Leaked subscription token.
+- Leaked subscription token. See [access delivery](access-delivery.md).
 - Backup/restore failure.
 - Support and abuse intake.

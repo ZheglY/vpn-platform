@@ -8,9 +8,9 @@ Happ is only the user client. It is not the VPN provider. User VPN traffic must 
 
 ## Current Scope
 
-Stage 4 implements onboarding, the sandbox purchase boundary, and subscription entitlement lifecycle. `identity-service`, `catalog-service`, `billing-service`, `subscription-service`, and `telegram-bot` run locally with separate logical PostgreSQL databases. Subscription consumes verified payment facts through its own inbox, validates immutable terms through Billing's allowlisted mTLS order API, owns paid periods, and publishes activation, extension, expiry, and revocation facts through its outbox.
+Stage 5 adds access credential and Happ delivery to onboarding, the sandbox purchase boundary, and subscription entitlement lifecycle. `identity-service`, `catalog-service`, `billing-service`, `subscription-service`, `access-service`, and `telegram-bot` run locally with separate logical PostgreSQL databases. Access consumes lifecycle and provisioning outcomes through a payload-free inbox, stores encrypted VLESS credentials and public endpoint snapshots, publishes secret-free commands/readiness through an outbox, and owns one-time subscription URL issuance and rotation.
 
-The current environment is portfolio/sandbox only. It does not use real YooKassa credentials, issue receipts, initiate provider refunds, create VPN credentials, issue Happ URLs, or touch Xray-core. Active entitlement explicitly does not mean VPN access is ready.
+The current environment is portfolio/sandbox only. It does not use real YooKassa credentials, issue receipts, initiate provider refunds, allocate VPN nodes, mutate Xray-core, or prove a live VPN connection. Compose injects a provisioning result before exercising Happ URL delivery. Active entitlement explicitly does not mean VPN access is ready.
 
 ## Product Decisions Already Accepted
 
@@ -280,14 +280,17 @@ Reconciliation periodically compares access state, provisioning allocations, and
 
 `GET /s/{token}` is served from a dedicated subscription hostname by `access-service`.
 
-Initial ADR decision:
+Implemented Stage 5 behavior:
 
 - Unknown, expired, and revoked tokens return the same external response.
 - Response does not reveal user or subscription existence.
 - Use `404 Not Found`, `Content-Type: text/plain; charset=utf-8`, `Cache-Control: no-store`.
 - Response body is generic and contains no token, user ID, credential ID, or reason.
 - Edge, reverse proxy, traces, metrics, and error reporting must not record the path segment.
-- Stage 5 must run Happ compatibility tests against the current official documentation and may supersede the status/body decision through a new ADR if needed.
+- Happ standard headers are `profile-title`, `profile-update-interval`, `subscription-userinfo`, and optional `support-url`.
+- The body contains one deterministic VLESS + REALITY share URI per validated primary/failover endpoint snapshot.
+- Provisioning success is the only event that stores an endpoint snapshot and moves access to `active` or `degraded`.
+- Placement, node state, Xray changes, and live connection verification remain Stage 6.
 
 ## Security Boundaries
 
@@ -330,6 +333,5 @@ The architecture intentionally keeps several decisions as future approval points
 - Production jurisdiction and legal compliance.
 - Real YooKassa receipts, tax fields, and buyer data.
 - Actual domain, DNS/TLS, and VPS provider choices.
-- Happ compatibility details beyond Stage 0 documentation.
 - Xray-core pinned version and security review.
 - Production admin credential issuance and rotation procedure.

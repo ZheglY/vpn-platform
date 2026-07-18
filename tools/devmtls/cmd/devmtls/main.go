@@ -108,6 +108,26 @@ func run(outDir string) error {
 			spiffeName: "subscription-service",
 			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		},
+		{
+			name:       "access-service",
+			commonName: "access-service.local",
+			dnsNames:   []string{"access-service", "access-service.local", "localhost"},
+			ipAddrs:    []net.IP{net.ParseIP("127.0.0.1")},
+			spiffeName: "access-service",
+			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		},
+		{
+			name:       "provisioning-service",
+			commonName: "ignored",
+			spiffeName: "provisioning-service",
+			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		},
+		{
+			name:       "admin-cli",
+			commonName: "ignored",
+			spiffeName: "admin-cli",
+			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		},
 	}
 
 	for _, spec := range specs {
