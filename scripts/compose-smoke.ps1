@@ -17,6 +17,7 @@ Set-DefaultEnv "CATALOG_DB_PASSWORD" "local-compose-catalog"
 Set-DefaultEnv "BILLING_DB_PASSWORD" "local-compose-billing"
 Set-DefaultEnv "SUBSCRIPTION_DB_PASSWORD" "local-compose-subscription"
 Set-DefaultEnv "ACCESS_DB_PASSWORD" "local-compose-access"
+Set-DefaultEnv "PROVISIONING_DB_PASSWORD" "local-compose-provisioning"
 Set-DefaultEnv "ACCESS_CREDENTIAL_KEY_BASE64" "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
 Set-DefaultEnv "ACCESS_TOKEN_HMAC_KEY_BASE64" "ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA="
 Set-DefaultEnv "SUBSCRIPTION_PUBLIC_BASE_URL" "https://127.0.0.1:8087"
@@ -30,6 +31,30 @@ Set-DefaultEnv "PAYMENT_RETURN_URL" "https://example.invalid/payment-return"
 Set-DefaultEnv "COMPOSE_PARALLEL_LIMIT" "2"
 Set-DefaultEnv "COMPOSE_BAKE" "false"
 Set-DefaultEnv "COMPOSE_PROFILES" "core,app"
+
+$goImage = "golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2"
+$repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+
+function Invoke-MTLSProbe([string[]]$arguments) {
+    $mappedArguments = foreach ($argument in $arguments) {
+        $argument.Replace("https://127.0.0.1:8080", "https://identity-service.local:8080").Replace("https://127.0.0.1:8084", "https://billing-service.local:8084").Replace("https://127.0.0.1:8086", "https://subscription-service.local:8086").Replace("https://127.0.0.1:8087", "https://access-service.local:8087")
+    }
+    $result = & docker run --rm `
+        --add-host "identity-service.local:host-gateway" `
+        --add-host "billing-service.local:host-gateway" `
+        --add-host "subscription-service.local:host-gateway" `
+        --add-host "access-service.local:host-gateway" `
+        -v "$($repo):/src" `
+        -v "vpn-service-go-mod-cache:/go/pkg/mod" `
+        -v "vpn-service-go-build-cache:/root/.cache/go-build" `
+        -w /src `
+        $goImage `
+        go run ./tools/mtlsprobe/cmd/mtlsprobe @mappedArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "containerized mTLS probe failed"
+    }
+    return $result
+}
 
 function Invoke-WebhookStatus([string]$body) {
     $responsePath = Join-Path $env:TEMP "vpn-platform-webhook-response.json"
@@ -435,18 +460,12 @@ try {
         throw "access provisioning result did not converge: credential=$accessCredentialStatus ready=$accessReadyPublished inbox=$accessProvisionInbox operation=$accessOperationStatus dead_letters=$accessDeadLetterReasons"
     }
 
-    $issueJSON = & go run ./tools/mtlsprobe/cmd/mtlsprobe POST "https://127.0.0.1:8087/internal/v1/subscriptions/$subscriptionID/subscription-url/issue" secrets/dev-mtls/telegram-bot.crt secrets/dev-mtls/telegram-bot.key secrets/dev-mtls/ca.crt 200 Idempotency-Key smoke-issue-0001 print-body
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
-    }
+    $issueJSON = Invoke-MTLSProbe @("POST", "https://127.0.0.1:8087/internal/v1/subscriptions/$subscriptionID/subscription-url/issue", "secrets/dev-mtls/telegram-bot.crt", "secrets/dev-mtls/telegram-bot.key", "secrets/dev-mtls/ca.crt", "200", "Idempotency-Key", "smoke-issue-0001", "print-body")
     $issuedURL = ($issueJSON | ConvertFrom-Json).subscription_url
     if ([string]::IsNullOrWhiteSpace($issuedURL)) {
         throw "access issue endpoint did not return a subscription URL"
     }
-    go run ./tools/mtlsprobe/cmd/mtlsprobe POST "https://127.0.0.1:8087/internal/v1/subscriptions/$subscriptionID/subscription-url/issue" secrets/dev-mtls/telegram-bot.crt secrets/dev-mtls/telegram-bot.key secrets/dev-mtls/ca.crt 409 Idempotency-Key smoke-issue-0001
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
-    }
+    Invoke-MTLSProbe @("POST", "https://127.0.0.1:8087/internal/v1/subscriptions/$subscriptionID/subscription-url/issue", "secrets/dev-mtls/telegram-bot.crt", "secrets/dev-mtls/telegram-bot.key", "secrets/dev-mtls/ca.crt", "409", "Idempotency-Key", "smoke-issue-0001") | Out-Null
     $profileHeaders = Join-Path (Resolve-Path "tmp") "stage5-profile-headers.txt"
     $profileBody = Join-Path (Resolve-Path "tmp") "stage5-profile-body.txt"
     $profileStatus = & curl.exe -sS -D $profileHeaders -o $profileBody -w "%{http_code}" --cacert "secrets/dev-mtls/ca.crt" --ssl-no-revoke $issuedURL
@@ -512,42 +531,15 @@ try {
         throw "billing payment event was not observable in Kafka: exit=$kafkaExitCode bytes=$($kafkaEvent.Length)"
     }
 
-    go run ./tools/mtlsprobe/cmd/mtlsprobe PUT https://127.0.0.1:8080/internal/v1/telegram-users/999 secrets/dev-mtls/identity-health.crt secrets/dev-mtls/identity-health.key secrets/dev-mtls/ca.crt 403
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
-    }
-    go run ./tools/mtlsprobe/cmd/mtlsprobe POST https://127.0.0.1:8080/internal/v1/users/00000000-0000-4000-8000-000000000001/consents secrets/dev-mtls/billing-service.crt secrets/dev-mtls/billing-service.key secrets/dev-mtls/ca.crt 403
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
-    }
-    go run ./tools/mtlsprobe/cmd/mtlsprobe POST https://127.0.0.1:8084/internal/v1/users/00000000-0000-4000-8000-000000000001/orders secrets/dev-mtls/billing-service.crt secrets/dev-mtls/billing-service.key secrets/dev-mtls/ca.crt 403
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
-    }
-    go run ./tools/mtlsprobe/cmd/mtlsprobe GET https://127.0.0.1:8084/internal/v1/users/00000000-0000-4000-8000-000000000001/orders/00000000-0000-4000-8000-000000000002 secrets/dev-mtls/identity-health.crt secrets/dev-mtls/identity-health.key secrets/dev-mtls/ca.crt 403
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
-    }
-    go run ./tools/mtlsprobe/cmd/mtlsprobe GET https://127.0.0.1:8084/internal/v1/users/00000000-0000-4000-8000-000000000001/orders/00000000-0000-4000-8000-000000000002 secrets/dev-mtls/subscription-service.crt secrets/dev-mtls/subscription-service.key secrets/dev-mtls/ca.crt 404
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
-    }
-    go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:8086/internal/v1/users/$subscriptionUserID/subscription" secrets/dev-mtls/telegram-bot.crt secrets/dev-mtls/telegram-bot.key secrets/dev-mtls/ca.crt 200
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
-    }
-    go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:8086/internal/v1/users/$subscriptionUserID/subscription" secrets/dev-mtls/identity-health.crt secrets/dev-mtls/identity-health.key secrets/dev-mtls/ca.crt 403
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
-    }
-    go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:8087/internal/v1/credentials/$accessCredentialID/provisioning-material" secrets/dev-mtls/provisioning-service.crt secrets/dev-mtls/provisioning-service.key secrets/dev-mtls/ca.crt 200
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
-    }
-    go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:8087/internal/v1/credentials/$accessCredentialID/provisioning-material" secrets/dev-mtls/identity-health.crt secrets/dev-mtls/identity-health.key secrets/dev-mtls/ca.crt 403
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
-    }
+    Invoke-MTLSProbe @("PUT", "https://127.0.0.1:8080/internal/v1/telegram-users/999", "secrets/dev-mtls/identity-health.crt", "secrets/dev-mtls/identity-health.key", "secrets/dev-mtls/ca.crt", "403") | Out-Null
+    Invoke-MTLSProbe @("POST", "https://127.0.0.1:8080/internal/v1/users/00000000-0000-4000-8000-000000000001/consents", "secrets/dev-mtls/billing-service.crt", "secrets/dev-mtls/billing-service.key", "secrets/dev-mtls/ca.crt", "403") | Out-Null
+    Invoke-MTLSProbe @("POST", "https://127.0.0.1:8084/internal/v1/users/00000000-0000-4000-8000-000000000001/orders", "secrets/dev-mtls/billing-service.crt", "secrets/dev-mtls/billing-service.key", "secrets/dev-mtls/ca.crt", "403") | Out-Null
+    Invoke-MTLSProbe @("GET", "https://127.0.0.1:8084/internal/v1/users/00000000-0000-4000-8000-000000000001/orders/00000000-0000-4000-8000-000000000002", "secrets/dev-mtls/identity-health.crt", "secrets/dev-mtls/identity-health.key", "secrets/dev-mtls/ca.crt", "403") | Out-Null
+    Invoke-MTLSProbe @("GET", "https://127.0.0.1:8084/internal/v1/users/00000000-0000-4000-8000-000000000001/orders/00000000-0000-4000-8000-000000000002", "secrets/dev-mtls/subscription-service.crt", "secrets/dev-mtls/subscription-service.key", "secrets/dev-mtls/ca.crt", "404") | Out-Null
+    Invoke-MTLSProbe @("GET", "https://127.0.0.1:8086/internal/v1/users/$subscriptionUserID/subscription", "secrets/dev-mtls/telegram-bot.crt", "secrets/dev-mtls/telegram-bot.key", "secrets/dev-mtls/ca.crt", "200") | Out-Null
+    Invoke-MTLSProbe @("GET", "https://127.0.0.1:8086/internal/v1/users/$subscriptionUserID/subscription", "secrets/dev-mtls/identity-health.crt", "secrets/dev-mtls/identity-health.key", "secrets/dev-mtls/ca.crt", "403") | Out-Null
+    Invoke-MTLSProbe @("GET", "https://127.0.0.1:8087/internal/v1/credentials/$accessCredentialID/provisioning-material", "secrets/dev-mtls/provisioning-service.crt", "secrets/dev-mtls/provisioning-service.key", "secrets/dev-mtls/ca.crt", "200") | Out-Null
+    Invoke-MTLSProbe @("GET", "https://127.0.0.1:8087/internal/v1/credentials/$accessCredentialID/provisioning-material", "secrets/dev-mtls/identity-health.crt", "secrets/dev-mtls/identity-health.key", "secrets/dev-mtls/ca.crt", "403") | Out-Null
     $materialAuditCount = Invoke-ScalarSQL "access_service" "SELECT count(*) FROM security_audit_events WHERE credential_id='$accessCredentialID' AND actor_service='provisioning-service' AND action='credential_material.read' AND outcome='succeeded'"
     if ($materialAuditCount -ne "1") {
         throw "provisioning material read was not audited exactly once"

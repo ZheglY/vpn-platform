@@ -22,6 +22,7 @@ type options struct {
 	wantStatus  string
 	headerName  string
 	headerValue string
+	bodyFile    string
 	printBody   bool
 }
 
@@ -44,7 +45,17 @@ func run() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, opts.method, opts.url, bytes.NewBufferString(`{}`))
+	body := []byte(`{}`)
+	if opts.bodyFile != "" {
+		body, err = os.ReadFile(opts.bodyFile)
+		if err != nil {
+			return fmt.Errorf("read request body file: %w", err)
+		}
+		if len(body) > 64<<10 {
+			return fmt.Errorf("request body file is too large")
+		}
+	}
+	req, err := http.NewRequestWithContext(ctx, opts.method, opts.url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
@@ -78,16 +89,23 @@ func run() error {
 
 func parseArgs(args []string) (options, error) {
 	if len(args) != 6 && len(args) != 8 && len(args) != 9 {
-		return options{}, fmt.Errorf("usage: mtlsprobe METHOD URL CERT KEY CA WANT_STATUS [HEADER VALUE [print-body]]")
+		return options{}, fmt.Errorf("usage: mtlsprobe METHOD URL CERT KEY CA WANT_STATUS [HEADER VALUE|body-file PATH [print-body]]")
 	}
 	opts := options{
 		method: args[0], url: args[1], certFile: args[2], keyFile: args[3], caFile: args[4], wantStatus: args[5],
 	}
 	if len(args) >= 8 {
-		if strings.TrimSpace(args[6]) == "" || strings.ContainsAny(args[6], "\r\n") || strings.ContainsAny(args[7], "\r\n") {
-			return options{}, fmt.Errorf("invalid HTTP header")
+		if args[6] == "body-file" {
+			if strings.TrimSpace(args[7]) == "" {
+				return options{}, fmt.Errorf("invalid body file")
+			}
+			opts.bodyFile = args[7]
+		} else {
+			if strings.TrimSpace(args[6]) == "" || strings.ContainsAny(args[6], "\r\n") || strings.ContainsAny(args[7], "\r\n") {
+				return options{}, fmt.Errorf("invalid HTTP header")
+			}
+			opts.headerName, opts.headerValue = args[6], args[7]
 		}
-		opts.headerName, opts.headerValue = args[6], args[7]
 	}
 	if len(args) == 9 {
 		if args[8] != "print-body" {

@@ -37,6 +37,7 @@ type Profile struct {
 
 type ProvisioningMaterial struct {
 	CredentialID    string `json:"credential_id"`
+	SubscriptionID  string `json:"subscription_id"`
 	Revision        int    `json:"revision"`
 	Protocol        string `json:"protocol"`
 	VLESSClientUUID string `json:"vless_client_uuid"`
@@ -177,7 +178,7 @@ func (s *Service) GetProvisioningMaterial(ctx context.Context, credentialID, act
 	if err := s.store.RecordCredentialMaterialAccess(ctx, record.CredentialID, actorService); err != nil {
 		return ProvisioningMaterial{}, err
 	}
-	return ProvisioningMaterial{CredentialID: record.CredentialID, Revision: record.Revision, Protocol: "vless_reality", VLESSClientUUID: vlessUUID}, nil
+	return ProvisioningMaterial{CredentialID: record.CredentialID, SubscriptionID: record.SubscriptionID, Revision: record.Revision, Protocol: "vless_reality", VLESSClientUUID: vlessUUID}, nil
 }
 
 func (s *Service) newCredential() (string, string, []byte, int, error) {

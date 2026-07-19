@@ -20,5 +20,6 @@ COPY services/catalog/migrations /migrations/catalog
 COPY services/billing/migrations /migrations/billing
 COPY services/subscription/migrations /migrations/subscription
 COPY services/access/migrations /migrations/access
+COPY services/provisioning/migrations /migrations/provisioning
 USER nonroot:nonroot
 ENTRYPOINT ["/migrate"]

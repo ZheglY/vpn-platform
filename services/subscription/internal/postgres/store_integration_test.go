@@ -178,7 +178,7 @@ func TestIntegrationConflictingRefundBeforePaymentMovesAtomicallyToDeadLetter(t 
 	conflictingOrder := domain.Order{
 		OrderID: conflictingPayment.OrderID, UserID: conflictingPayment.UserID, Status: "paid",
 		AmountMinor: conflictingPayment.AmountMinor, Currency: conflictingPayment.Currency,
-		PlanSnapshot: domain.PlanSnapshot{PlanID: conflictingPayment.PlanID, DurationDays: 30, GracePeriodHours: 24, AmountMinor: conflictingPayment.AmountMinor, Currency: conflictingPayment.Currency, Region: "ru-test"},
+		PlanSnapshot: domain.PlanSnapshot{PlanID: conflictingPayment.PlanID, DurationDays: 30, GracePeriodHours: 24, AmountMinor: conflictingPayment.AmountMinor, Currency: conflictingPayment.Currency, Region: "ru-test", PrimaryNodes: 1, FailoverNodes: 1},
 	}
 	if err := store.applyPaymentAt(context.Background(), paymentMeta(t, conflictingPayment), conflictingPayment, conflictingOrder, now); err != nil {
 		t.Fatal(err)
@@ -416,7 +416,7 @@ func resetSubscription(t *testing.T, store *Store) {
 func paymentFixture(t *testing.T, userID string, paidAt time.Time) (domain.PaymentSucceeded, domain.Order) {
 	t.Helper()
 	payment := domain.PaymentSucceeded{PaymentID: newUUID(t), OrderID: newUUID(t), UserID: userID, PlanID: "vpn-30d-v1", AmountMinor: 29900, Currency: "RUB", PaidAt: paidAt}
-	order := domain.Order{OrderID: payment.OrderID, UserID: userID, Status: "paid", AmountMinor: payment.AmountMinor, Currency: payment.Currency, PlanSnapshot: domain.PlanSnapshot{PlanID: payment.PlanID, DurationDays: 30, GracePeriodHours: 24, AmountMinor: payment.AmountMinor, Currency: payment.Currency, Region: "ru-test"}}
+	order := domain.Order{OrderID: payment.OrderID, UserID: userID, Status: "paid", AmountMinor: payment.AmountMinor, Currency: payment.Currency, PlanSnapshot: domain.PlanSnapshot{PlanID: payment.PlanID, DurationDays: 30, GracePeriodHours: 24, AmountMinor: payment.AmountMinor, Currency: payment.Currency, Region: "ru-test", PrimaryNodes: 1, FailoverNodes: 1}}
 	return payment, order
 }
 

@@ -14,6 +14,18 @@ func TestParseArgs(t *testing.T) {
 	}
 }
 
+func TestParseArgsAcceptsBodyFile(t *testing.T) {
+	t.Parallel()
+	base := []string{"PUT", "https://example.invalid", "client.crt", "client.key", "ca.crt", "200"}
+	opts, err := parseArgs(append(base, "body-file", "desired.json", "print-body"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.bodyFile != "desired.json" || !opts.printBody || opts.headerName != "" {
+		t.Fatalf("unexpected options: %+v", opts)
+	}
+}
+
 func TestParseArgsRejectsHeaderInjectionAndUnknownMode(t *testing.T) {
 	t.Parallel()
 	base := []string{"POST", "https://example.invalid", "client.crt", "client.key", "ca.crt", "200"}

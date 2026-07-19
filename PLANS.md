@@ -2,9 +2,9 @@
 
 ## Current Approval
 
-Approved milestone: Stage 5 - Access and Happ subscription delivery.
+Approved milestone: Stage 6 - Provisioning control plane and node-agent.
 
-Stage 4 was accepted by the user's instruction to begin the next milestone. Stage 6 and later implementation milestones are not approved. Do not create node placement, Xray mutation, notification delivery, or production VPN infrastructure until the relevant milestone is explicitly approved.
+Stage 5 was accepted by the user's instruction on 2026-07-19 to begin the next milestone. Stage 7 and later implementation milestones are not approved. Stage 6 may create local node placement, Xray mutation, reconciliation, and real-Xray test infrastructure. It must not create notification/admin behavior, connect production VPS instances, or deploy production VPN infrastructure.
 
 ## Stage 0 Plan
 
@@ -189,7 +189,7 @@ Non-goals:
 
 Depends on Stage 4. Adds token generation/hash/rotation, subscription endpoint, VLESS + REALITY URI rendering, Happ compatibility tests, no-store responses, and redaction tests.
 
-Status: acceptance-review remediation and required verification completed on `codex/stage5-access-happ`; pending user acceptance. Stage 5 remains unaccepted and Stage 6 remains blocked until explicit approval.
+Status: accepted on 2026-07-19 after review remediation and required verification on `codex/stage5-access-happ`.
 
 Acceptance criteria:
 
@@ -228,6 +228,54 @@ Verification completed for the Stage 5 remediation on 2026-07-19:
 ### Stage 6 - Provisioning control plane and node-agent
 
 Depends on Stage 5 and threat review. Adds node registry, allocation, mTLS protocol, idempotent desired revision, Xray validation, atomic reload, rollback, and local real-Xray e2e tests.
+
+Status: implemented and verification-complete on `codex/stage6-provisioning-node-agent`; awaiting product-owner acceptance. Stage 7 has not started.
+
+Implementation plan:
+
+1. Record the Stage 6 threat review, provisioning/node ownership boundaries, desired-state protocol, Xray process-management decision, and official Xray version pin in ADRs and operational documentation.
+2. Add an allowlisted mTLS Subscription placement endpoint backed by immutable paid-period snapshots. Extend the audited Access provisioning-material response with `subscription_id` so provisioning can obtain placement without cross-service SQL or a region-bearing Kafka command.
+3. Add `provisioning-service` with its own PostgreSQL database, migrations, node registry, health snapshots, allocation and operation state machines, ordered command cursor, durable inbox/outbox, bounded retries, sanitized DLQ notices, and an explicit replay command.
+4. Apply the accepted one-primary/one-failover policy with distinct healthy nodes in the selected region and a hard 20% capacity reserve. Primary success is required; exhausted failover attempts produce a visible degraded result.
+5. Add an mTLS-only node-agent desired-state API. Persist a local operation journal and last-known-good desired state, reject operation collisions and stale revisions, validate candidate Xray JSON, atomically replace config, reload through a fixed process manager, and rollback on validation or reload failure.
+6. Pin official stable Xray-core `26.3.27` source by commit and archive SHA-256, then rebuild it on pinned Go with explicit fixed security dependencies. Generate local REALITY and mTLS material outside Git, seed two local nodes, and isolate node-agent management traffic from the application backend network.
+7. Reconcile pending operations, allocation state, node heartbeat/capacity, and agent actual revisions. Revoke succeeds only after exact removal from all allocation nodes at the allocation revision expected by Access.
+8. Add placement/capacity/concurrency, duplicate/gap/stale Kafka command, retry/DLQ/replay, mTLS identity, node-agent idempotency, invalid-config rollback, reload rollback, reconciliation, and local VLESS + REALITY data-plane tests.
+9. Update OpenAPI, AsyncAPI/JSON Schema, Compose, runbooks, threat model, risk register, Definition of Done, README, and CI verification together with behavior.
+
+Acceptance criteria:
+
+- `provisioning-service` owns a separate database and never reads Access, Subscription, or node state through another service's database.
+- Provision and revoke command sequences are consumed in credential order across their two Kafka topics; gaps remain unacknowledged, duplicates are no-ops, and stale collisions are durable conflicts.
+- Placement uses immutable Subscription data obtained over an allowlisted mTLS API, assigns distinct primary and failover nodes in the selected region, and cannot exceed 80% of configured node capacity under concurrent allocation.
+- Kafka and logs contain no VLESS UUID, subscription token, REALITY private key, node-agent request body, or raw poison payload. Every Access material read remains durably audited.
+- Node-agent authorizes only the provisioning SPIFFE identity, binds the server certificate to the registered node identity, and applies `(operation_id, credential_id, desired_revision)` idempotently.
+- An invalid candidate never replaces last-known-good. A failed Xray reload restores the previous config and process before returning a bounded redacted error.
+- Provisioning reports `active` only after primary and failover success, `degraded` only after primary success and exhausted failover work, and terminal failure when primary cannot be applied within the bounded retry policy.
+- Revoke results contain the exact unique assigned-node set and allocation revision. Partial physical removal never becomes success.
+- Sanitized DLQ notices, an operator replay command, reconciliation, node heartbeat loss, low capacity, primary failure, and degraded failover have tests and runbook procedures.
+- The `vpn` Compose profile proves real Xray config validation, live VLESS + REALITY traffic through a provisioned credential, idempotent replay, expiry/revoke removal, and continued last-known-good service after a rejected candidate.
+- `make verify`, migration-from-zero, race tests, contract tests, image scans, normal Compose smoke, and VPN Compose smoke pass before Stage 6 is presented for acceptance.
+
+Risks and dependencies:
+
+- The official stable Xray release can lag newer prereleases. The Stage 6 source pin follows the release marked stable by XTLS, while the node artifact is rebuilt with patched Go dependencies to satisfy the vulnerability gate; both upstream changes and the security override must be reviewed before production rollout.
+- REALITY private keys and VLESS client UUIDs necessarily exist on a VPN node. Local files are generated under ignored secret directories with restrictive permissions; production disk, user, and secret hardening remain Stage 8 work.
+- The current MVP has one catalog region. A future purchase that changes region during an existing entitlement needs an explicit product migration policy before multiple production regions are offered.
+- Local Compose may co-locate node-agent process supervision and Xray for deterministic reload testing. Production deployment must preserve separate non-root identities through the Stage 8 systemd/Ansible design.
+
+Non-goals:
+
+- No production VPS onboarding, WireGuard deployment, public node-agent listener, production certificates, or real user traffic.
+- No notification delivery, admin mutation API/CLI, RBAC workflow, or operational UI; those remain Stage 7.
+- No per-destination, DNS, packet, or browsing telemetry and no Happ HWID/device accounting.
+
+Verification completed for Stage 6 on 2026-07-19:
+
+- `make verify` on the clean Stage 6 commit, including format/tidy/vet, unit, race, lint, govulncheck, secret scan, npm audit, contract checks, all service image builds, HIGH/CRITICAL image scans, and Compose config validation
+- `make compose-smoke` for the complete Telegram, YooKassa sandbox, entitlement, Access, Happ, Kafka, PostgreSQL, Redis, idempotency, redaction, and mTLS flow
+- `make vpn-smoke` for Provisioning PostgreSQL lifecycle/concurrency, two mTLS node-agents, real Xray validation, VLESS + REALITY traffic, replay, revoke, and last-known-good behavior
+- repeated Xray process-manager tests plus final review of service ownership, transaction boundaries, cross-topic ordering, capacity, replay/stale handling, SPIFFE binding, rollback, secret persistence, logging, contracts, and documentation
 
 ### Stage 7 - Notifications and admin operations
 

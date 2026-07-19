@@ -110,7 +110,7 @@ func validPayment() domain.PaymentSucceeded {
 func testOccurredAt() time.Time { return time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC) }
 
 func validOrder() domain.Order {
-	return domain.Order{OrderID: testOrderID, UserID: testUserID, Status: "paid", AmountMinor: 29900, Currency: "RUB", PlanSnapshot: domain.PlanSnapshot{PlanID: "vpn-30d-v1", DurationDays: 30, GracePeriodHours: 24, AmountMinor: 29900, Currency: "RUB", Region: "ru-test"}}
+	return domain.Order{OrderID: testOrderID, UserID: testUserID, Status: "paid", AmountMinor: 29900, Currency: "RUB", PlanSnapshot: domain.PlanSnapshot{PlanID: "vpn-30d-v1", DurationDays: 30, GracePeriodHours: 24, AmountMinor: 29900, Currency: "RUB", Region: "ru-test", PrimaryNodes: 1, FailoverNodes: 1}}
 }
 
 func TestContractErrorCodeRecognizesDurableConflict(t *testing.T) {

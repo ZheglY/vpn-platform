@@ -131,10 +131,11 @@ type ProfileRecord struct {
 }
 
 type ProvisioningRecord struct {
-	CredentialID string
-	Revision     int
-	Ciphertext   []byte
-	KeyVersion   int
+	CredentialID   string
+	SubscriptionID string
+	Revision       int
+	Ciphertext     []byte
+	KeyVersion     int
 }
 
 type OutboxMessage struct {

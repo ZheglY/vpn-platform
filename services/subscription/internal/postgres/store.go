@@ -145,12 +145,12 @@ WHERE p.source_payment_id = $1`, payment.PaymentID).Scan(&existingUser, &existin
 	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO subscription_periods (
-    id, subscription_id, source_order_id, source_payment_id, plan_id, region,
+    id, subscription_id, source_order_id, source_payment_id, plan_id, region, primary_nodes, failover_nodes,
     amount_minor, currency, duration_days, grace_period_hours, paid_at,
     period_start, period_end, grace_ends_at
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
 		periodID, subscription.SubscriptionID, payment.OrderID, payment.PaymentID,
-		payment.PlanID, order.PlanSnapshot.Region, payment.AmountMinor, payment.Currency,
+		payment.PlanID, order.PlanSnapshot.Region, order.PlanSnapshot.PrimaryNodes, order.PlanSnapshot.FailoverNodes, payment.AmountMinor, payment.Currency,
 		order.PlanSnapshot.DurationDays, order.PlanSnapshot.GracePeriodHours, payment.PaidAt,
 		periodStart, periodEnd, graceEndsAt); err != nil {
 		return fmt.Errorf("insert subscription period: %w", err)
@@ -179,6 +179,34 @@ INSERT INTO subscription_periods (
 		return fmt.Errorf("commit apply payment: %w", err)
 	}
 	return nil
+}
+
+func (s *Store) GetPlacement(ctx context.Context, subscriptionID string) (domain.Placement, error) {
+	var placement domain.Placement
+	err := s.pool.QueryRow(ctx, `
+SELECT s.id, p.id, p.region, p.primary_nodes, p.failover_nodes, p.grace_ends_at
+FROM subscriptions s
+JOIN LATERAL (
+    SELECT id, region, primary_nodes, failover_nodes, grace_ends_at
+    FROM subscription_periods
+    WHERE subscription_id = s.id
+      AND status = 'paid'
+      AND period_start <= clock_timestamp()
+      AND grace_ends_at > clock_timestamp()
+    ORDER BY period_start, id
+    LIMIT 1
+) p ON true
+WHERE s.id = $1 AND s.status IN ('active', 'grace')`, subscriptionID).Scan(
+		&placement.SubscriptionID, &placement.PeriodID, &placement.Region,
+		&placement.PrimaryNodes, &placement.FailoverNodes, &placement.ValidUntil,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Placement{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.Placement{}, fmt.Errorf("get subscription placement: %w", err)
+	}
+	return placement, nil
 }
 
 func statusAt(now, start, end, grace time.Time) (string, *time.Time) {

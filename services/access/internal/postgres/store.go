@@ -549,8 +549,8 @@ ORDER BY CASE role WHEN 'primary' THEN 0 ELSE 1 END, node_id`, record.Credential
 func (s *Store) GetProvisioningRecord(ctx context.Context, credentialID string) (domain.ProvisioningRecord, error) {
 	var record domain.ProvisioningRecord
 	err := s.pool.QueryRow(ctx, `
-SELECT id, credential_version, vless_uuid_ciphertext, encryption_key_version
-FROM access_credentials WHERE id = $1 AND status <> 'revoked'`, credentialID).Scan(&record.CredentialID, &record.Revision, &record.Ciphertext, &record.KeyVersion)
+SELECT id, subscription_id, credential_version, vless_uuid_ciphertext, encryption_key_version
+FROM access_credentials WHERE id = $1 AND status <> 'revoked'`, credentialID).Scan(&record.CredentialID, &record.SubscriptionID, &record.Revision, &record.Ciphertext, &record.KeyVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ProvisioningRecord{}, domain.ErrNotFound
 	}

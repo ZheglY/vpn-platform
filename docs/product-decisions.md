@@ -39,6 +39,8 @@ Accepted on 2026-07-12 for Stage 0 and future MVP planning.
 | PD-033 | Subscription URL is issued only after provisioning readiness through a synchronous one-time bot call. | Accepted | Kafka never carries the URL or token. |
 | PD-034 | Provisioning fetches credential material from access-service over mTLS. | Accepted | Kafka carries only credential ID, operation ID, and revision. |
 | PD-035 | Revoke lifecycle has explicit request, succeeded, failed events and reconciliation. | Accepted | Access remains `revoking` until assigned nodes confirm removal. |
+| PD-036 | Stage 6 pins official Xray-core 26.3.27 source by commit and archive SHA-256, rebuilds it on pinned Go with fixed security dependencies, and validates with `xray run -test -config`. | Accepted | The upstream prebuilt artifact failed the HIGH/CRITICAL image gate; re-check release/security notes before production rollout; ADR 0023. |
+| PD-037 | Stage 6 placement is exactly one primary and one distinct failover below the 80% threshold. | Accepted | Primary success may produce `degraded` only after bounded failover retries. |
 
 ## Decisions Requiring Later Approval
 

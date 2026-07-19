@@ -89,12 +89,12 @@ func TestProvisioningMaterialReadIsAuditedBeforeReturn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store.provisioning = domain.ProvisioningRecord{CredentialID: credentialID, Revision: 1, Ciphertext: ciphertext, KeyVersion: version}
+	store.provisioning = domain.ProvisioningRecord{CredentialID: credentialID, SubscriptionID: "018f0e61-bca5-7a40-a06f-e4c0f53128af", Revision: 1, Ciphertext: ciphertext, KeyVersion: version}
 	material, err := service.GetProvisioningMaterial(context.Background(), credentialID, "provisioning-service")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if material.VLESSClientUUID == "" || store.auditActor != "provisioning-service" || store.auditCredentialID != credentialID {
+	if material.VLESSClientUUID == "" || material.SubscriptionID != store.provisioning.SubscriptionID || store.auditActor != "provisioning-service" || store.auditCredentialID != credentialID {
 		t.Fatal("credential material access was not audited")
 	}
 }

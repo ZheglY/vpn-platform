@@ -8,9 +8,9 @@ Happ is only the user client. It is not the VPN provider. User VPN traffic must 
 
 ## Current Scope
 
-Stage 5 adds access credential and Happ delivery to onboarding, the sandbox purchase boundary, and subscription entitlement lifecycle. `identity-service`, `catalog-service`, `billing-service`, `subscription-service`, `access-service`, and `telegram-bot` run locally with separate logical PostgreSQL databases. Access consumes lifecycle and provisioning outcomes through a payload-free inbox, stores a monotonic lifecycle cursor, encrypted VLESS credentials and revisioned public endpoint snapshots, publishes secret-free sequenced commands/readiness through an outbox, and owns one-time subscription URL issuance and rotation.
+Stage 6 adds the provisioning control plane and local node data plane. `provisioning-service` owns node registry, health, capacity, allocations, ordered operations, reconciliation, inbox, outbox, and sanitized dead-letter coordinates in its own PostgreSQL database. It obtains encrypted-at-rest credential material and immutable paid-period placement through allowlisted mTLS APIs. Two local node-agents converge revisioned desired state into pinned Xray-core and keep node-local operation journals and last-known-good snapshots.
 
-The current environment is portfolio/sandbox only. It does not use real YooKassa credentials, issue receipts, initiate provider refunds, allocate VPN nodes, mutate Xray-core, or prove a live VPN connection. Compose injects a provisioning result before exercising Happ URL delivery. Active entitlement explicitly does not mean VPN access is ready.
+The current environment is portfolio/sandbox only. It does not use real YooKassa credentials, issue receipts, initiate provider refunds, enroll production VPS hosts, or carry real user traffic. Normal Compose smoke still isolates access delivery by injecting a result; the separate `vpn` profile exercises two local nodes and real VLESS + REALITY traffic. Active entitlement explicitly does not mean VPN access is ready.
 
 ## Product Decisions Already Accepted
 
@@ -282,7 +282,7 @@ Reconciliation periodically compares access state, provisioning allocations, and
 
 `GET /s/{token}` is served from a dedicated subscription hostname by `access-service`.
 
-Implemented Stage 5 behavior:
+Implemented access and Stage 6 provisioning behavior:
 
 - Unknown, expired, and revoked tokens return the same external response.
 - Empty and nested malformed `/s` paths return that same response without redirecting to a distinguishable document.
@@ -294,7 +294,8 @@ Implemented Stage 5 behavior:
 - The body contains one deterministic VLESS + REALITY share URI per validated primary/failover endpoint snapshot.
 - Provisioning success is the only event that stores an endpoint snapshot and moves access to `active` or `degraded`.
 - A delayed physical provisioning success after entitlement expiry stores the allocation only to initiate revoke and never makes access ready.
-- Placement, node state, Xray changes, and live connection verification remain Stage 6.
+- Subscription owns immutable period placement; Provisioning atomically selects one primary and one failover below the 80% threshold.
+- Node-agent applies revisioned present/absent state, and reconciliation checks allocation desired state against node actual state.
 
 ## Security Boundaries
 
@@ -307,7 +308,7 @@ Implemented Stage 5 behavior:
 | Provisioning material API | mTLS restricted to provisioning-service; audit; no REALITY private key |
 | Admin operations | CLI/internal API over admin mTLS, RBAC, deny-by-default, audit log |
 | Management plane | Private WireGuard network, mTLS, firewall default deny |
-| Node agent | Allowlisted fields only, no shell command execution, Xray config test before reload |
+| Node agent | Provisioning-only mTLS, exact server SPIFFE pin, allowlisted fields, no shell command execution, pinned Xray config test before reload |
 
 ## HTTP Authentication Model
 
@@ -337,5 +338,4 @@ The architecture intentionally keeps several decisions as future approval points
 - Production jurisdiction and legal compliance.
 - Real YooKassa receipts, tax fields, and buyer data.
 - Actual domain, DNS/TLS, and VPS provider choices.
-- Xray-core pinned version and security review.
 - Production admin credential issuance and rotation procedure.

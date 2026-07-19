@@ -1,14 +1,13 @@
 openapi: 3.1.0
 info:
   title: VPN Subscription Platform API
-  version: 0.5.0-stage5
+  version: 0.6.0-stage6
   license:
     name: UNLICENSED
     identifier: LicenseRef-UNLICENSED
   description: >
-    Stage 4 contract. Identity, Telegram onboarding, catalog, billing, and
-    subscription entitlement operations marked as implemented are executable.
-    Access and provisioning operations remain skeletons and are not production commitments.
+    Stage 6 contract. Provisioning placement and node desired-state operations
+    are executable locally. Production VPS enrollment remains out of scope.
 servers:
   - url: https://api.example.invalid
     description: Public API placeholder
@@ -32,7 +31,9 @@ tags:
   - name: Access
     description: Subscription URL, token, and access delivery surfaces.
   - name: Provisioning
-    description: Credential material retrieval for the provisioning control plane.
+    description: Placement and credential retrieval for the provisioning control plane.
+  - name: NodeAgent
+    description: Private mTLS desired-state and actual-state node API.
   - name: Webhooks
     description: Public webhook ingress surfaces with explicit verification rules.
   - name: Admin
@@ -640,6 +641,133 @@ paths:
           $ref: '#/components/responses/Error'
         default:
           $ref: '#/components/responses/Error'
+  /internal/v1/subscriptions/{subscription_id}/placement:
+    get:
+      tags: [Provisioning]
+      summary: Fetch immutable placement policy for the current paid period
+      operationId: getSubscriptionPlacement
+      x-contract-status: implemented-stage6
+      security:
+        - ProvisioningMTLS: []
+      x-allowed-service-identities: [provisioning-service]
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/SubscriptionId'
+      responses:
+        '200':
+          description: Placement snapshot owned by subscription-service
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionPlacement'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+  /internal/v1/status:
+    get:
+      tags: [NodeAgent]
+      summary: Read node-agent and managed Xray status
+      operationId: getNodeAgentStatus
+      x-contract-status: implemented-stage6
+      security:
+        - NodeAgentMTLS: []
+      x-allowed-service-identities: [provisioning-service]
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Current process and configuration status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeAgentStatus'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+  /internal/v1/credentials/{credential_id}:
+    get:
+      tags: [NodeAgent]
+      summary: Read actual credential state on one node
+      operationId: getNodeCredentialState
+      x-contract-status: implemented-stage6
+      security:
+        - NodeAgentMTLS: []
+      x-allowed-service-identities: [provisioning-service]
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: credential_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Actual state or an absent tombstone
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeCredentialState'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      tags: [NodeAgent]
+      summary: Idempotently converge one credential to desired state
+      operationId: applyNodeCredentialDesiredState
+      x-contract-status: implemented-stage6
+      security:
+        - NodeAgentMTLS: []
+      x-allowed-service-identities: [provisioning-service]
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: credential_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NodeDesiredState'
+      responses:
+        '200':
+          description: Desired state is durably applied and Xray is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeApplyResult'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
   /s/{token}:
     get:
       tags: [Access]
@@ -733,6 +861,12 @@ components:
       description: >
         Internal mTLS identity restricted to provisioning-service for fetching
         sensitive credential material from access-service.
+    NodeAgentMTLS:
+      type: mutualTLS
+      description: >
+        Private management-plane mTLS. The client must be provisioning-service,
+        and provisioning-service additionally verifies the exact registered
+        node SPIFFE URI in the server's verified certificate chain.
     AdminMTLS:
       type: mutualTLS
       description: >
@@ -1100,10 +1234,13 @@ components:
           description: Returned only at issuance or rotation. Must not be logged or persisted by caller.
     ProvisioningCredentialMaterial:
       type: object
-      required: [credential_id, revision, protocol, vless_client_uuid]
+      required: [credential_id, subscription_id, revision, protocol, vless_client_uuid]
       additionalProperties: false
       properties:
         credential_id:
+          type: string
+          format: uuid
+        subscription_id:
           type: string
           format: uuid
         revision:
@@ -1116,6 +1253,134 @@ components:
           type: string
           format: uuid
           description: Sensitive VPN credential. Must be encrypted at rest and never logged.
+    SubscriptionPlacement:
+      type: object
+      required: [subscription_id, period_id, region, primary_nodes, failover_nodes, valid_until]
+      additionalProperties: false
+      properties:
+        subscription_id:
+          type: string
+          format: uuid
+        period_id:
+          type: string
+          format: uuid
+        region:
+          type: string
+          minLength: 2
+          maxLength: 64
+        primary_nodes:
+          type: integer
+          const: 1
+        failover_nodes:
+          type: integer
+          const: 1
+        valid_until:
+          type: string
+          format: date-time
+    NodeDesiredState:
+      type: object
+      required: [operation_id, credential_id, desired_revision, state]
+      additionalProperties: false
+      oneOf:
+        - properties:
+            state:
+              const: present
+          required: [protocol, vless_client_uuid]
+        - properties:
+            state:
+              const: absent
+          not:
+            anyOf:
+              - properties:
+                  protocol:
+                    type: string
+                required: [protocol]
+              - properties:
+                  vless_client_uuid:
+                    type: string
+                required: [vless_client_uuid]
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+        credential_id:
+          type: string
+          format: uuid
+        desired_revision:
+          type: integer
+          minimum: 1
+        state:
+          type: string
+          enum: [present, absent]
+        protocol:
+          type: string
+          enum: [vless_reality]
+        vless_client_uuid:
+          type: string
+          format: uuid
+          description: Required only for present state; sensitive and never logged or journaled in plaintext.
+    NodeApplyResult:
+      type: object
+      required: [operation_id, credential_id, desired_revision, state, config_revision, applied_at]
+      additionalProperties: false
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+        credential_id:
+          type: string
+          format: uuid
+        desired_revision:
+          type: integer
+          minimum: 1
+        state:
+          type: string
+          enum: [present, absent]
+        config_revision:
+          type: integer
+          minimum: 1
+        applied_at:
+          type: string
+          format: date-time
+    NodeCredentialState:
+      type: object
+      required: [credential_id, desired_revision, state, config_revision]
+      additionalProperties: false
+      properties:
+        credential_id:
+          type: string
+          format: uuid
+        desired_revision:
+          type: integer
+          minimum: 0
+        state:
+          type: string
+          enum: [present, absent]
+        config_revision:
+          type: integer
+          minimum: 0
+    NodeAgentStatus:
+      type: object
+      required: [node_id, config_revision, active_clients, xray_healthy, agent_version, xray_version]
+      additionalProperties: false
+      properties:
+        node_id:
+          type: string
+          format: uuid
+        config_revision:
+          type: integer
+          minimum: 0
+        active_clients:
+          type: integer
+          minimum: 0
+        xray_healthy:
+          type: boolean
+        agent_version:
+          type: string
+          maxLength: 64
+        xray_version:
+          type: string
+          maxLength: 64
     AdminReasonRequest:
       type: object
       required: [reason]

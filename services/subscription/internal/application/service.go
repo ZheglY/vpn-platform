@@ -93,7 +93,7 @@ func validateOrder(payment domain.PaymentSucceeded, order domain.Order) error {
 	if order.OrderID != payment.OrderID || order.UserID != payment.UserID || order.Status != "paid" || order.AmountMinor != payment.AmountMinor || order.Currency != payment.Currency || snapshot.PlanID != payment.PlanID || snapshot.AmountMinor != payment.AmountMinor || snapshot.Currency != payment.Currency {
 		return &ContractError{Code: "billing_order_mismatch"}
 	}
-	if snapshot.DurationDays < 1 || snapshot.DurationDays > 3650 || snapshot.GracePeriodHours < 0 || snapshot.GracePeriodHours > 720 || len(strings.TrimSpace(snapshot.Region)) < 2 || len(snapshot.Region) > 64 || strings.TrimSpace(snapshot.Region) != snapshot.Region {
+	if snapshot.DurationDays < 1 || snapshot.DurationDays > 3650 || snapshot.GracePeriodHours < 0 || snapshot.GracePeriodHours > 720 || len(strings.TrimSpace(snapshot.Region)) < 2 || len(snapshot.Region) > 64 || strings.TrimSpace(snapshot.Region) != snapshot.Region || snapshot.PrimaryNodes < 1 || snapshot.PrimaryNodes > 8 || snapshot.FailoverNodes < 0 || snapshot.FailoverNodes > 8 || snapshot.PrimaryNodes+snapshot.FailoverNodes > 8 {
 		return &ContractError{Code: "invalid_order_snapshot"}
 	}
 	return nil

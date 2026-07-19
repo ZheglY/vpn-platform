@@ -16,6 +16,7 @@ Set-DefaultEnv "CATALOG_DB_PASSWORD" "local-compose-catalog"
 Set-DefaultEnv "BILLING_DB_PASSWORD" "local-compose-billing"
 Set-DefaultEnv "SUBSCRIPTION_DB_PASSWORD" "local-compose-subscription"
 Set-DefaultEnv "ACCESS_DB_PASSWORD" "local-compose-access"
+Set-DefaultEnv "PROVISIONING_DB_PASSWORD" "local-compose-provisioning"
 Set-DefaultEnv "ACCESS_CREDENTIAL_KEY_BASE64" "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
 Set-DefaultEnv "ACCESS_TOKEN_HMAC_KEY_BASE64" "ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA="
 Set-DefaultEnv "SUBSCRIPTION_PUBLIC_BASE_URL" "https://127.0.0.1:8087"
@@ -31,6 +32,10 @@ Set-DefaultEnv "PAYMENT_RETURN_URL" "https://example.invalid/payment-return"
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
+& powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-xray.ps1
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
 
-docker compose --profile core --profile app config --quiet
+docker compose --profile core --profile app --profile vpn config --quiet
 exit $LASTEXITCODE

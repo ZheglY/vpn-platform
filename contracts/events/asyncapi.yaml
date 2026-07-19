@@ -1,11 +1,10 @@
 asyncapi: 3.1.0
 info:
   title: VPN Subscription Platform Events
-  version: 0.5.0-stage5
+  version: 0.6.0-stage6
   description: >
-    Stage 5 event contract. Access-service consumes subscription lifecycle and
-    provisioning outcome events through a durable inbox, and emits secret-free
-    provisioning commands and readiness facts through a transactional outbox.
+    Stage 6 event contract. Provisioning-service consumes ordered, secret-free
+    commands and publishes durable results or sanitized DLQ notices.
 defaultContentType: application/json
 channels:
   billing.payment.succeeded.v1:
@@ -62,27 +61,39 @@ channels:
     messages:
       revokeRequest:
         $ref: '#/components/messages/AccessRevokeRequestV1'
+  access.provision.request.v1.dlq:
+    address: access.provision.request.v1.dlq
+    x-contract-status: implemented-stage6
+    messages:
+      provisionRequestDeadLetter:
+        $ref: '#/components/messages/AccessProvisionRequestDeadLetterV1'
+  access.revoke.request.v1.dlq:
+    address: access.revoke.request.v1.dlq
+    x-contract-status: implemented-stage6
+    messages:
+      revokeRequestDeadLetter:
+        $ref: '#/components/messages/AccessRevokeRequestDeadLetterV1'
   access.provision.succeeded.v1:
     address: access.provision.succeeded.v1
-    x-contract-status: consumed-stage5-producer-pending
+    x-contract-status: implemented-stage6
     messages:
       provisionSucceeded:
         $ref: '#/components/messages/AccessProvisionSucceededV1'
   access.provision.failed.v1:
     address: access.provision.failed.v1
-    x-contract-status: consumed-stage5-producer-pending
+    x-contract-status: implemented-stage6
     messages:
       provisionFailed:
         $ref: '#/components/messages/AccessProvisionFailedV1'
   access.revoke.succeeded.v1:
     address: access.revoke.succeeded.v1
-    x-contract-status: consumed-stage5-producer-pending
+    x-contract-status: implemented-stage6
     messages:
       revokeSucceeded:
         $ref: '#/components/messages/AccessRevokeSucceededV1'
   access.revoke.failed.v1:
     address: access.revoke.failed.v1
-    x-contract-status: consumed-stage5-producer-pending
+    x-contract-status: implemented-stage6
     messages:
       revokeFailed:
         $ref: '#/components/messages/AccessRevokeFailedV1'
@@ -145,7 +156,19 @@ operations:
     channel:
       $ref: '#/channels/access.provision.request.v1'
     summary: provisioning-service owns provisioning commands and fetches material over mTLS.
-    x-contract-status: producer-implemented-consumer-stage6
+    x-contract-status: implemented-stage6
+  publishAccessProvisionRequestDeadLetter:
+    action: send
+    channel:
+      $ref: '#/channels/access.provision.request.v1.dlq'
+    summary: provisioning-service publishes sanitized poison-record coordinates and hash only.
+    x-contract-status: implemented-stage6
+  publishAccessRevokeRequestDeadLetter:
+    action: send
+    channel:
+      $ref: '#/channels/access.revoke.request.v1.dlq'
+    summary: provisioning-service publishes sanitized poison-record coordinates and hash only.
+    x-contract-status: implemented-stage6
   consumeAccessProvisionSucceeded:
     action: receive
     channel:
@@ -337,6 +360,34 @@ components:
       x-retry: retry until removed from all assigned nodes or terminal escalation
       x-dlq: access.revoke.request.v1.dlq
       x-ordering: aggregate_sequence is credential-owned; provisioning must reject stale desired_revision or sequence
+    AccessProvisionRequestDeadLetterV1:
+      name: access.provision.request.v1.dlq
+      payload:
+        $ref: 'contracts/events/schemas/access.provision.request.v1.dlq.schema.json'
+      bindings:
+        kafka:
+          key:
+            type: string
+            const: source:access.provision.request.v1
+      x-owner: provisioning-service
+      x-contract-status: implemented-stage6
+      x-json-schema: schemas/access.provision.request.v1.dlq.schema.json
+      x-secret-policy: Raw Kafka payload is never copied to the DLQ notice or logs.
+      x-replay: Operator supplies source topic, partition, and offset; replay verifies the stored SHA-256 before republishing.
+    AccessRevokeRequestDeadLetterV1:
+      name: access.revoke.request.v1.dlq
+      payload:
+        $ref: 'contracts/events/schemas/access.revoke.request.v1.dlq.schema.json'
+      bindings:
+        kafka:
+          key:
+            type: string
+            const: source:access.revoke.request.v1
+      x-owner: provisioning-service
+      x-contract-status: implemented-stage6
+      x-json-schema: schemas/access.revoke.request.v1.dlq.schema.json
+      x-secret-policy: Raw Kafka payload is never copied to the DLQ notice or logs.
+      x-replay: Operator supplies source topic, partition, and offset; replay verifies the stored SHA-256 before republishing.
     AccessProvisionSucceededV1:
       name: access.provision.succeeded.v1
       payload:
@@ -347,7 +398,7 @@ components:
             type: string
             pattern: '^credential:[0-9a-fA-F-]{36}$'
       x-owner: provisioning-service
-      x-contract-status: consumed-stage5-producer-pending
+      x-contract-status: implemented-stage6
       x-json-schema: schemas/access.provision.succeeded.v1.schema.json
       x-partition-key: credential:{credential_id}
       x-consumers: [access-service]
@@ -361,7 +412,7 @@ components:
             type: string
             pattern: '^credential:[0-9a-fA-F-]{36}$'
       x-owner: provisioning-service
-      x-contract-status: consumed-stage5-producer-pending
+      x-contract-status: implemented-stage6
       x-json-schema: schemas/access.provision.failed.v1.schema.json
       x-partition-key: credential:{credential_id}
       x-consumers: [access-service, ops]
@@ -375,7 +426,7 @@ components:
             type: string
             pattern: '^credential:[0-9a-fA-F-]{36}$'
       x-owner: provisioning-service
-      x-contract-status: consumed-stage5-producer-pending
+      x-contract-status: implemented-stage6
       x-json-schema: schemas/access.revoke.succeeded.v1.schema.json
       x-partition-key: credential:{credential_id}
       x-consumers: [access-service, notification-service]
@@ -390,7 +441,7 @@ components:
             type: string
             pattern: '^credential:[0-9a-fA-F-]{36}$'
       x-owner: provisioning-service
-      x-contract-status: consumed-stage5-producer-pending
+      x-contract-status: implemented-stage6
       x-json-schema: schemas/access.revoke.failed.v1.schema.json
       x-partition-key: credential:{credential_id}
       x-consumers: [access-service, ops]

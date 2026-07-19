@@ -12,6 +12,8 @@ const contracts = [
   "subscription.revoked.v1",
   "access.provision.request.v1",
   "access.revoke.request.v1",
+  "access.provision.request.v1.dlq",
+  "access.revoke.request.v1.dlq",
   "access.provision.succeeded.v1",
   "access.provision.failed.v1",
   "access.revoke.succeeded.v1",

@@ -284,6 +284,50 @@ Mitigation:
 - Access status derives expiry from PostgreSQL time and cannot report ready after the entitlement boundary.
 - PostgreSQL tests cover delayed success, partial proof, zero-allocation proof, and stale operation results.
 
+### T18 - Forged node or provisioning identity mutates VPN access
+
+Risk: an attacker impersonates provisioning-service or redirects it to a different node-agent and applies credentials.
+
+Mitigation:
+
+- Node-agent requires TLS 1.3 client certificates and authorizes only the verified `provisioning-service` SPIFFE URI.
+- Provisioning verifies the node server certificate through the platform CA and requires the exact SPIFFE URI stored with that node.
+- Container health has a separate per-node client identity authorized only for health routes.
+- Node management runs on an internal Compose network; production exposure requires WireGuard and firewall policy in Stage 8.
+
+### T19 - Desired-state replay or reordering restores revoked access
+
+Risk: a delayed provision command or reused operation ID re-adds a credential after revoke.
+
+Mitigation:
+
+- Provision and revoke topics share one PostgreSQL credential sequence cursor, and operation claims wait for earlier non-terminal commands of that credential.
+- Gaps are deferred without commit; reused operation IDs, stale sequences, and stale revisions become sanitized durable conflicts.
+- Node-agent journals operation ID with request SHA-256, rejects operation collisions and lower revisions, and persists absent tombstones.
+- Reconciliation refuses to overwrite a node revision newer than the control-plane desired revision.
+
+### T20 - Node config failure interrupts existing users
+
+Risk: an invalid candidate or failed process restart replaces the working Xray config.
+
+Mitigation:
+
+- Node-agent renders allowlisted fields and invokes a fixed pinned Xray binary without a shell.
+- Candidate files and node state use owner-only permissions; REALITY private keys are read from separate secret mounts.
+- `xray run -test -config` must succeed before swap.
+- Failed startup restores and restarts last-known-good; tests cover validation and one-shot runtime failure.
+- Xray access logging is disabled and process diagnostics are discarded because they may contain configuration details.
+
+### T21 - Poison Kafka payload becomes a second secret store
+
+Risk: malformed command payloads containing credentials are copied to DLQ, logs, or tickets.
+
+Mitigation:
+
+- Durable dead-letter state stores only source coordinates, SHA-256, and bounded reason code.
+- Versioned DLQ events contain the same sanitized fields and never the raw record.
+- Replay accepts only provision/revoke source topics, re-reads the original Kafka offset, verifies SHA-256, and republishes without outputting the value.
+
 ## Initial Security Requirements
 
 - TLS everywhere.
@@ -308,6 +352,5 @@ Mitigation:
 - Real YooKassa receipt/tax flow.
 - Admin certificate issuance, rotation, and revocation process.
 - Concrete DNS/TLS provider and edge log redaction configuration.
-- Xray-core pinned version and config validation command.
 - VPS provider AUP and lawful request process.
 - Backup/restore key management.

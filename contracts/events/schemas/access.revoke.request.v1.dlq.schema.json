@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vpn-platform.invalid/schemas/access.revoke.request.v1.dlq.schema.json",
+  "type": "object",
+  "required": ["event_id", "event_type", "schema_version", "occurred_at", "producer", "correlation_id", "aggregate_type", "aggregate_id", "partition_key", "data"],
+  "additionalProperties": false,
+  "properties": {
+    "event_id": {"type": "string", "format": "uuid"},
+    "event_type": {"const": "access.revoke.request.v1.dlq"},
+    "schema_version": {"const": 1},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "producer": {"const": "provisioning-service"},
+    "correlation_id": {"type": "string", "format": "uuid"},
+    "causation_id": {"type": ["string", "null"], "format": "uuid"},
+    "aggregate_type": {"const": "consumer_record"},
+    "aggregate_id": {"type": "string", "format": "uuid"},
+    "partition_key": {"const": "source:access.revoke.request.v1"},
+    "data": {"$ref": "#/$defs/deadLetter"}
+  },
+  "$defs": {
+    "deadLetter": {
+      "type": "object",
+      "required": ["source_topic", "source_partition", "source_offset", "payload_sha256", "reason_code"],
+      "additionalProperties": false,
+      "properties": {
+        "source_topic": {"const": "access.revoke.request.v1"},
+        "source_partition": {"type": "integer", "minimum": 0},
+        "source_offset": {"type": "integer", "minimum": 0},
+        "payload_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "reason_code": {"type": "string", "minLength": 1, "maxLength": 64}
+      }
+    }
+  }
+}

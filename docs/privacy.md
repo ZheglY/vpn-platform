@@ -21,6 +21,7 @@ Allowed data:
 - AES-256-GCM-encrypted access credential records, token lookup HMACs, and client-facing endpoint snapshots.
 - Aggregate bytes by credential/node.
 - Node state, load, active credential count, health snapshots, config revision.
+- Provisioning operation/allocation metadata and sanitized Kafka dead-letter coordinates with payload SHA-256 only.
 - Security/admin audit records.
 
 Forbidden data:
@@ -43,6 +44,7 @@ Forbidden data:
 | Application logs | 14 days |
 | Security/admin audit, including provisioning-material read metadata without credential payload | 365 days |
 | Diagnostic data | 30 days |
+| Node health snapshots and sanitized dead-letter metadata | 30 days in sandbox; operator replay must complete first |
 | Aggregate traffic statistics | 30 days |
 | Payment records | No automatic deletion until legal requirements are known |
 

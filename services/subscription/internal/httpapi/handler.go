@@ -36,3 +36,23 @@ func (h *Handler) GetSubscription(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(subscription)
 }
+
+func (h *Handler) GetPlacement(w http.ResponseWriter, r *http.Request) {
+	subscriptionID := strings.TrimSpace(r.PathValue("subscription_id"))
+	if !uuidPattern.MatchString(subscriptionID) {
+		httperror.Write(w, r, http.StatusBadRequest, "invalid_subscription_id", "subscription id is invalid")
+		return
+	}
+	placement, err := h.store.GetPlacement(r.Context(), subscriptionID)
+	if errors.Is(err, domain.ErrNotFound) {
+		httperror.Write(w, r, http.StatusNotFound, "placement_not_found", "placement is unavailable")
+		return
+	}
+	if err != nil {
+		httperror.Write(w, r, http.StatusInternalServerError, "placement_unavailable", "placement is unavailable")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(placement)
+}

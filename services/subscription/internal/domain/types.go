@@ -60,6 +60,8 @@ type PlanSnapshot struct {
 	AmountMinor      int64  `json:"amount_minor"`
 	Currency         string `json:"currency"`
 	Region           string `json:"region"`
+	PrimaryNodes     int    `json:"primary_nodes"`
+	FailoverNodes    int    `json:"failover_nodes"`
 }
 
 type Order struct {
@@ -78,6 +80,15 @@ type Subscription struct {
 	CurrentPeriodStart *time.Time `json:"current_period_start"`
 	CurrentPeriodEnd   *time.Time `json:"current_period_end"`
 	GraceEndsAt        *time.Time `json:"grace_ends_at"`
+}
+
+type Placement struct {
+	SubscriptionID string    `json:"subscription_id"`
+	PeriodID       string    `json:"period_id"`
+	Region         string    `json:"region"`
+	PrimaryNodes   int       `json:"primary_nodes"`
+	FailoverNodes  int       `json:"failover_nodes"`
+	ValidUntil     time.Time `json:"valid_until"`
 }
 
 type RefundWork struct {
@@ -105,6 +116,7 @@ type Store interface {
 	ClaimDue(context.Context, time.Duration) (Subscription, bool, error)
 	CompleteDue(context.Context, string) error
 	GetSubscription(context.Context, string) (Subscription, error)
+	GetPlacement(context.Context, string) (Placement, error)
 	RecordDeadLetter(context.Context, string, int32, int64, string, string) error
 	ClaimOutbox(context.Context, time.Duration) (OutboxMessage, bool, error)
 	CompleteOutbox(context.Context, string) error
