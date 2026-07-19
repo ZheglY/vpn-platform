@@ -37,8 +37,22 @@ func TestValidateProvisionEnvelope(t *testing.T) {
 	}
 }
 
+func TestValidateProvisionOutcomeEnvelopeRequiresAggregateSequence(t *testing.T) {
+	envelope := validEnvelope()
+	envelope.AggregateSequence = 0
+	record := &kgo.Record{Topic: envelope.EventType, Key: []byte(envelope.PartitionKey)}
+	if err := validateEnvelope(record, envelope); err == nil {
+		t.Fatal("provisioning outcome without aggregate sequence was accepted")
+	}
+	envelope.AggregateSequence = 1
+	if err := validateEnvelope(record, envelope); err != nil {
+		t.Fatalf("sequenced provisioning outcome was rejected: %v", err)
+	}
+}
+
 func TestValidateLifecycleEnvelopeRequiresAggregateSequence(t *testing.T) {
 	envelope := validEnvelope()
+	envelope.AggregateSequence = 0
 	envelope.EventType = "subscription.activated.v1"
 	envelope.Producer = "subscription-service"
 	envelope.AggregateType = "subscription"
@@ -81,7 +95,7 @@ func validEnvelope() platformkafka.Envelope {
 		EventID: "018f0e61-bca5-7a40-a06f-e4c0f53128ad", EventType: "access.provision.succeeded.v1", SchemaVersion: 1,
 		OccurredAt: time.Now().UTC(), Producer: "provisioning-service", CorrelationID: "018f0e61-bca5-7a40-a06f-e4c0f53128ae",
 		AggregateType: "credential", AggregateID: "018f0e61-bca5-7a40-a06f-e4c0f53128af",
-		PartitionKey: "credential:018f0e61-bca5-7a40-a06f-e4c0f53128af", Data: data,
+		AggregateSequence: 1, PartitionKey: "credential:018f0e61-bca5-7a40-a06f-e4c0f53128af", Data: data,
 	}
 }
 

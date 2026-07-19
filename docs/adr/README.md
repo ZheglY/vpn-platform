@@ -27,3 +27,4 @@ ADRs are immutable decision records. If a decision changes after implementation 
 | [0021](0021-stage5-access-token-and-profile-delivery.md) | Stage 5 access token and profile delivery | Accepted |
 | [0022](0022-stage5-ordering-revoke-and-public-edge-hardening.md) | Stage 5 ordering, revoke proof, and public edge hardening | Accepted |
 | [0023](0023-stage6-provisioning-placement-and-node-convergence.md) | Stage 6 provisioning placement and node convergence | Accepted |
+| [0024](0024-stage6-outcome-ordering-and-generation-recovery.md) | Stage 6 outcome ordering and generation recovery | Accepted |

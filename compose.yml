@@ -510,6 +510,7 @@ services:
       INTERNAL_SERVER_CA_FILE: /run/mtls/ca.crt
       SERVER_TLS_CERT_FILE: /run/mtls/provisioning-service.crt
       SERVER_TLS_KEY_FILE: /run/mtls/provisioning-service.key
+      HEALTHCHECK_CA_FILE: /run/mtls/ca.crt
       KAFKA_BROKERS: kafka:9092
       KAFKA_CONSUMER_GROUP: provisioning-service-v1
       PROVISIONING_WORKER_POLL_INTERVAL: 250ms

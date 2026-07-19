@@ -182,8 +182,8 @@ func (s *Store) ApplyProvisionSucceeded(ctx context.Context, meta domain.EventMe
 	if err := lockAggregate(ctx, tx, event.CredentialID); err != nil {
 		return err
 	}
-	inserted, err := insertInbox(ctx, tx, meta)
-	if err != nil || !inserted {
+	apply, err := prepareOutcome(ctx, tx, meta, event.CredentialID)
+	if err != nil || !apply {
 		if err != nil {
 			return err
 		}
@@ -223,7 +223,7 @@ FOR UPDATE OF c, o`, event.CredentialID, event.OperationID, event.AppliedRevisio
 			}
 			return commit(ctx, tx, "superseded provisioning success while revoking")
 		}
-		if err := replaceEndpointSnapshots(ctx, tx, event, now); err != nil {
+		if err := replaceProvisionSnapshots(ctx, tx, event, now); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE access_operations SET status = 'succeeded', completed_at = $2 WHERE id = $1`, event.OperationID, now); err != nil {
@@ -246,7 +246,7 @@ WHERE credential_id = $1 AND kind = 'revoke' AND desired_revision = $2 AND statu
 	if revision != event.AppliedRevision {
 		return tx.Commit(ctx)
 	}
-	if err := replaceEndpointSnapshots(ctx, tx, event, now); err != nil {
+	if err := replaceProvisionSnapshots(ctx, tx, event, now); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE access_operations SET status = 'succeeded', completed_at = $2 WHERE id = $1`, event.OperationID, now); err != nil {
@@ -302,8 +302,8 @@ func (s *Store) ApplyOperationFailed(ctx context.Context, meta domain.EventMeta,
 	if err := lockAggregate(ctx, tx, event.CredentialID); err != nil {
 		return err
 	}
-	inserted, err := insertInbox(ctx, tx, meta)
-	if err != nil || !inserted {
+	apply, err := prepareOutcome(ctx, tx, meta, event.CredentialID)
+	if err != nil || !apply {
 		if err != nil {
 			return err
 		}
@@ -347,8 +347,8 @@ func (s *Store) ApplyRevokeSucceeded(ctx context.Context, meta domain.EventMeta,
 	if err := lockAggregate(ctx, tx, event.CredentialID); err != nil {
 		return err
 	}
-	inserted, err := insertInbox(ctx, tx, meta)
-	if err != nil || !inserted {
+	apply, err := prepareOutcome(ctx, tx, meta, event.CredentialID)
+	if err != nil || !apply {
 		if err != nil {
 			return err
 		}
@@ -688,6 +688,51 @@ WHERE subscription_id = $1`, subscriptionID, meta.AggregateSequence); err != nil
 	return true, nil
 }
 
+func prepareOutcome(ctx context.Context, tx pgx.Tx, meta domain.EventMeta, credentialID string) (bool, error) {
+	if meta.AggregateSequence < 1 {
+		return false, domain.ErrDurableStateConflict
+	}
+	tag, err := tx.Exec(ctx, `
+INSERT INTO provisioning_outcome_state (credential_id, last_applied_sequence)
+	SELECT id, 0 FROM access_credentials WHERE id = $1
+ON CONFLICT (credential_id) DO NOTHING`, credentialID)
+	if err != nil {
+		return false, fmt.Errorf("initialize provisioning outcome cursor: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM provisioning_outcome_state WHERE credential_id = $1)`, credentialID).Scan(&exists); err != nil {
+			return false, fmt.Errorf("check provisioning outcome cursor: %w", err)
+		}
+		if !exists {
+			return false, domain.ErrDurableStateConflict
+		}
+	}
+	var lastApplied int64
+	if err := tx.QueryRow(ctx, `
+SELECT last_applied_sequence FROM provisioning_outcome_state
+WHERE credential_id = $1 FOR UPDATE`, credentialID).Scan(&lastApplied); err != nil {
+		return false, fmt.Errorf("lock provisioning outcome cursor: %w", err)
+	}
+	if meta.AggregateSequence > lastApplied+1 {
+		return false, domain.ErrOutcomeSequenceGap
+	}
+	inserted, err := insertInbox(ctx, tx, meta)
+	if err != nil || !inserted {
+		return false, err
+	}
+	if meta.AggregateSequence <= lastApplied {
+		return false, domain.ErrDurableStateConflict
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE provisioning_outcome_state
+SET last_applied_sequence = $2, updated_at = clock_timestamp()
+WHERE credential_id = $1`, credentialID, meta.AggregateSequence); err != nil {
+		return false, fmt.Errorf("advance provisioning outcome cursor: %w", err)
+	}
+	return true, nil
+}
+
 func insertInbox(ctx context.Context, tx pgx.Tx, meta domain.EventMeta) (bool, error) {
 	var inserted int
 	err := tx.QueryRow(ctx, `
@@ -707,8 +752,9 @@ ON CONFLICT DO NOTHING RETURNING 1`, meta.EventID, meta.EventType, meta.Aggregat
 	err = tx.QueryRow(ctx, `
 SELECT event_id, event_type, payload_sha256 FROM inbox
 WHERE event_id = $1 OR (source_topic = $2 AND source_partition = $3 AND source_offset = $4)
-   OR (aggregate_id = $5 AND aggregate_sequence = NULLIF($6,0))
-LIMIT 1`, meta.EventID, meta.SourceTopic, meta.SourcePartition, meta.SourceOffset, meta.AggregateID, meta.AggregateSequence).Scan(&eventID, &eventType, &payloadHash)
+   OR (aggregate_id = $5 AND aggregate_sequence = NULLIF($6,0)
+       AND ((event_type LIKE 'subscription.%') = $7))
+LIMIT 1`, meta.EventID, meta.SourceTopic, meta.SourcePartition, meta.SourceOffset, meta.AggregateID, meta.AggregateSequence, isLifecycleEvent(meta.EventType)).Scan(&eventID, &eventType, &payloadHash)
 	if err != nil {
 		return false, fmt.Errorf("resolve access inbox conflict: %w", err)
 	}
@@ -716,6 +762,10 @@ LIMIT 1`, meta.EventID, meta.SourceTopic, meta.SourcePartition, meta.SourceOffse
 		return false, domain.ErrDurableStateConflict
 	}
 	return false, nil
+}
+
+func isLifecycleEvent(eventType string) bool {
+	return eventType == "subscription.activated.v1" || eventType == "subscription.extended.v1" || eventType == "subscription.expired.v1" || eventType == "subscription.revoked.v1"
 }
 
 func insertOperation(ctx context.Context, tx pgx.Tx, operationID, credentialID, kind string, revision int, allocationRevision *int, causationID string, now time.Time) error {
@@ -729,10 +779,10 @@ VALUES ($1,$2,$3,$4,$5,'pending',$6,$7)`, operationID, credentialID, kind, revis
 
 func insertOperationOutbox(ctx context.Context, tx pgx.Tx, meta domain.EventMeta, now time.Time, topic, operationID, credentialID string, revision int) error {
 	data := map[string]any{"operation_id": operationID, "credential_id": credentialID, "desired_revision": revision}
-	return insertOutbox(ctx, tx, meta, now, topic, "credential:"+credentialID, credentialID, topic+":"+operationID, "credential", data)
+	return insertOutbox(ctx, tx, meta, now, topic, "credential:"+credentialID, credentialID, topic+":"+operationID, "credential", data, int64(revision))
 }
 
-func insertOutbox(ctx context.Context, tx pgx.Tx, meta domain.EventMeta, occurredAt time.Time, topic, partitionKey, aggregateID, dedupeKey, aggregateType string, data any) error {
+func insertOutbox(ctx context.Context, tx pgx.Tx, meta domain.EventMeta, occurredAt time.Time, topic, partitionKey, aggregateID, dedupeKey, aggregateType string, data any, envelopeSequenceOverride ...int64) error {
 	eventID, err := cryptoutil.RandomUUID()
 	if err != nil {
 		return err
@@ -744,10 +794,14 @@ UPDATE access_credentials SET outbox_sequence = outbox_sequence + 1
 WHERE id = $1 RETURNING outbox_sequence`, aggregateID).Scan(&sequence); err != nil {
 		return fmt.Errorf("advance access aggregate sequence: %w", err)
 	}
+	eventSequence := sequence
+	if len(envelopeSequenceOverride) == 1 {
+		eventSequence = envelopeSequenceOverride[0]
+	}
 	envelope := platformkafka.Envelope{
 		EventID: eventID, EventType: topic, SchemaVersion: 1, OccurredAt: occurredAt,
 		Producer: "access-service", CorrelationID: meta.CorrelationID, CausationID: &causationID,
-		AggregateType: aggregateType, AggregateID: aggregateID, AggregateSequence: sequence, PartitionKey: partitionKey,
+		AggregateType: aggregateType, AggregateID: aggregateID, AggregateSequence: eventSequence, PartitionKey: partitionKey,
 	}
 	envelope.Data, err = json.Marshal(data)
 	if err != nil {
@@ -773,7 +827,17 @@ func transactionTime(ctx context.Context, tx pgx.Tx) (time.Time, error) {
 	return now.UTC(), nil
 }
 
-func replaceEndpointSnapshots(ctx context.Context, tx pgx.Tx, event domain.ProvisionSucceeded, now time.Time) error {
+func replaceProvisionSnapshots(ctx context.Context, tx pgx.Tx, event domain.ProvisionSucceeded, now time.Time) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM access_assignment_snapshots WHERE credential_id = $1 AND allocation_revision = $2`, event.CredentialID, event.AppliedRevision); err != nil {
+		return fmt.Errorf("replace assignment snapshots: %w", err)
+	}
+	for _, nodeID := range event.AssignedNodeIDs {
+		if _, err := tx.Exec(ctx, `
+INSERT INTO access_assignment_snapshots (credential_id, allocation_revision, node_id, created_at)
+VALUES ($1,$2,$3,$4)`, event.CredentialID, event.AppliedRevision, nodeID, now); err != nil {
+			return fmt.Errorf("insert assignment snapshot: %w", err)
+		}
+	}
 	if _, err := tx.Exec(ctx, `DELETE FROM access_endpoint_snapshots WHERE credential_id = $1`, event.CredentialID); err != nil {
 		return fmt.Errorf("replace endpoint snapshots: %w", err)
 	}
@@ -793,7 +857,7 @@ INSERT INTO access_endpoint_snapshots (
 
 func listAssignedNodeIDs(ctx context.Context, tx pgx.Tx, credentialID string, allocationRevision int) ([]string, error) {
 	rows, err := tx.Query(ctx, `
-SELECT node_id FROM access_endpoint_snapshots
+SELECT node_id FROM access_assignment_snapshots
 WHERE credential_id = $1 AND allocation_revision = $2
 ORDER BY node_id`, credentialID, allocationRevision)
 	if err != nil {

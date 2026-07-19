@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -39,5 +40,29 @@ func TestRunGeneratesDistinctNodeKeysAndSeed(t *testing.T) {
 				t.Fatalf("%s permissions = %v, %v", name, info.Mode().Perm(), err)
 			}
 		}
+	}
+}
+
+func TestVPNComposeSmokeUsesFullControlPlane(t *testing.T) {
+	root := filepath.Join("..", "..", "..", "..", "scripts")
+	wrapper, err := os.ReadFile(filepath.Join(root, "vpn-smoke.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	harness, err := os.ReadFile(filepath.Join(root, "compose-smoke.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(wrapper) + string(harness)
+	for _, required := range []string{"provisioning-service", "access-service", "subscription-service", "kafka", "access.provision.request.v1"} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("vpn-smoke does not exercise %s", required)
+		}
+	}
+	if strings.Contains(script, "Invoke-Desired") {
+		t.Fatal("vpn-smoke still bypasses Kafka and provisioning-service by calling node-agent directly")
+	}
+	if !strings.Contains(string(wrapper), "VPN_SMOKE_FULL_CONTROL_PLANE") {
+		t.Fatal("vpn-smoke does not enable the full control-plane harness")
 	}
 }

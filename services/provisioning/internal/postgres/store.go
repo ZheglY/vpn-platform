@@ -97,6 +97,26 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, command.OperationID, command.CredentialID, ki
 		}
 		return fmt.Errorf("insert provisioning operation: %w", err)
 	}
+	if _, err := tx.Exec(ctx, `
+UPDATE operations
+SET state='superseded',lease_until=NULL,last_error_code='superseded_by_higher_revision',completed_at=clock_timestamp()
+WHERE credential_id=$1 AND id<>$2 AND desired_revision<$3
+  AND state IN ('pending','processing','retry')`, command.CredentialID, command.OperationID, command.DesiredRevision); err != nil {
+		return fmt.Errorf("supersede older provisioning operations: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE allocations
+SET desired_operation_id=$2,
+    desired_revision=$3,
+    desired_state=CASE WHEN $4='provision' THEN 'present' ELSE 'absent' END,
+    allocation_revision=CASE WHEN $4='provision' THEN $3 ELSE allocation_revision END,
+    state=CASE WHEN $4='provision' AND state<>'revoked' THEN 'pending' ELSE state END,
+    last_error_code=NULL,
+    next_reconcile_at=clock_timestamp(),
+    reconcile_lease_until=NULL
+WHERE credential_id=$1 AND desired_revision<$3`, command.CredentialID, command.OperationID, command.DesiredRevision, kind); err != nil {
+		return fmt.Errorf("advance allocation generation: %w", err)
+	}
 	if _, err := tx.Exec(ctx, `UPDATE credential_command_cursors SET last_sequence=$2,last_desired_revision=$3,updated_at=clock_timestamp() WHERE credential_id=$1`, command.CredentialID, meta.AggregateSequence, command.DesiredRevision); err != nil {
 		return fmt.Errorf("advance provisioning command cursor: %w", err)
 	}
@@ -124,11 +144,11 @@ VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, topic, partition, offset, paylo
 	}
 	dlqTopic := topic + ".dlq"
 	data := map[string]any{"source_topic": topic, "source_partition": partition, "source_offset": offset, "payload_sha256": payloadHash, "reason_code": reason}
-	payload, err := eventPayload(dlqTopic, eventID, eventID, "consumer_record", "source:"+topic, eventID, nil, time.Now().UTC(), data)
+	payload, err := eventPayload(dlqTopic, eventID, eventID, 0, "consumer_record", "source:"+topic, eventID, nil, time.Now().UTC(), data)
 	if err != nil {
 		return err
 	}
-	if err := insertOutbox(ctx, tx, eventID, dlqTopic, "source:"+topic, eventID, fmt.Sprintf("dlq:%s:%d:%d", topic, partition, offset), payload); err != nil {
+	if err := insertOutbox(ctx, tx, eventID, dlqTopic, "source:"+topic, eventID, 0, fmt.Sprintf("dlq:%s:%d:%d", topic, partition, offset), payload); err != nil {
 		return err
 	}
 	return commit(ctx, tx, "provisioning dead letter")
@@ -152,7 +172,7 @@ WHERE (
         SELECT 1 FROM operations AS predecessor
         WHERE predecessor.credential_id=candidate.credential_id
           AND predecessor.command_sequence < candidate.command_sequence
-          AND predecessor.state NOT IN ('succeeded','failed')
+          AND predecessor.state NOT IN ('succeeded','failed','superseded')
       )
 ORDER BY next_attempt_at,created_at,id
 FOR UPDATE SKIP LOCKED LIMIT 1`).Scan(
@@ -192,22 +212,75 @@ func (s *Store) EnsureAllocations(ctx context.Context, operation domain.Operatio
 	if state != "processing" {
 		return nil, domain.ErrConflict
 	}
-	allocations, err := listAllocationsTx(ctx, tx, operation.CredentialID)
-	if err != nil {
-		return nil, err
-	}
-	if len(allocations) > 0 {
-		if err := tx.Commit(ctx); err != nil {
-			return nil, err
-		}
-		return allocations, nil
-	}
 	var databaseNow time.Time
 	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&databaseNow); err != nil {
 		return nil, fmt.Errorf("read allocation time: %w", err)
 	}
 	if !placement.ValidUntil.After(databaseNow) {
 		return nil, domain.ErrConflict
+	}
+	allocations, err := listAllocationsTx(ctx, tx, operation.CredentialID)
+	if err != nil {
+		return nil, err
+	}
+	if len(allocations) > 0 {
+		if len(allocations) != 2 {
+			return nil, domain.ErrConflict
+		}
+		roles := make(map[string]struct{}, len(allocations))
+		for _, allocation := range allocations {
+			if allocation.DesiredOperationID != operation.ID || allocation.DesiredRevision != operation.DesiredRevision || allocation.DesiredState != "present" || allocation.Protocol != protocol {
+				return nil, domain.ErrConflict
+			}
+			roles[allocation.Role] = struct{}{}
+			if allocation.State != "revoked" {
+				continue
+			}
+			var status, region string
+			var capacityLimit, reservePercent, allocatedClients int
+			var lastSeen time.Time
+			if err := tx.QueryRow(ctx, `
+SELECT status,region,capacity_limit,reserve_percent,allocated_clients,last_seen_at
+FROM nodes WHERE id=$1 FOR UPDATE`, allocation.Node.ID).Scan(&status, &region, &capacityLimit, &reservePercent, &allocatedClients, &lastSeen); err != nil {
+				return nil, fmt.Errorf("lock reactivation node capacity: %w", err)
+			}
+			capacityCeiling := capacityLimit * (100 - reservePercent) / 100
+			if status != "active" || region != placement.Region || lastSeen.Before(databaseNow.Add(-45*time.Second)) || allocatedClients >= capacityCeiling {
+				return nil, domain.ErrCapacity
+			}
+			if _, err := tx.Exec(ctx, `UPDATE nodes SET allocated_clients=allocated_clients+1,updated_at=clock_timestamp() WHERE id=$1`, allocation.Node.ID); err != nil {
+				return nil, fmt.Errorf("reserve reactivation node capacity: %w", err)
+			}
+		}
+		if _, primary := roles["primary"]; !primary {
+			return nil, domain.ErrConflict
+		}
+		if _, failover := roles["failover"]; !failover || len(roles) != 2 {
+			return nil, domain.ErrConflict
+		}
+		tag, err := tx.Exec(ctx, `
+UPDATE allocations
+SET desired_operation_id=$2,desired_revision=$3,desired_state='present',allocation_revision=$3,
+    state='pending',applied_config_revision=NULL,applied_at=NULL,revoked_at=NULL,last_error_code=NULL,
+    next_reconcile_at=clock_timestamp(),reconcile_lease_until=NULL
+WHERE credential_id=$1 AND desired_operation_id=$2 AND desired_revision=$3`, operation.CredentialID, operation.ID, operation.DesiredRevision)
+		if err != nil {
+			return nil, fmt.Errorf("rebind retained allocations: %w", err)
+		}
+		if tag.RowsAffected() != int64(len(allocations)) {
+			return nil, domain.ErrConflict
+		}
+		if _, err := tx.Exec(ctx, `UPDATE operations SET allocation_revision=$2 WHERE id=$1 AND state='processing'`, operation.ID, operation.DesiredRevision); err != nil {
+			return nil, fmt.Errorf("bind retained allocation revision: %w", err)
+		}
+		allocations, err = listAllocationsTx(ctx, tx, operation.CredentialID)
+		if err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("commit retained provisioning allocation: %w", err)
+		}
+		return allocations, nil
 	}
 	rows, err := tx.Query(ctx, `
 SELECT id,region,management_url,management_spiffe_id,capacity_limit,reserve_percent,allocated_clients,
@@ -270,9 +343,14 @@ func (s *Store) ListAllocations(ctx context.Context, credentialID string) ([]dom
 
 func (s *Store) PrepareRevoke(ctx context.Context, operation domain.Operation) error {
 	tag, err := s.pool.Exec(ctx, `
-UPDATE allocations
-SET desired_operation_id=$1,desired_revision=$3,desired_state='absent',last_error_code=NULL
-WHERE credential_id=$2 AND desired_revision <= $3`, operation.ID, operation.CredentialID, operation.DesiredRevision)
+UPDATE allocations AS allocation
+SET desired_state='absent',last_error_code=NULL,next_reconcile_at=clock_timestamp(),reconcile_lease_until=NULL
+FROM operations AS operation
+WHERE operation.id=$1 AND operation.credential_id=$2 AND operation.desired_revision=$3 AND operation.state='processing'
+  AND allocation.credential_id=operation.credential_id
+  AND allocation.desired_operation_id=operation.id
+  AND allocation.desired_revision=operation.desired_revision
+  AND allocation.desired_state='absent'`, operation.ID, operation.CredentialID, operation.DesiredRevision)
 	if err != nil {
 		return fmt.Errorf("prepare allocation revoke: %w", err)
 	}
@@ -284,8 +362,17 @@ WHERE credential_id=$2 AND desired_revision <= $3`, operation.ID, operation.Cred
 
 func (s *Store) MarkAllocationApplied(ctx context.Context, operationID, nodeID string, configRevision int64) error {
 	tag, err := s.pool.Exec(ctx, `
-UPDATE allocations SET state='active',applied_config_revision=$3,applied_at=clock_timestamp(),last_error_code=NULL
-WHERE operation_id=$1 AND node_id=$2 AND state IN ('pending','failed','active')`, operationID, nodeID, configRevision)
+UPDATE allocations AS allocation
+SET state='active',applied_config_revision=$3,applied_at=clock_timestamp(),revoked_at=NULL,last_error_code=NULL,
+    next_reconcile_at=clock_timestamp(),reconcile_lease_until=NULL
+FROM operations AS operation
+WHERE operation.id=$1 AND operation.state IN ('processing','succeeded')
+  AND allocation.desired_operation_id=operation.id
+  AND allocation.credential_id=operation.credential_id
+  AND allocation.desired_revision=operation.desired_revision
+  AND allocation.desired_state='present'
+  AND allocation.node_id=$2
+  AND allocation.state IN ('pending','failed','active')`, operationID, nodeID, configRevision)
 	if err != nil {
 		return fmt.Errorf("mark allocation applied: %w", err)
 	}
@@ -304,8 +391,15 @@ func (s *Store) MarkAllocationRevoked(ctx context.Context, operationID, nodeID s
 	var allocationID string
 	var previousState string
 	err = tx.QueryRow(ctx, `
-SELECT a.id,a.state FROM allocations a JOIN operations o ON o.credential_id=a.credential_id
-WHERE o.id=$1 AND a.node_id=$2 FOR UPDATE OF a`, operationID, nodeID).Scan(&allocationID, &previousState)
+SELECT allocation.id,allocation.state
+FROM allocations AS allocation
+JOIN operations AS operation ON operation.id=allocation.desired_operation_id
+WHERE operation.id=$1 AND operation.state IN ('processing','succeeded','failed')
+  AND allocation.credential_id=operation.credential_id
+  AND allocation.desired_revision=operation.desired_revision
+  AND allocation.desired_state='absent'
+  AND allocation.node_id=$2
+FOR UPDATE OF allocation`, operationID, nodeID).Scan(&allocationID, &previousState)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ErrConflict
 	}
@@ -313,7 +407,7 @@ WHERE o.id=$1 AND a.node_id=$2 FOR UPDATE OF a`, operationID, nodeID).Scan(&allo
 		return fmt.Errorf("lock allocation revoke: %w", err)
 	}
 	if previousState != "revoked" {
-		if _, err := tx.Exec(ctx, `UPDATE allocations SET state='revoked',applied_config_revision=$2,revoked_at=clock_timestamp(),last_error_code=NULL WHERE id=$1`, allocationID, configRevision); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE allocations SET state='revoked',applied_config_revision=$2,revoked_at=clock_timestamp(),last_error_code=NULL,next_reconcile_at=clock_timestamp(),reconcile_lease_until=NULL WHERE id=$1`, allocationID, configRevision); err != nil {
 			return fmt.Errorf("mark allocation revoked: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `UPDATE nodes SET allocated_clients=GREATEST(allocated_clients-1,0),updated_at=clock_timestamp() WHERE id=$1`, nodeID); err != nil {
@@ -328,8 +422,10 @@ func (s *Store) MarkAllocationFailed(ctx context.Context, operationID, nodeID, r
 UPDATE allocations AS allocation
 SET state='failed',last_error_code=$3
 FROM operations AS operation
-WHERE operation.id=$1
+WHERE operation.id=$1 AND operation.state='processing'
   AND operation.credential_id=allocation.credential_id
+  AND allocation.desired_operation_id=operation.id
+  AND allocation.desired_revision=operation.desired_revision
   AND allocation.node_id=$2
   AND allocation.state <> 'revoked'`, operationID, nodeID, reason)
 	if err != nil {
@@ -359,8 +455,13 @@ func (s *Store) CompleteProvision(ctx context.Context, operation domain.Operatio
 		return domain.ErrConflict
 	}
 	var endpoints []domain.Endpoint
+	assignedNodeIDs := make([]string, 0, len(allocations))
 	primaryActive := false
 	for _, allocation := range allocations {
+		if allocation.DesiredOperationID != operation.ID || allocation.DesiredRevision != operation.DesiredRevision || allocation.DesiredState != "present" || allocation.AllocationRevision != operation.DesiredRevision {
+			return domain.ErrConflict
+		}
+		assignedNodeIDs = append(assignedNodeIDs, allocation.Node.ID)
 		if allocation.State != "active" {
 			continue
 		}
@@ -369,7 +470,7 @@ func (s *Store) CompleteProvision(ctx context.Context, operation domain.Operatio
 		}
 		endpoints = append(endpoints, endpointFromAllocation(allocation))
 	}
-	if !primaryActive || (status == "active" && len(endpoints) != 2) || (status == "degraded" && len(endpoints) != 1) {
+	if len(assignedNodeIDs) != 2 || assignedNodeIDs[0] == assignedNodeIDs[1] || !primaryActive || (status == "active" && len(endpoints) != 2) || (status == "degraded" && len(endpoints) != 1) {
 		return domain.ErrConflict
 	}
 	sort.Slice(endpoints, func(i, j int) bool {
@@ -378,7 +479,8 @@ func (s *Store) CompleteProvision(ctx context.Context, operation domain.Operatio
 		}
 		return endpoints[i].Role == "primary"
 	})
-	data := map[string]any{"operation_id": operation.ID, "credential_id": operation.CredentialID, "applied_revision": operation.DesiredRevision, "status": status, "endpoints": endpoints, "applied_at": time.Now().UTC()}
+	sort.Strings(assignedNodeIDs)
+	data := map[string]any{"operation_id": operation.ID, "credential_id": operation.CredentialID, "applied_revision": operation.DesiredRevision, "status": status, "assigned_node_ids": assignedNodeIDs, "endpoints": endpoints, "applied_at": time.Now().UTC()}
 	return s.completeOperationWithEvent(ctx, operation, "access.provision.succeeded.v1", "provision-succeeded:"+operation.ID, data)
 }
 
@@ -394,7 +496,7 @@ func (s *Store) CompleteRevoke(ctx context.Context, operation domain.Operation, 
 	nodeIDs := make([]string, 0, len(allocations))
 	allocationRevision := 0
 	for _, allocation := range allocations {
-		if allocation.State != "revoked" {
+		if allocation.DesiredOperationID != operation.ID || allocation.DesiredRevision != operation.DesiredRevision || allocation.DesiredState != "absent" || allocation.State != "revoked" {
 			return domain.ErrConflict
 		}
 		nodeIDs = append(nodeIDs, allocation.Node.ID)
@@ -431,16 +533,32 @@ func (s *Store) completeOperationWithEvent(ctx context.Context, operation domain
 	if state != "processing" {
 		return domain.ErrConflict
 	}
+	var currentRevision int
+	if err := tx.QueryRow(ctx, `SELECT last_desired_revision FROM credential_command_cursors WHERE credential_id=$1 FOR UPDATE`, operation.CredentialID).Scan(&currentRevision); err != nil {
+		return fmt.Errorf("lock provisioning generation cursor: %w", err)
+	}
+	if currentRevision != operation.DesiredRevision {
+		return domain.ErrConflict
+	}
+	var aggregateSequence int64
+	if err := tx.QueryRow(ctx, `
+INSERT INTO credential_outcome_cursors (credential_id,last_sequence)
+VALUES ($1,1)
+ON CONFLICT (credential_id) DO UPDATE
+SET last_sequence=credential_outcome_cursors.last_sequence+1,updated_at=clock_timestamp()
+RETURNING last_sequence`, operation.CredentialID).Scan(&aggregateSequence); err != nil {
+		return fmt.Errorf("advance provisioning outcome sequence: %w", err)
+	}
 	eventID, err := cryptoutil.RandomUUID()
 	if err != nil {
 		return err
 	}
 	causationID := operation.CausationEventID
-	payload, err := eventPayload(topic, eventID, operation.CredentialID, "credential", "credential:"+operation.CredentialID, operation.CorrelationID, &causationID, time.Now().UTC(), data)
+	payload, err := eventPayload(topic, eventID, operation.CredentialID, aggregateSequence, "credential", "credential:"+operation.CredentialID, operation.CorrelationID, &causationID, time.Now().UTC(), data)
 	if err != nil {
 		return err
 	}
-	if err := insertOutbox(ctx, tx, eventID, topic, "credential:"+operation.CredentialID, operation.CredentialID, dedupe, payload); err != nil {
+	if err := insertOutbox(ctx, tx, eventID, topic, "credential:"+operation.CredentialID, operation.CredentialID, aggregateSequence, dedupe, payload); err != nil {
 		return err
 	}
 	terminalState := "succeeded"
@@ -462,8 +580,15 @@ func (s *Store) ClaimOutbox(ctx context.Context, lease time.Duration) (domain.Ou
 	var message domain.OutboxMessage
 	err = tx.QueryRow(ctx, `
 SELECT event_id,topic,partition_key,payload,attempts FROM outbox
-WHERE (state='pending' AND next_attempt_at <= clock_timestamp()) OR (state='processing' AND lease_until < clock_timestamp())
-ORDER BY created_at,event_id FOR UPDATE SKIP LOCKED LIMIT 1`).Scan(&message.EventID, &message.Topic, &message.PartitionKey, &message.Payload, &message.Attempts)
+WHERE ((state='pending' AND next_attempt_at <= clock_timestamp()) OR (state='processing' AND lease_until < clock_timestamp()))
+  AND (aggregate_sequence IS NULL OR NOT EXISTS (
+      SELECT 1 FROM outbox AS predecessor
+      WHERE predecessor.aggregate_id=outbox.aggregate_id
+        AND predecessor.aggregate_sequence<outbox.aggregate_sequence
+        AND predecessor.state<>'published'
+  ))
+ORDER BY created_at,aggregate_id,aggregate_sequence NULLS FIRST,event_id
+FOR UPDATE SKIP LOCKED LIMIT 1`).Scan(&message.EventID, &message.Topic, &message.PartitionKey, &message.Payload, &message.Attempts)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.OutboxMessage{}, false, tx.Commit(ctx)
 	}
@@ -481,17 +606,23 @@ ORDER BY created_at,event_id FOR UPDATE SKIP LOCKED LIMIT 1`).Scan(&message.Even
 }
 
 func (s *Store) CompleteOutbox(ctx context.Context, eventID string) error {
-	_, err := s.pool.Exec(ctx, `UPDATE outbox SET state='published',lease_until=NULL,published_at=clock_timestamp() WHERE event_id=$1 AND state='processing'`, eventID)
+	tag, err := s.pool.Exec(ctx, `UPDATE outbox SET state='published',lease_until=NULL,published_at=clock_timestamp() WHERE event_id=$1 AND state='processing'`, eventID)
 	if err != nil {
 		return fmt.Errorf("complete provisioning outbox: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return domain.ErrConflict
 	}
 	return nil
 }
 
 func (s *Store) RetryOutbox(ctx context.Context, eventID string, delay time.Duration) error {
-	_, err := s.pool.Exec(ctx, `UPDATE outbox SET state='pending',lease_until=NULL,next_attempt_at=clock_timestamp()+$2::interval WHERE event_id=$1 AND state='processing'`, eventID, delay)
+	tag, err := s.pool.Exec(ctx, `UPDATE outbox SET state='pending',lease_until=NULL,next_attempt_at=clock_timestamp()+$2::interval WHERE event_id=$1 AND state='processing'`, eventID, delay)
 	if err != nil {
 		return fmt.Errorf("retry provisioning outbox: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return domain.ErrConflict
 	}
 	return nil
 }
@@ -571,11 +702,16 @@ func (s *Store) MarkNodeOffline(ctx context.Context, nodeID string) error {
 	return nil
 }
 
-func (s *Store) ListReconciliationCandidates(ctx context.Context, limit int) ([]domain.ReconciliationCandidate, error) {
-	if limit < 1 || limit > 1000 {
+func (s *Store) ClaimReconciliationCandidates(ctx context.Context, limit int, lease time.Duration) ([]domain.ReconciliationCandidate, error) {
+	if limit < 1 || limit > 1000 || lease <= 0 {
 		return nil, domain.ErrConflict
 	}
-	rows, err := s.pool.Query(ctx, `
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("begin reconciliation claim: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	rows, err := tx.Query(ctx, `
 SELECT a.id,a.credential_id,a.desired_operation_id,a.role,a.protocol,a.desired_revision,a.desired_state,a.allocation_revision,a.state,COALESCE(a.applied_config_revision,0),
        n.id,n.region,n.management_url,n.management_spiffe_id,n.capacity_limit,n.reserve_percent,n.allocated_clients,
        n.public_address,n.public_port,n.server_name,n.reality_public_key,n.short_id,n.spider_x,n.label
@@ -584,21 +720,66 @@ JOIN nodes n ON n.id=a.node_id
 JOIN operations o ON o.id=a.desired_operation_id
 WHERE n.status IN ('active','draining')
   AND (a.desired_state='absent' OR (a.desired_state='present' AND o.state='succeeded'))
-ORDER BY a.created_at,a.id
+	AND a.next_reconcile_at <= clock_timestamp()
+	AND (a.reconcile_lease_until IS NULL OR a.reconcile_lease_until < clock_timestamp())
+ORDER BY a.next_reconcile_at,a.created_at,a.id
+FOR UPDATE OF a SKIP LOCKED
 LIMIT $1`, limit)
 	if err != nil {
-		return nil, fmt.Errorf("list reconciliation candidates: %w", err)
+		return nil, fmt.Errorf("select reconciliation candidates: %w", err)
 	}
-	defer rows.Close()
 	var candidates []domain.ReconciliationCandidate
 	for rows.Next() {
 		var candidate domain.ReconciliationCandidate
 		if err := scanAllocation(rows, &candidate.Allocation); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		candidates = append(candidates, candidate)
 	}
-	return candidates, rows.Err()
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	for index := range candidates {
+		claimID, err := cryptoutil.RandomUUID()
+		if err != nil {
+			return nil, err
+		}
+		candidates[index].ClaimID = claimID
+		tag, err := tx.Exec(ctx, `
+UPDATE allocations
+SET reconcile_claim_id=$2,reconcile_lease_until=clock_timestamp()+$3::interval,reconcile_attempts=reconcile_attempts+1
+WHERE id=$1`, candidates[index].Allocation.ID, claimID, lease.String())
+		if err != nil {
+			return nil, fmt.Errorf("lease reconciliation candidate: %w", err)
+		}
+		if tag.RowsAffected() != 1 {
+			return nil, domain.ErrConflict
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit reconciliation claim: %w", err)
+	}
+	return candidates, nil
+}
+
+func (s *Store) RescheduleReconciliation(ctx context.Context, allocationID, claimID string, delay time.Duration) error {
+	if delay < 0 {
+		return domain.ErrConflict
+	}
+	tag, err := s.pool.Exec(ctx, `
+UPDATE allocations
+SET next_reconcile_at=clock_timestamp()+$3::interval,reconcile_lease_until=NULL,reconcile_claim_id=NULL
+WHERE id=$1 AND reconcile_claim_id=$2`, allocationID, claimID, delay.String())
+	if err != nil {
+		return fmt.Errorf("reschedule reconciliation candidate: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return domain.ErrConflict
+	}
+	return nil
 }
 
 func (s *Store) RequestDeadLetterReplay(ctx context.Context, topic string, partition int32, offset int64) (string, error) {
@@ -670,8 +851,8 @@ func endpointFromAllocation(allocation domain.Allocation) domain.Endpoint {
 	return domain.Endpoint{NodeID: allocation.Node.ID, Role: allocation.Role, Address: allocation.Node.PublicAddress, Port: allocation.Node.PublicPort, ServerName: allocation.Node.ServerName, RealityPublicKey: allocation.Node.RealityPublicKey, ShortID: allocation.Node.ShortID, SpiderX: allocation.Node.SpiderX, Label: allocation.Node.Label}
 }
 
-func insertOutbox(ctx context.Context, tx pgx.Tx, eventID, topic, key, aggregateID, dedupe string, payload []byte) error {
-	tag, err := tx.Exec(ctx, `INSERT INTO outbox (event_id,topic,partition_key,aggregate_id,dedupe_key,payload) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (dedupe_key) DO NOTHING`, eventID, topic, key, aggregateID, dedupe, payload)
+func insertOutbox(ctx context.Context, tx pgx.Tx, eventID, topic, key, aggregateID string, aggregateSequence int64, dedupe string, payload []byte) error {
+	tag, err := tx.Exec(ctx, `INSERT INTO outbox (event_id,topic,partition_key,aggregate_id,aggregate_sequence,dedupe_key,payload) VALUES ($1,$2,$3,$4,NULLIF($5,0),$6,$7) ON CONFLICT (dedupe_key) DO NOTHING`, eventID, topic, key, aggregateID, aggregateSequence, dedupe, payload)
 	if err != nil {
 		return fmt.Errorf("insert provisioning outbox: %w", err)
 	}
@@ -681,12 +862,12 @@ func insertOutbox(ctx context.Context, tx pgx.Tx, eventID, topic, key, aggregate
 	return nil
 }
 
-func eventPayload(topic, eventID, aggregateID, aggregateType, partitionKey, correlationID string, causationID *string, occurredAt time.Time, data any) ([]byte, error) {
+func eventPayload(topic, eventID, aggregateID string, aggregateSequence int64, aggregateType, partitionKey, correlationID string, causationID *string, occurredAt time.Time, data any) ([]byte, error) {
 	dataJSON, err := json.Marshal(data)
 	if err != nil {
 		return nil, fmt.Errorf("encode provisioning event data: %w", err)
 	}
-	envelope := platformkafka.Envelope{EventID: eventID, EventType: topic, SchemaVersion: 1, OccurredAt: occurredAt.UTC(), Producer: "provisioning-service", CorrelationID: correlationID, CausationID: causationID, AggregateType: aggregateType, AggregateID: aggregateID, PartitionKey: partitionKey, Data: dataJSON}
+	envelope := platformkafka.Envelope{EventID: eventID, EventType: topic, SchemaVersion: 1, OccurredAt: occurredAt.UTC(), Producer: "provisioning-service", CorrelationID: correlationID, CausationID: causationID, AggregateType: aggregateType, AggregateID: aggregateID, AggregateSequence: aggregateSequence, PartitionKey: partitionKey, Data: dataJSON}
 	payload, err := json.Marshal(envelope)
 	if err != nil {
 		return nil, fmt.Errorf("encode provisioning event envelope: %w", err)

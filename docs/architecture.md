@@ -10,7 +10,7 @@ Happ is only the user client. It is not the VPN provider. User VPN traffic must 
 
 Stage 6 adds the provisioning control plane and local node data plane. `provisioning-service` owns node registry, health, capacity, allocations, ordered operations, reconciliation, inbox, outbox, and sanitized dead-letter coordinates in its own PostgreSQL database. It obtains encrypted-at-rest credential material and immutable paid-period placement through allowlisted mTLS APIs. Two local node-agents converge revisioned desired state into pinned Xray-core and keep node-local operation journals and last-known-good snapshots.
 
-The current environment is portfolio/sandbox only. It does not use real YooKassa credentials, issue receipts, initiate provider refunds, enroll production VPS hosts, or carry real user traffic. Normal Compose smoke still isolates access delivery by injecting a result; the separate `vpn` profile exercises two local nodes and real VLESS + REALITY traffic. Active entitlement explicitly does not mean VPN access is ready.
+The current environment is portfolio/sandbox only. It does not use real YooKassa credentials, issue receipts, initiate provider refunds, enroll production VPS hosts, or carry real user traffic. Normal Compose smoke keeps a contract-injected provisioning result for the Stage 5 delivery path. The separate `vpn` profile runs the full Access command, Kafka, Provisioning, two-node Xray, outcome, Happ delivery, and revoke path with real local VLESS + REALITY traffic. Active entitlement explicitly does not mean VPN access is ready.
 
 ## Product Decisions Already Accepted
 
@@ -217,20 +217,22 @@ sequenceDiagram
     Kafka->>Access: subscription event with aggregate_sequence
     Access->>Access: require previous sequence and unexpired DB-time entitlement
     Access->>Access: create credential only; no subscription token yet
-    Access->>Kafka: access.provision.request.v1
-    Kafka->>Prov: provision command
+    Access->>Kafka: access.provision.request.v1 with desired_revision sequence
+    Kafka->>Prov: next provision command for credential
     Prov->>Access: GET credential material over mTLS
     Access->>Access: append secret-free security audit event
     Access-->>Prov: minimum VLESS material; no REALITY private key
-    Prov->>Agent: PUT credential over mTLS
+    Prov->>Sub: GET immutable placement over mTLS
+    Prov->>Prov: reserve primary and failover generation
+    Prov->>Agent: PUT credential over mTLS to both assigned nodes
     Agent->>Xray: validate, atomic apply, reload
     Agent-->>Prov: operation result
-    Prov->>Kafka: access.provision.succeeded.v1 or failed.v1
-    Kafka->>Access: provisioning result
+    Prov->>Kafka: sequenced provision outcome with full assignment proof
+    Kafka->>Access: next outcome across all four result topics
     Access->>Kafka: access.ready.v1 only if entitlement still valid
 ```
 
-Subscription entitlement can be `active` while VPN access is still pending. VPN access becomes `ready` only after the primary node successfully applies the credential. If failover is not ready, provisioning is `degraded`, access may be issued through the one-time link flow, and the failure must be visible in metrics, admin CLI, and alerting. If the primary node fails, access must not become `ready`.
+Subscription entitlement can be `active` while VPN access is still pending. VPN access becomes `ready` only after the primary node successfully applies the credential. If failover is not ready, provisioning is `degraded`, access may be issued through the one-time link flow, and the failure must be visible in metrics, admin CLI, and alerting. If the primary node fails, access must not become `ready`. Provision success keeps the complete two-node assignment proof separate from usable Happ endpoints so a later revoke must remove even a failed failover assignment.
 
 ### One-Time Subscription URL Issuance
 
@@ -276,7 +278,7 @@ sequenceDiagram
     Access->>Access: mark revoked only after all assigned nodes confirm removal
 ```
 
-Reconciliation periodically compares access state, provisioning allocations, and node actual state. Terminal revoke failure creates alert and operator escalation.
+Reconciliation claims due allocations with PostgreSQL leases and `FOR UPDATE SKIP LOCKED`, then compares provisioning desired state with node actual state. Claims are bounded, safely shared by replicas, rescheduled independently, and cannot starve rows beyond the first batch. Terminal revoke failure creates alert and operator escalation.
 
 ## Subscription Endpoint
 
@@ -293,9 +295,12 @@ Implemented access and Stage 6 provisioning behavior:
 - Happ standard headers are `profile-title`, `profile-update-interval`, `subscription-userinfo`, and optional `support-url`.
 - The body contains one deterministic VLESS + REALITY share URI per validated primary/failover endpoint snapshot.
 - Provisioning success is the only event that stores an endpoint snapshot and moves access to `active` or `degraded`.
+- Access stores the complete assigned-node snapshot separately from usable endpoint snapshots and validates revoke against the complete assignment.
 - A delayed physical provisioning success after entitlement expiry stores the allocation only to initiate revoke and never makes access ready.
 - Subscription owns immutable period placement; Provisioning atomically selects one primary and one failover below the 80% threshold.
-- Node-agent applies revisioned present/absent state, and reconciliation checks allocation desired state against node actual state.
+- Provisioning outcomes have one credential-owned sequence across all four result topics; Access durably defers gaps and rejects sequence collisions.
+- A higher desired revision creates and fences a new allocation generation, preserving existing capacity reservations and reserving revoked allocations exactly once on reactivation.
+- Node-agent applies revisioned present/absent state. Once validated mutation starts, an independent bounded context completes candidate startup or last-known-good restoration even if the caller disconnects.
 
 ## Security Boundaries
 

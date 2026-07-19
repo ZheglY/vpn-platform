@@ -12,9 +12,9 @@ Current milestone: Stage 6 provisioning control plane and node-agent.
 - `catalog-service` with immutable versioned plans, prices, regions, and published Telegram catalog queries.
 - `billing-service` with immutable order snapshots, idempotent payment creation, YooKassa sandbox verification, webhook inbox, reconciliation, and transactional Kafka outbox.
 - `subscription-service` with a separate database, payment/refund inbox, immutable entitlement periods, activation/extension, grace/expiry scheduler, refund recalculation, and transactional Kafka outbox.
-- `access-service` with a separate database, ordered lifecycle cursor, encrypted VLESS credentials, revision-bound revoke proof, sequenced transactional outbox, audited provisioning reads, one-time URL issuance/rotation, and a Happ-compatible no-store endpoint.
-- `provisioning-service` with a separate database, cross-topic command ordering, transactional node placement, capacity reserve, durable operations/outbox, sanitized DLQ, health polling, and desired-vs-actual reconciliation.
-- Two local mTLS node-agents that persist revision tombstones, validate and atomically apply pinned Xray-core configuration, manage a fixed child process, and restore last-known-good after failure.
+- `access-service` with a separate database, ordered lifecycle and provisioning-outcome cursors, encrypted VLESS credentials, full assignment-bound revoke proof, sequenced transactional outbox, audited provisioning reads, one-time URL issuance/rotation, and a Happ-compatible no-store endpoint.
+- `provisioning-service` with a separate database, cross-topic command and outcome ordering, transactional generation-fenced node placement, exact capacity reserve, durable operations/outbox, sanitized DLQ, health polling, and leased desired-vs-actual reconciliation.
+- Two local mTLS node-agents that persist revision tombstones, validate and atomically apply pinned Xray-core configuration, manage a fixed child process, and complete candidate or last-known-good recovery despite request cancellation.
 - `telegram-bot` with Telegram webhook dedupe, consent, `/plans`, and `/buy` sandbox purchase flow.
 - Local Compose stack with isolated service databases, Kafka, Redis, fake external APIs, and an optional two-node VLESS + REALITY data plane.
 - Goose migration runner tool.
@@ -65,7 +65,7 @@ Catalog, billing, subscription, and access listen on `https://localhost:8083`, `
 
 `make compose-smoke` exercises onboarding and a complete sandbox purchase through entitlement activation and access delivery. It runs real Billing, Subscription, and Access PostgreSQL suites, injects a provisioning result, verifies one-time issue replay, Happ headers/body, token-path redaction, event publication, and mTLS authorization. It does not start Xray.
 
-`make vpn-smoke` generates local-only keys on D, starts two node-agents with the integrity-checked Xray-core `26.3.27` security rebuild, runs Provisioning PostgreSQL tests, provisions a credential through the mTLS desired-state API, verifies VLESS + REALITY traffic with the official client image, replays the operation idempotently, revokes it, and verifies removal and last-known-good rollback.
+`make vpn-smoke` generates local-only keys on D and runs the full Stage 6 acceptance path: Access command outbox, Kafka, Provisioning, authenticated material and placement reads, two node-agents with the integrity-checked Xray-core `26.3.27` security rebuild, sequenced outcome consumption, one-time Happ profile issuance, real VLESS + REALITY traffic, refund-driven revoke, and proof that traffic no longer passes afterward.
 
 ## Repository Rules
 

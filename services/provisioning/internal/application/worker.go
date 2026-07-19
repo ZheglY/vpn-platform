@@ -71,6 +71,9 @@ func (w *OperationWorker) provision(ctx context.Context, operation domain.Operat
 	if err != nil {
 		return w.retryOrFailProvision(ctx, operation, "all", "allocation_failed", nil)
 	}
+	if !allocationsMatchOperation(allocations, operation, "present") {
+		return domain.ErrConflict
+	}
 	for _, allocation := range allocations {
 		if allocation.State == "active" {
 			continue
@@ -90,6 +93,9 @@ func (w *OperationWorker) provision(ctx context.Context, operation domain.Operat
 	allocations, err = w.store.ListAllocations(ctx, operation.CredentialID)
 	if err != nil {
 		return w.retryOrFailProvision(ctx, operation, "all", "allocation_read_failed", nil)
+	}
+	if !allocationsMatchOperation(allocations, operation, "present") {
+		return domain.ErrConflict
 	}
 	primaryActive, failoverActive := roleActive(allocations, "primary"), roleActive(allocations, "failover")
 	if !primaryActive {
@@ -112,6 +118,9 @@ func (w *OperationWorker) revoke(ctx context.Context, operation domain.Operation
 	if err != nil {
 		return w.retryOrFailRevoke(ctx, operation, "allocation_read_failed", nil)
 	}
+	if !allocationsMatchOperation(allocations, operation, "absent") {
+		return domain.ErrConflict
+	}
 	for _, allocation := range allocations {
 		if allocation.State == "revoked" {
 			continue
@@ -131,6 +140,9 @@ func (w *OperationWorker) revoke(ctx context.Context, operation domain.Operation
 	if err != nil {
 		return w.retryOrFailRevoke(ctx, operation, "allocation_read_failed", nil)
 	}
+	if !allocationsMatchOperation(allocations, operation, "absent") {
+		return domain.ErrConflict
+	}
 	if pending := unrevokedNodeIDs(allocations); len(pending) > 0 {
 		return w.retryOrFailRevoke(ctx, operation, "revoke_incomplete", pending)
 	}
@@ -143,11 +155,16 @@ type ReconciliationWorker struct {
 	agents   domain.AgentClient
 	logger   *zap.Logger
 	interval time.Duration
+	lease    time.Duration
 	batch    int
 }
 
 func NewReconciliationWorker(store domain.Store, access domain.AccessClient, agents domain.AgentClient, logger *zap.Logger, interval time.Duration, batch int) *ReconciliationWorker {
-	return &ReconciliationWorker{store: store, access: access, agents: agents, logger: logger, interval: interval, batch: batch}
+	lease := 3 * interval
+	if lease < 30*time.Second {
+		lease = 30 * time.Second
+	}
+	return &ReconciliationWorker{store: store, access: access, agents: agents, logger: logger, interval: interval, lease: lease, batch: batch}
 }
 
 func (w *ReconciliationWorker) Run(ctx context.Context) {
@@ -165,13 +182,17 @@ func (w *ReconciliationWorker) Run(ctx context.Context) {
 }
 
 func (w *ReconciliationWorker) reconcile(ctx context.Context) {
-	candidates, err := w.store.ListReconciliationCandidates(ctx, w.batch)
+	candidates, err := w.store.ClaimReconciliationCandidates(ctx, w.batch, w.lease)
 	if err != nil {
 		return
 	}
 	for _, candidate := range candidates {
-		if err := w.reconcileOne(ctx, candidate.Allocation); err != nil && ctx.Err() == nil {
-			w.logger.Warn("node allocation reconciliation failed", zap.String("node_id", candidate.Allocation.Node.ID), zap.String("error_type", fmt.Sprintf("%T", err)))
+		reconcileErr := w.reconcileOne(ctx, candidate.Allocation)
+		if reconcileErr != nil && ctx.Err() == nil {
+			w.logger.Warn("node allocation reconciliation failed", zap.String("node_id", candidate.Allocation.Node.ID), zap.String("error_type", fmt.Sprintf("%T", reconcileErr)))
+		}
+		if err := w.store.RescheduleReconciliation(ctx, candidate.Allocation.ID, candidate.ClaimID, w.interval); err != nil && ctx.Err() == nil {
+			w.logger.Warn("node allocation reconciliation reschedule failed", zap.String("node_id", candidate.Allocation.Node.ID), zap.String("error_type", fmt.Sprintf("%T", err)))
 		}
 	}
 }
@@ -268,6 +289,15 @@ func unrevokedNodeIDs(allocations []domain.Allocation) []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+func allocationsMatchOperation(allocations []domain.Allocation, operation domain.Operation, desiredState string) bool {
+	for _, allocation := range allocations {
+		if allocation.DesiredOperationID != operation.ID || allocation.DesiredRevision != operation.DesiredRevision || allocation.DesiredState != desiredState {
+			return false
+		}
+	}
+	return true
 }
 
 type Publisher interface {

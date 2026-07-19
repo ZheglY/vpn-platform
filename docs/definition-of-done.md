@@ -76,11 +76,14 @@ This Definition of Done applies to every implementation task after Stage 0. Stag
 - Provisioning owns a separate database and obtains credential material and immutable placement only through allowlisted mTLS APIs.
 - Provision and revoke commands share a credential sequence cursor; duplicate, collision, stale, cross-topic gap, poison, retry, and replay behavior is tested.
 - Placement atomically chooses one primary and one distinct failover in the paid region and rejects unhealthy nodes or allocation beyond the 80% threshold under concurrency.
-- Provisioning result events are transactional, schema-versioned, secret-free, and match Access's revision and exact revoke-proof contracts.
+- Provisioning result events are transactional, schema-versioned, secret-free, and share one positive credential-owned sequence across all four outcome topics. Access persists a common cursor, defers gaps, and rejects collisions.
+- Provision success separates the exact complete assigned-node proof from usable Happ endpoints. Degraded-to-revoke removes the failed failover assignment as well as the usable primary.
 - Node-agent authenticates provisioning-service, while provisioning pins the exact registered node SPIFFE identity. Health identities cannot mutate desired state.
 - Desired operations are idempotent by operation ID and request hash; stale revisions conflict and absent tombstones prevent delayed restoration.
 - Xray-core source is pinned by version, commit, and archive SHA-256, then rebuilt with pinned fixed security dependencies. Candidate validation, atomic install, process restart, last-known-good rollback, secret-file permissions, image scanning, and the real protocol path have tests.
-- Reconciliation compares control-plane desired state to node actual state, records repaired allocation/capacity state, refuses newer revisions, and never rewrites a published terminal result.
+- Higher-revision recovery atomically rebinds and fences the allocation generation, preserves or re-reserves capacity exactly once, and rejects stale worker writes during revoke/reactivation races.
+- Reconciliation uses durable due times and lease claims, compares control-plane desired state to node actual state, records repaired allocation/capacity state, refuses newer revisions, and cannot starve rows beyond one batch.
 - DLQ notices retain no raw record; replay is topic-allowlisted and verifies the stored payload hash before republish.
-- Local `vpn` Compose proves two node-agents, real Xray validation, VLESS + REALITY traffic, idempotent replay, revoke removal, and rollback behavior.
+- Request cancellation during Xray reload cannot leave the process stopped; candidate startup or last-known-good restoration completes under an independent bounded context.
+- Local `vpn` Compose proves the complete Access command, Kafka, Provisioning, both node-agents, real Xray, outcome, Happ profile, VLESS + REALITY traffic, and terminal revoke path. Direct node mutation alone is insufficient.
 - Migration from zero, PostgreSQL concurrency, contracts, race tests, normal Compose smoke, VPN smoke, service images, and image scans pass before acceptance.

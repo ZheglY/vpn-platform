@@ -25,14 +25,26 @@ export YOOKASSA_SECRET_KEY="${YOOKASSA_SECRET_KEY:-local-compose-yookassa-key}"
 export PAYMENT_RETURN_URL="${PAYMENT_RETURN_URL:-https://example.invalid/payment-return}"
 export COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-2}"
 export COMPOSE_BAKE="${COMPOSE_BAKE:-false}"
-export COMPOSE_PROFILES="${COMPOSE_PROFILES:-core,app}"
+full_vpn="${VPN_SMOKE_FULL_CONTROL_PLANE:-0}"
+profiles=(--profile core --profile app)
+if [[ "$full_vpn" == "1" ]]; then
+  export COMPOSE_PROFILES=core,app,vpn
+  profiles+=(--profile vpn)
+else
+  export COMPOSE_PROFILES="${COMPOSE_PROFILES:-core,app}"
+fi
+vpn_client_name=vpn-stage6-client
+vpn_client_image='ghcr.io/xtls/xray-core:26.3.27@sha256:592ec4d11f656db95598d01e76dbcc6e002d67360b96a5436500a938230f52c7'
 
 bash scripts/dev-mtls.sh
+if [[ "$full_vpn" == "1" ]]; then bash scripts/dev-xray.sh; fi
 
-docker compose --profile core --profile app down -v --remove-orphans
+docker compose "${profiles[@]}" down -v --remove-orphans
 
 cleanup() {
-  docker compose --profile core --profile app down -v
+  docker rm -f "$vpn_client_name" >/dev/null 2>&1 || true
+  rm -f tmp/stage6-client.json
+  docker compose "${profiles[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -76,11 +88,12 @@ wait_redis_processing_key() {
 }
 
 build_services=(identity-migrate identity-service catalog-service billing-service subscription-service access-service yookassa-api telegram-api telegram-bot)
+if [[ "$full_vpn" == "1" ]]; then build_services+=(provisioning-migrate provisioning-service node-agent-primary); fi
 for service in "${build_services[@]}"; do
-  docker compose --profile core --profile app build "$service"
+  docker compose "${profiles[@]}" build "$service"
 done
 
-docker compose --profile core --profile app up -d --no-build
+docker compose "${profiles[@]}" up -d --no-build
 
 containers=(
   vpn-service-postgres-1
@@ -95,6 +108,9 @@ containers=(
   vpn-service-telegram-api-1
   vpn-service-telegram-bot-1
 )
+if [[ "$full_vpn" == "1" ]]; then
+  containers+=(vpn-service-provisioning-service-1 vpn-service-node-agent-primary-1 vpn-service-node-agent-failover-1)
+fi
 
 for _ in $(seq 1 60); do
   all_healthy=true
@@ -113,12 +129,13 @@ done
 for container in "${containers[@]}"; do
   status="$(docker inspect -f '{{.State.Health.Status}}' "$container")"
   if [[ "$status" != "healthy" ]]; then
-    docker compose --profile core --profile app ps
-    docker compose --profile core --profile app logs --tail=200
+    docker compose "${profiles[@]}" ps
+    docker compose "${profiles[@]}" logs --tail=200
     exit 1
   fi
 done
 
+if [[ "$full_vpn" != "1" ]]; then
 docker stop vpn-service-telegram-bot-1 vpn-service-access-service-1 vpn-service-subscription-service-1 vpn-service-billing-service-1 >/dev/null
 BILLING_TEST_DATABASE_URL="postgres://billing_app:${BILLING_DB_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/billing_service?sslmode=disable" \
   go test ./services/billing/internal/postgres -run '^TestIntegration' -count=1
@@ -143,6 +160,7 @@ if [[ "$billing_status" != "healthy" || "$subscription_status" != "healthy" || "
   echo "services did not recover after integration tests: billing=$billing_status subscription=$subscription_status access=$access_status bot=$bot_status" >&2
   exit 1
 fi
+fi
 
 docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9094 --list >/dev/null
 docker compose exec -T identity-service /identity-service healthcheck >/dev/null
@@ -157,8 +175,8 @@ for attempt in $(seq 1 30); do
     break
   fi
   if [[ "$attempt" == "30" ]]; then
-    docker compose --profile core --profile app ps
-    docker compose --profile core --profile app logs --tail=200
+    docker compose "${profiles[@]}" ps
+    docker compose "${profiles[@]}" logs --tail=200
     exit 1
   fi
   sleep 2
@@ -306,9 +324,27 @@ if [[ -z "$access_credential_id" || "$access_provision_published" != "1" ]]; the
   echo "access provisioning request was not created exactly once" >&2
   exit 1
 fi
+if [[ "$full_vpn" == "1" ]]; then
+  for _ in $(seq 1 120); do
+    access_credential_status="$(scalar_sql access_service "SELECT status FROM access_credentials WHERE id='${access_credential_id}'")"
+    provision_outcome_published="$(scalar_sql provisioning_service "SELECT count(*) FROM outbox WHERE topic='access.provision.succeeded.v1' AND state='published' AND aggregate_id='${access_credential_id}'")"
+    access_ready_published="$(scalar_sql access_service "SELECT count(*) FROM outbox WHERE topic='access.ready.v1' AND state='published'")"
+    if [[ "$access_credential_status" == "active" && "$provision_outcome_published" == "1" && "$access_ready_published" == "1" ]]; then break; fi
+    sleep 0.5
+  done
+  assigned_nodes="$(scalar_sql access_service "SELECT count(*) FROM access_assignment_snapshots WHERE credential_id='${access_credential_id}' AND allocation_revision=1")"
+  provisioning_allocations="$(scalar_sql provisioning_service "SELECT count(*) FROM allocations WHERE credential_id='${access_credential_id}' AND state='active'")"
+  if [[ "$access_credential_status" != "active" || "$provision_outcome_published" != "1" || "$access_ready_published" != "1" || "$assigned_nodes" != "2" || "$provisioning_allocations" != "2" ]]; then
+    docker compose logs --tail=100 provisioning-service access-service node-agent-primary node-agent-failover
+    echo "full provisioning did not converge" >&2
+    exit 1
+  fi
+  material_audit_count="$(scalar_sql access_service "SELECT count(*) FROM security_audit_events WHERE credential_id='${access_credential_id}' AND actor_service='provisioning-service' AND action='credential_material.read' AND outcome='succeeded'")"
+  if (( material_audit_count < 1 )); then echo 'full provisioning material read was not audited' >&2; exit 1; fi
+else
 access_operation_id="$(scalar_sql access_service "SELECT id FROM access_operations WHERE kind='provision' LIMIT 1")"
 access_command_event_id="$(scalar_sql access_service "SELECT event_id FROM outbox WHERE topic='access.provision.request.v1' LIMIT 1")"
-provision_result='{"event_id":"51000000-0000-4000-8000-000000000001","event_type":"access.provision.succeeded.v1","schema_version":1,"occurred_at":"2026-07-18T12:00:05Z","producer":"provisioning-service","correlation_id":"51000000-0000-4000-8000-000000000002","causation_id":"'"${access_command_event_id}"'","aggregate_type":"credential","aggregate_id":"'"${access_credential_id}"'","partition_key":"credential:'"${access_credential_id}"'","data":{"operation_id":"'"${access_operation_id}"'","credential_id":"'"${access_credential_id}"'","applied_revision":1,"status":"active","endpoints":[{"node_id":"51000000-0000-4000-8000-000000000003","role":"primary","address":"vpn.example.invalid","port":443,"server_name":"cdn.example.invalid","reality_public_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","short_id":"0011aabb","spider_x":"/","label":"VPN Primary"},{"node_id":"51000000-0000-4000-8000-000000000004","role":"failover","address":"backup.example.invalid","port":443,"server_name":"www.example.invalid","reality_public_key":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","short_id":"2233ccdd","label":"VPN Failover"}],"applied_at":"2026-07-18T12:00:05Z"}}'
+provision_result='{"event_id":"51000000-0000-4000-8000-000000000001","event_type":"access.provision.succeeded.v1","schema_version":1,"occurred_at":"2026-07-18T12:00:05Z","producer":"provisioning-service","correlation_id":"51000000-0000-4000-8000-000000000002","causation_id":"'"${access_command_event_id}"'","aggregate_type":"credential","aggregate_id":"'"${access_credential_id}"'","aggregate_sequence":1,"partition_key":"credential:'"${access_credential_id}"'","data":{"operation_id":"'"${access_operation_id}"'","credential_id":"'"${access_credential_id}"'","applied_revision":1,"status":"active","assigned_node_ids":["51000000-0000-4000-8000-000000000003","51000000-0000-4000-8000-000000000004"],"endpoints":[{"node_id":"51000000-0000-4000-8000-000000000003","role":"primary","address":"vpn.example.invalid","port":443,"server_name":"cdn.example.invalid","reality_public_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","short_id":"0011aabb","spider_x":"/","label":"VPN Primary"},{"node_id":"51000000-0000-4000-8000-000000000004","role":"failover","address":"backup.example.invalid","port":443,"server_name":"www.example.invalid","reality_public_key":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","short_id":"2233ccdd","label":"VPN Failover"}],"applied_at":"2026-07-18T12:00:05Z"}}'
 printf 'credential:%s|%s\n' "$access_credential_id" "$provision_result" | docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic access.provision.succeeded.v1 --reader-property parse.key=true --reader-property 'key.separator=|'
 for _ in $(seq 1 80); do
   access_credential_status="$(scalar_sql access_service "SELECT status FROM access_credentials WHERE id='${access_credential_id}'")"
@@ -326,6 +362,7 @@ if [[ "$access_credential_status" != "active" || "$access_ready_published" != "1
   echo "access provisioning result did not converge: credential=$access_credential_status ready=$access_ready_published inbox=$access_provision_inbox operation=$access_operation_status dead_letters=$access_dead_letter_reasons" >&2
   exit 1
 fi
+fi
 
 issue_json="$(go run ./tools/mtlsprobe/cmd/mtlsprobe POST "https://127.0.0.1:8087/internal/v1/subscriptions/${subscription_id}/subscription-url/issue" secrets/dev-mtls/telegram-bot.crt secrets/dev-mtls/telegram-bot.key secrets/dev-mtls/ca.crt 200 Idempotency-Key smoke-issue-0001 print-body)"
 issued_url="$(printf '%s' "$issue_json" | sed -n 's/.*"subscription_url":"\([^"]*\)".*/\1/p')"
@@ -338,6 +375,11 @@ profile_status="$(curl -sS -D tmp/stage5-profile-headers.txt -o tmp/stage5-profi
 if [[ "$profile_status" != "200" ]] || ! grep -qi '^cache-control: no-store' tmp/stage5-profile-headers.txt || ! grep -qi '^profile-title: VPN Platform' tmp/stage5-profile-headers.txt || ! grep -q '^vless://' tmp/stage5-profile-body.txt; then
   echo "Happ subscription response was not compatible or no-store" >&2
   exit 1
+fi
+vpn_credential_uuid=""
+if [[ "$full_vpn" == "1" ]]; then
+  vpn_credential_uuid="$(sed -n 's#^vless://\([0-9a-fA-F-]\{36\}\)@.*#\1#p' tmp/stage5-profile-body.txt | head -n 1)"
+  if [[ -z "$vpn_credential_uuid" ]]; then echo 'Happ profile did not contain a VLESS credential' >&2; exit 1; fi
 fi
 issued_token="${issued_url##*/}"
 if docker compose logs access-service | grep -Fq "$issued_token"; then
@@ -355,6 +397,53 @@ for malformed_path in "$subscription_base" "$subscription_base/" "$subscription_
   fi
 done
 rm -f tmp/stage5-malformed-headers.txt tmp/stage5-malformed-body.txt
+
+if [[ "$full_vpn" == "1" ]]; then
+  sed -E 's/("id": ")[0-9a-f-]{36}(")/\1'"${vpn_credential_uuid}"'\2/' secrets/dev-xray/smoke-client.json >tmp/stage6-client.json
+  docker run --rm -v "$(pwd)/tmp/stage6-client.json:/etc/xray/client.json:ro" "$vpn_client_image" run -test -config /etc/xray/client.json >/dev/null
+  docker run -d --name "$vpn_client_name" --network vpn-service_vpn-data -p 127.0.0.1:11080:1080 -v "$(pwd)/tmp/stage6-client.json:/etc/xray/client.json:ro" "$vpn_client_image" run -config /etc/xray/client.json >/dev/null
+  vpn_body=''
+  for _ in $(seq 1 40); do
+    vpn_body="$(curl -sS --socks5-hostname 127.0.0.1:11080 --connect-timeout 2 --max-time 5 http://camouflage.local/ 2>/dev/null || true)"
+    if [[ "$vpn_body" == *'local camouflage endpoint'* ]]; then break; fi
+    sleep 0.5
+  done
+  if [[ "$vpn_body" != *'local camouflage endpoint'* ]]; then echo 'full-control-plane VLESS + REALITY request failed' >&2; exit 1; fi
+
+  go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:18443/internal/v1/credentials/${access_credential_id}" secrets/dev-mtls/identity-health.crt secrets/dev-mtls/identity-health.key secrets/dev-mtls/ca.crt 403
+
+  payment_id="$(scalar_sql billing_service 'SELECT id FROM payments LIMIT 1')"
+  order_id="$(scalar_sql billing_service 'SELECT id FROM orders LIMIT 1')"
+  amount_minor="$(scalar_sql billing_service "SELECT amount_minor FROM orders WHERE id='${order_id}'")"
+  currency="$(scalar_sql billing_service "SELECT currency FROM orders WHERE id='${order_id}'")"
+  refunded_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+  refund_id='52000000-0000-4000-8000-000000000001'
+  refund_event='{"event_id":"52000000-0000-4000-8000-000000000002","event_type":"billing.refund.succeeded.v1","schema_version":1,"occurred_at":"'"${refunded_at}"'","producer":"billing-service","correlation_id":"52000000-0000-4000-8000-000000000003","causation_id":null,"aggregate_type":"refund","aggregate_id":"'"${refund_id}"'","partition_key":"user:'"${subscription_user_id}"'","data":{"refund_id":"'"${refund_id}"'","payment_id":"'"${payment_id}"'","order_id":"'"${order_id}"'","user_id":"'"${subscription_user_id}"'","amount_minor":'"${amount_minor}"',"currency":"'"${currency}"'","refund_scope":"full","refunded_at":"'"${refunded_at}"'"}}'
+  printf 'user:%s|%s\n' "$subscription_user_id" "$refund_event" | docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic billing.refund.succeeded.v1 --reader-property parse.key=true --reader-property 'key.separator=|'
+
+  subscription_revoked=''
+  revoke_outcome_published=''
+  revoked_allocations=''
+  for _ in $(seq 1 180); do
+    subscription_revoked="$(scalar_sql subscription_service "SELECT count(*) FROM outbox WHERE topic='subscription.revoked.v1' AND state='published' AND aggregate_id='${subscription_id}'")"
+    access_credential_status="$(scalar_sql access_service "SELECT status FROM access_credentials WHERE id='${access_credential_id}'")"
+    revoke_outcome_published="$(scalar_sql provisioning_service "SELECT count(*) FROM outbox WHERE topic='access.revoke.succeeded.v1' AND state='published' AND aggregate_id='${access_credential_id}'")"
+    revoked_allocations="$(scalar_sql provisioning_service "SELECT count(*) FROM allocations WHERE credential_id='${access_credential_id}' AND state='revoked'")"
+    if [[ "$subscription_revoked" == "1" && "$access_credential_status" == "revoked" && "$revoke_outcome_published" == "1" && "$revoked_allocations" == "2" ]]; then break; fi
+    sleep 0.5
+  done
+  if [[ "$subscription_revoked" != "1" || "$access_credential_status" != "revoked" || "$revoke_outcome_published" != "1" || "$revoked_allocations" != "2" ]]; then
+    docker compose logs --tail=120 subscription-service access-service provisioning-service node-agent-primary node-agent-failover
+    echo 'full revoke did not converge' >&2
+    exit 1
+  fi
+  if curl -sS --socks5-hostname 127.0.0.1:11080 --connect-timeout 3 --max-time 5 http://camouflage.local/ >/dev/null 2>&1; then
+    echo 'revoked full-control-plane credential still passed traffic' >&2
+    exit 1
+  fi
+  docker rm -f "$vpn_client_name" >/dev/null
+  rm -f tmp/stage6-client.json
+fi
 
 out_of_order_webhook='{"type":"notification","event":"payment.canceled","object":{"id":"'"${provider_payment_id}"'","status":"canceled"}}'
 if [[ "$(yookassa_webhook_status "$out_of_order_webhook")" != "200" ]]; then
@@ -386,10 +475,12 @@ go run ./tools/mtlsprobe/cmd/mtlsprobe GET https://127.0.0.1:8084/internal/v1/us
 go run ./tools/mtlsprobe/cmd/mtlsprobe GET https://127.0.0.1:8084/internal/v1/users/00000000-0000-4000-8000-000000000001/orders/00000000-0000-4000-8000-000000000002 secrets/dev-mtls/subscription-service.crt secrets/dev-mtls/subscription-service.key secrets/dev-mtls/ca.crt 404
 go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:8086/internal/v1/users/${subscription_user_id}/subscription" secrets/dev-mtls/telegram-bot.crt secrets/dev-mtls/telegram-bot.key secrets/dev-mtls/ca.crt 200
 go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:8086/internal/v1/users/${subscription_user_id}/subscription" secrets/dev-mtls/identity-health.crt secrets/dev-mtls/identity-health.key secrets/dev-mtls/ca.crt 403
-go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:8087/internal/v1/credentials/${access_credential_id}/provisioning-material" secrets/dev-mtls/provisioning-service.crt secrets/dev-mtls/provisioning-service.key secrets/dev-mtls/ca.crt 200
-go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:8087/internal/v1/credentials/${access_credential_id}/provisioning-material" secrets/dev-mtls/identity-health.crt secrets/dev-mtls/identity-health.key secrets/dev-mtls/ca.crt 403
-material_audit_count="$(scalar_sql access_service "SELECT count(*) FROM security_audit_events WHERE credential_id='${access_credential_id}' AND actor_service='provisioning-service' AND action='credential_material.read' AND outcome='succeeded'")"
-if [[ "$material_audit_count" != "1" ]]; then
-  echo "provisioning material read was not audited exactly once" >&2
-  exit 1
+if [[ "$full_vpn" != "1" ]]; then
+  go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:8087/internal/v1/credentials/${access_credential_id}/provisioning-material" secrets/dev-mtls/provisioning-service.crt secrets/dev-mtls/provisioning-service.key secrets/dev-mtls/ca.crt 200
+  go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:8087/internal/v1/credentials/${access_credential_id}/provisioning-material" secrets/dev-mtls/identity-health.crt secrets/dev-mtls/identity-health.key secrets/dev-mtls/ca.crt 403
+  material_audit_count="$(scalar_sql access_service "SELECT count(*) FROM security_audit_events WHERE credential_id='${access_credential_id}' AND actor_service='provisioning-service' AND action='credential_material.read' AND outcome='succeeded'")"
+  if [[ "$material_audit_count" != "1" ]]; then
+    echo "provisioning material read was not audited exactly once" >&2
+    exit 1
+  fi
 fi

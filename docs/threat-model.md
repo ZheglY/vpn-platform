@@ -280,7 +280,8 @@ Mitigation:
 - Provisioning success locks current credential/operation state and compares entitlement with PostgreSQL time in the same transaction.
 - An elapsed success stores the actual allocation only to atomically start a higher-revision revoke; if revoke already started, a late success can only advance the pending revoke's allocation snapshot and cannot overwrite a newer allocation. It emits no readiness event.
 - Revoke operations capture allocation revision. Success carries desired revision, allocation revision, an explicit all-removed assertion, and unique node IDs.
-- Access requires exact set equality with its revisioned endpoint snapshot. Empty proof is accepted only for zero allocations; partial or duplicate proof cannot become terminal success.
+- Provision success carries the complete assigned-node set separately from usable endpoint snapshots, including an unavailable failover in degraded mode.
+- Access requires exact set equality with its revisioned assignment snapshot. Empty proof is accepted only for zero allocations; partial or duplicate proof cannot become terminal success.
 - Access status derives expiry from PostgreSQL time and cannot report ready after the entitlement boundary.
 - PostgreSQL tests cover delayed success, partial proof, zero-allocation proof, and stale operation results.
 
@@ -301,8 +302,10 @@ Risk: a delayed provision command or reused operation ID re-adds a credential af
 
 Mitigation:
 
+- Provision and revoke command envelopes use `desired_revision` as their shared credential sequence; Access readiness events use only the separate outbox delivery sequence and cannot create a hidden command gap.
 - Provision and revoke topics share one PostgreSQL credential sequence cursor, and operation claims wait for earlier non-terminal commands of that credential.
 - Gaps are deferred without commit; reused operation IDs, stale sequences, and stale revisions become sanitized durable conflicts.
+- A higher revision atomically rebinds the allocation generation and fences all writes by desired operation, revision, state, and allocation revision. Stale workers cannot publish or mutate the new generation.
 - Node-agent journals operation ID with request SHA-256, rejects operation collisions and lower revisions, and persists absent tombstones.
 - Reconciliation refuses to overwrite a node revision newer than the control-plane desired revision.
 
@@ -315,7 +318,8 @@ Mitigation:
 - Node-agent renders allowlisted fields and invokes a fixed pinned Xray binary without a shell.
 - Candidate files and node state use owner-only permissions; REALITY private keys are read from separate secret mounts.
 - `xray run -test -config` must succeed before swap.
-- Failed startup restores and restarts last-known-good; tests cover validation and one-shot runtime failure.
+- Validation observes request cancellation, but stop/install/start and rollback run under an independent bounded consistency context once mutation begins.
+- Failed startup or cancellation during reload restores and restarts last-known-good before return; tests cover validation, one-shot runtime failure, and cancellation during stop.
 - Xray access logging is disabled and process diagnostics are discarded because they may contain configuration details.
 
 ### T21 - Poison Kafka payload becomes a second secret store
@@ -327,6 +331,27 @@ Mitigation:
 - Durable dead-letter state stores only source coordinates, SHA-256, and bounded reason code.
 - Versioned DLQ events contain the same sanitized fields and never the raw record.
 - Replay accepts only provision/revoke source topics, re-reads the original Kafka offset, verifies SHA-256, and republishes without outputting the value.
+
+### T22 - Provisioning outcomes reorder across Kafka topics
+
+Risk: provision and revoke results use four topics. A later result can arrive first, causing Access to reject a valid revoke or apply stale endpoint state.
+
+Mitigation:
+
+- Provisioning allocates one positive outcome sequence per credential across all four topics in the same transaction as terminal state and outbox insertion.
+- The outbox cannot claim a later outcome while a lower credential sequence is unpublished.
+- Access persists one outcome cursor across all four topics; gaps remain unacknowledged and retryable while exact duplicates are no-ops.
+- Reuse of an event ID or applied sequence for different content is a durable conflict, and non-positive sequences fail contract validation.
+
+### T23 - Reconciliation starvation leaves control-plane drift unrepaired
+
+Risk: repeatedly selecting the oldest fixed batch can prevent later allocations from ever being checked, while multiple replicas can duplicate work.
+
+Mitigation:
+
+- PostgreSQL claims due rows with a durable claim ID, lease expiry, bounded batch, and `FOR UPDATE SKIP LOCKED`.
+- Each allocation is independently rescheduled after success or failure; one error does not block the remainder of the batch.
+- Expired claims become eligible after process failure, and integration tests use more allocations than one batch.
 
 ## Initial Security Requirements
 

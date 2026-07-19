@@ -1,6 +1,6 @@
 # Access Delivery and Leaked-Token Response
 
-This runbook covers the Stage 5 access-service. It does not operate VPN nodes or Xray; physical provisioning and revoke reconciliation begin in Stage 6.
+This runbook covers access delivery and its Stage 6 integration with Provisioning. Access does not operate VPN nodes or Xray directly.
 
 ## Safe Signals
 
@@ -23,7 +23,7 @@ Useful state fields from the allowlisted internal API are `access_status`, `prov
 2. Check consumer lag for subscription lifecycle and provisioning outcome topics without dumping records.
 3. Check that one `access.provision.request.v1` outbox row is pending, processing, or published by aggregate count.
 4. If the command is published, hand off to the Stage 6 provisioning runbook. Do not manually mark access active or insert endpoint snapshots.
-5. A terminal `access.provision.failed.v1` leaves the credential failed. Retry policy and operator replay tooling require Stage 6 approval.
+5. A terminal `access.provision.failed.v1` leaves that operation failed. Recovery requires a fresh ordered higher-revision Access command; never reset the terminal operation or allocation rows manually.
 
 If public profile requests return 503 while PostgreSQL and Kafka are healthy, check Redis readiness and the ephemeral rate-limit Lua operation. Do not bypass the limiter in production; restore Redis or drain traffic to a healthy instance.
 
@@ -39,12 +39,15 @@ Access requires every subscription lifecycle `aggregate_sequence` in order even 
 
 An old event with a sequence already owned by another event is a durable conflict and may appear in payload-free dead-letter metadata. Verify producer identity and schema before any approved replay.
 
+Provisioning outcomes use an independent credential-owned sequence across provision/revoke success/failure topics. Diagnose an outcome gap the same way: inspect safe sequence/state metadata in the Provisioning outbox and Access outcome cursor, restore the missing predecessor, and leave the later Kafka offset uncommitted. `access.ready` does not participate in the command sequence; provision/revoke command envelopes use `desired_revision`.
+
 ## Delayed Provisioning and Revoke Proof
 
 - A provisioning success received after entitlement expiry must leave Access `revoking`, emit no `access.ready.v1`, and either create a later-revision revoke command or bind an already pending revoke to the newly confirmed allocation revision.
-- Revoke success is terminal only when desired revision, allocation revision, the explicit complete-removal flag, and the unique node set exactly match the Access snapshot.
+- Provision success stores a complete assigned-node snapshot separately from usable endpoint snapshots. A degraded result therefore keeps the failed failover in the revoke proof even though Happ receives only usable endpoints.
+- Revoke success is terminal only when desired revision, allocation revision, the explicit complete-removal flag, and the unique node set exactly match the Access assignment snapshot.
 - An empty node set is valid for an operation that captured allocation revision zero. Do not synthesize node IDs for a no-op.
-- Partial confirmation remains `revoking`; hand it to the Stage 6 reconciliation procedure once that milestone is approved.
+- Partial confirmation remains `revoking`; hand it to the Provisioning reconciliation procedure.
 
 Every successful provisioning-material response creates a secret-free row in `security_audit_events`. Inspect only action, outcome, actor service, and timestamp during an incident. Never select ciphertext or attach credential material to tickets.
 
@@ -82,7 +85,7 @@ make compose-config
 make compose-smoke
 ```
 
-Compose smoke injects a contract-valid provisioning result, tests mTLS authorization and security audit, one-time issue replay, Happ headers/body, token log redaction, lifecycle ordering, revoke proof, atomic rate limiting, global idempotency, and Access PostgreSQL invariants. It does not prove a live VPN connection.
+Normal Compose smoke injects a contract-valid provisioning result, tests mTLS authorization and security audit, one-time issue replay, Happ headers/body, token log redaction, lifecycle ordering, revoke proof, atomic rate limiting, global idempotency, and Access PostgreSQL invariants. It does not prove a live VPN connection. `make vpn-smoke` separately proves the full Access command through Kafka, Provisioning, both node-agents, real Xray traffic, outcome consumption, Happ delivery, and revoke.
 
 ## Rollback
 

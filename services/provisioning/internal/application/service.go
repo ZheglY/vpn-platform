@@ -53,7 +53,7 @@ func (s *Service) ProcessEvent(ctx context.Context, meta domain.EventMeta, data 
 	if err := strictDecode(data, &command); err != nil {
 		return &ContractError{Code: "invalid_event_data"}
 	}
-	if !uuidPattern.MatchString(meta.EventID) || !uuidPattern.MatchString(meta.AggregateID) || !uuidPattern.MatchString(meta.CorrelationID) || !uuidPattern.MatchString(command.OperationID) || !uuidPattern.MatchString(command.CredentialID) || command.CredentialID != meta.AggregateID || command.DesiredRevision < 1 || meta.AggregateSequence < 1 || meta.PartitionKey != "credential:"+command.CredentialID || meta.OccurredAt.IsZero() {
+	if !uuidPattern.MatchString(meta.EventID) || !uuidPattern.MatchString(meta.AggregateID) || !uuidPattern.MatchString(meta.CorrelationID) || !uuidPattern.MatchString(command.OperationID) || !uuidPattern.MatchString(command.CredentialID) || command.CredentialID != meta.AggregateID || command.DesiredRevision < 1 || meta.AggregateSequence != int64(command.DesiredRevision) || meta.PartitionKey != "credential:"+command.CredentialID || meta.OccurredAt.IsZero() {
 		return &ContractError{Code: "event_invariant_failed"}
 	}
 	if meta.CausationID != nil && !uuidPattern.MatchString(*meta.CausationID) {

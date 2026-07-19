@@ -4,7 +4,7 @@ This runbook covers the Stage 6 local control plane. It does not authorize produ
 
 ## Local Verification
 
-Generate ephemeral material and run the isolated data-plane smoke:
+Generate ephemeral material and run the full local control-plane and data-plane smoke:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-mtls.ps1
@@ -19,8 +19,17 @@ Generated material is under ignored `secrets/dev-mtls` and `secrets/dev-xray` on
 1. Check aggregate operation counts by `state`, `kind`, and bounded `last_error_code`. Do not select credential material or outbox payloads.
 2. Check node health, configured capacity, allocated count, region, and last-seen age. Do not force a node active while heartbeat is absent.
 3. A primary failure remains terminal after bounded retries. A failover exhaustion may publish `degraded` only after primary success.
-4. Restore the dependency or node first. A terminal result cannot be reset in Stage 6; a fresh higher-revision Access command requires the approved Stage 7 admin flow. Do not update operations, allocations, Access state, or Xray JSON manually.
-5. Confirm reconciliation sees the expected revision. It refuses to overwrite a newer node revision by design and cannot turn an already published terminal failure into success.
+4. Restore the dependency or node first. Never reset a terminal operation in place. Recovery uses a fresh ordered higher-revision Access command, which creates a new fenced allocation generation while preserving history. Do not update operations, allocations, Access state, or Xray JSON manually.
+5. Confirm reconciliation sees the expected revision and that its durable claim lease is advancing. It refuses to overwrite a newer node revision by design and cannot turn an already published terminal failure into success.
+
+## Provisioning Outcome Gap
+
+Provision and revoke outcomes share one credential-owned sequence across all four result topics. Access leaves a later outcome unacknowledged until its predecessor applies.
+
+1. Check safe outbox counts by credential ID and `aggregate_sequence`; never print payloads.
+2. Confirm the missing lower sequence is pending, processing, or published. A later outbox row must remain unclaimable while it is unpublished.
+3. Restore the Provisioning outbox publisher or Kafka path, then allow Access to retry the deferred partition.
+4. A reused event ID or sequence with different coordinates is a durable conflict. Stop replay and escalate; do not edit either cursor or commit the Kafka offset manually.
 
 ## Node Heartbeat Loss
 
@@ -36,9 +45,9 @@ New allocations stop before `allocated_clients` reaches 80% of `capacity_limit`.
 ## Xray Reload Failure
 
 1. Node-agent validates candidates with the pinned binary before replacement.
-2. A validation or startup failure leaves or restores `last-known-good.json` and returns a safe `503` without Xray diagnostics.
+2. A validation or startup failure leaves or restores `last-known-good.json` and returns a safe `503` without Xray diagnostics. Cancellation after mutation starts may delay the response until the bounded consistency section has made the candidate or last-known-good process healthy.
 3. Inspect only classified node-agent errors, agent/Xray version, and config revision. Never attach `config.json`, desired-state files, REALITY private keys, or process output.
-4. Correct renderer/configuration code, run unit rollback tests and `make vpn-smoke`, then replay the desired operation.
+4. Correct renderer/configuration code, run cancellation and rollback unit tests plus `make vpn-smoke`, then replay the desired operation.
 
 ## Sanitized DLQ Replay
 

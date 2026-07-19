@@ -3,8 +3,10 @@ package xray
 import (
 	"context"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"slices"
+	"syscall"
 	"testing"
 	"time"
 
@@ -66,6 +68,45 @@ func TestManagerRollsBackOneShotRuntimeFailure(t *testing.T) {
 	}
 }
 
+func TestManagerRestartsLastKnownGoodWhenReloadContextIsCanceled(t *testing.T) {
+	t.Setenv("NODE_AGENT_XRAY_IGNORE_TERM", "1")
+	manager := newTestManager(t)
+	if err := manager.Start(context.Background(), testSnapshot(1)); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	before, err := os.ReadFile(manager.currentPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	validatedMarker := filepath.Join(t.TempDir(), "candidate-validated")
+	t.Setenv("NODE_AGENT_XRAY_VALIDATED_MARKER", validatedMarker)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		for {
+			if _, err := os.Stat(validatedMarker); err == nil {
+				time.Sleep(20 * time.Millisecond)
+				cancel()
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	started := time.Now()
+	_ = manager.Apply(ctx, testSnapshot(2))
+	if time.Since(started) > 2*time.Second {
+		t.Fatal("canceled reload did not return within its consistency bound")
+	}
+	after, err := os.ReadFile(manager.currentPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(before, after) || !manager.Healthy() {
+		t.Fatal("canceled reload did not preserve a healthy last-known-good process")
+	}
+}
+
 func newTestManager(t *testing.T) *Manager {
 	t.Helper()
 	t.Setenv("NODE_AGENT_XRAY_HELPER", "1")
@@ -84,10 +125,16 @@ func testSnapshot(revision int64) domain.Snapshot {
 }
 
 func runHelperProcess() {
+	if os.Getenv("NODE_AGENT_XRAY_IGNORE_TERM") == "1" {
+		signal.Ignore(syscall.SIGTERM)
+	}
 	args := os.Args[1:]
 	if slices.Contains(args, "-test") {
 		if os.Getenv("NODE_AGENT_XRAY_VALIDATE_FAIL") == "1" {
 			os.Exit(1)
+		}
+		if marker := os.Getenv("NODE_AGENT_XRAY_VALIDATED_MARKER"); marker != "" {
+			_ = os.WriteFile(marker, []byte("validated"), 0o600)
 		}
 		return
 	}

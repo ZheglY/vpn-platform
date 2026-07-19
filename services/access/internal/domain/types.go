@@ -14,6 +14,7 @@ var (
 	ErrIdempotencyConflict  = errors.New("idempotency key conflicts with request")
 	ErrDurableStateConflict = errors.New("event conflicts with durable access state")
 	ErrLifecycleSequenceGap = errors.New("subscription lifecycle sequence gap")
+	ErrOutcomeSequenceGap   = errors.New("provisioning outcome sequence gap")
 )
 
 const (
@@ -76,6 +77,7 @@ type ProvisionSucceeded struct {
 	CredentialID    string             `json:"credential_id"`
 	AppliedRevision int                `json:"applied_revision"`
 	Status          string             `json:"status"`
+	AssignedNodeIDs []string           `json:"assigned_node_ids"`
 	Endpoints       []EndpointSnapshot `json:"endpoints"`
 	AppliedAt       time.Time          `json:"applied_at"`
 }

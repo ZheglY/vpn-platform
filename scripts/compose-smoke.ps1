@@ -30,20 +30,35 @@ Set-DefaultEnv "YOOKASSA_SECRET_KEY" "local-compose-yookassa-key"
 Set-DefaultEnv "PAYMENT_RETURN_URL" "https://example.invalid/payment-return"
 Set-DefaultEnv "COMPOSE_PARALLEL_LIMIT" "2"
 Set-DefaultEnv "COMPOSE_BAKE" "false"
-Set-DefaultEnv "COMPOSE_PROFILES" "core,app"
+Set-DefaultEnv "GOCACHE" "D:\Work\Projects\dev\go-work\cache"
+Set-DefaultEnv "GOTMPDIR" "D:\Work\Projects\dev\go-work\tmp"
+Set-DefaultEnv "TEMP" "D:\Work\Projects\dev\tmp"
+Set-DefaultEnv "TMP" "D:\Work\Projects\dev\tmp"
+$fullVPN = [Environment]::GetEnvironmentVariable("VPN_SMOKE_FULL_CONTROL_PLANE") -eq "1"
+if ($fullVPN) {
+    [Environment]::SetEnvironmentVariable("COMPOSE_PROFILES", "core,app,vpn", "Process")
+} else {
+    Set-DefaultEnv "COMPOSE_PROFILES" "core,app"
+}
+$profiles = @("--profile", "core", "--profile", "app")
+if ($fullVPN) { $profiles += @("--profile", "vpn") }
+$vpnClientName = "vpn-stage6-client"
+$vpnClientImage = "ghcr.io/xtls/xray-core:26.3.27@sha256:592ec4d11f656db95598d01e76dbcc6e002d67360b96a5436500a938230f52c7"
 
 $goImage = "golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2"
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$vpnClientConfig = Join-Path $repo "tmp\stage6-client.json"
 
 function Invoke-MTLSProbe([string[]]$arguments) {
     $mappedArguments = foreach ($argument in $arguments) {
-        $argument.Replace("https://127.0.0.1:8080", "https://identity-service.local:8080").Replace("https://127.0.0.1:8084", "https://billing-service.local:8084").Replace("https://127.0.0.1:8086", "https://subscription-service.local:8086").Replace("https://127.0.0.1:8087", "https://access-service.local:8087")
+        $argument.Replace("https://127.0.0.1:8080", "https://identity-service.local:8080").Replace("https://127.0.0.1:8084", "https://billing-service.local:8084").Replace("https://127.0.0.1:8086", "https://subscription-service.local:8086").Replace("https://127.0.0.1:8087", "https://access-service.local:8087").Replace("https://127.0.0.1:18443", "https://node-agent-primary.local:18443")
     }
     $result = & docker run --rm `
         --add-host "identity-service.local:host-gateway" `
         --add-host "billing-service.local:host-gateway" `
         --add-host "subscription-service.local:host-gateway" `
         --add-host "access-service.local:host-gateway" `
+        --add-host "node-agent-primary.local:host-gateway" `
         -v "$($repo):/src" `
         -v "vpn-service-go-mod-cache:/go/pkg/mod" `
         -v "vpn-service-go-build-cache:/root/.cache/go-build" `
@@ -126,25 +141,31 @@ function Wait-RedisProcessingKey([int64]$updateID) {
 }
 
 try {
+	New-Item -ItemType Directory -Force -Path $env:GOCACHE, $env:GOTMPDIR, $env:TEMP | Out-Null
     & powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-mtls.ps1
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
+	if ($fullVPN) {
+		& powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-xray.ps1
+		if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+	}
 
-    docker compose --profile core --profile app down -v --remove-orphans
+    docker compose @profiles down -v --remove-orphans
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
 
     $buildServices = @("identity-migrate", "identity-service", "catalog-service", "billing-service", "subscription-service", "access-service", "yookassa-api", "telegram-api", "telegram-bot")
+	if ($fullVPN) { $buildServices += @("provisioning-migrate", "provisioning-service", "node-agent-primary") }
     foreach ($service in $buildServices) {
-        docker compose --profile core --profile app build $service
+        docker compose @profiles build $service
         if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
         }
     }
 
-    docker compose --profile core --profile app up -d --no-build
+    docker compose @profiles up -d --no-build
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
@@ -162,6 +183,9 @@ try {
         "vpn-service-telegram-api-1",
         "vpn-service-telegram-bot-1"
     )
+	if ($fullVPN) {
+		$containers += @("vpn-service-provisioning-service-1", "vpn-service-node-agent-primary-1", "vpn-service-node-agent-failover-1")
+	}
     foreach ($attempt in 1..60) {
         $statuses = @()
         foreach ($container in $containers) {
@@ -171,12 +195,13 @@ try {
             break
         }
         if ($attempt -eq 60) {
-            docker compose --profile core --profile app ps
+            docker compose @profiles ps
             throw "Compose services did not become healthy: $($statuses -join ', ')"
         }
         Start-Sleep -Seconds 2
     }
 
+    if (-not $fullVPN) {
     docker stop "vpn-service-telegram-bot-1" "vpn-service-access-service-1" "vpn-service-subscription-service-1" "vpn-service-billing-service-1" | Out-Null
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
@@ -240,6 +265,7 @@ try {
             throw "Services did not recover after integration tests: billing=$billingStatus subscription=$subscriptionStatus access=$accessStatus bot=$botStatus"
         }
         Start-Sleep -Seconds 2
+    }
     }
 
     docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9094 --list | Out-Null
@@ -413,6 +439,23 @@ try {
     if ([string]::IsNullOrWhiteSpace($accessCredentialID) -or $accessProvisionPublished -ne "1") {
         throw "access provisioning request was not created exactly once"
     }
+    if ($fullVPN) {
+        foreach ($attempt in 1..120) {
+            $accessCredentialStatus = Invoke-ScalarSQL "access_service" "SELECT status FROM access_credentials WHERE id='$accessCredentialID'"
+            $provisionOutcomePublished = Invoke-ScalarSQL "provisioning_service" "SELECT count(*) FROM outbox WHERE topic='access.provision.succeeded.v1' AND state='published' AND aggregate_id='$accessCredentialID'"
+            $accessReadyPublished = Invoke-ScalarSQL "access_service" "SELECT count(*) FROM outbox WHERE topic='access.ready.v1' AND state='published'"
+            if (($accessCredentialStatus -eq "active" -or $accessCredentialStatus -eq "degraded") -and $provisionOutcomePublished -eq "1" -and $accessReadyPublished -eq "1") { break }
+            Start-Sleep -Milliseconds 500
+        }
+        $assignedNodes = Invoke-ScalarSQL "access_service" "SELECT count(*) FROM access_assignment_snapshots WHERE credential_id='$accessCredentialID' AND allocation_revision=1"
+        $provisioningAllocations = Invoke-ScalarSQL "provisioning_service" "SELECT count(*) FROM allocations WHERE credential_id='$accessCredentialID' AND state='active'"
+        if ($accessCredentialStatus -ne "active" -or $provisionOutcomePublished -ne "1" -or $accessReadyPublished -ne "1" -or $assignedNodes -ne "2" -or $provisioningAllocations -ne "2") {
+            docker compose logs --tail=100 provisioning-service access-service node-agent-primary node-agent-failover
+            throw "full provisioning did not converge: credential=$accessCredentialStatus outcome=$provisionOutcomePublished ready=$accessReadyPublished assigned=$assignedNodes allocations=$provisioningAllocations"
+        }
+        $materialAuditCount = Invoke-ScalarSQL "access_service" "SELECT count(*) FROM security_audit_events WHERE credential_id='$accessCredentialID' AND actor_service='provisioning-service' AND action='credential_material.read' AND outcome='succeeded'"
+        if ([int]$materialAuditCount -lt 1) { throw "full provisioning material read was not audited" }
+    } else {
     $accessOperationID = Invoke-ScalarSQL "access_service" "SELECT id FROM access_operations WHERE kind='provision' LIMIT 1"
     $accessCommandEventID = Invoke-ScalarSQL "access_service" "SELECT event_id FROM outbox WHERE topic='access.provision.request.v1' LIMIT 1"
     $provisionResult = @{
@@ -425,12 +468,14 @@ try {
         causation_id = $accessCommandEventID
         aggregate_type = "credential"
         aggregate_id = $accessCredentialID
+        aggregate_sequence = 1
         partition_key = "credential:$accessCredentialID"
         data = @{
             operation_id = $accessOperationID
             credential_id = $accessCredentialID
             applied_revision = 1
             status = "active"
+            assigned_node_ids = @("51000000-0000-4000-8000-000000000003", "51000000-0000-4000-8000-000000000004")
             endpoints = @(
                 @{ node_id = "51000000-0000-4000-8000-000000000003"; role = "primary"; address = "vpn.example.invalid"; port = 443; server_name = "cdn.example.invalid"; reality_public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"; short_id = "0011aabb"; spider_x = "/"; label = "VPN Primary" },
                 @{ node_id = "51000000-0000-4000-8000-000000000004"; role = "failover"; address = "backup.example.invalid"; port = 443; server_name = "www.example.invalid"; reality_public_key = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"; short_id = "2233ccdd"; label = "VPN Failover" }
@@ -459,6 +504,7 @@ try {
         docker compose logs --tail=80 access-service
         throw "access provisioning result did not converge: credential=$accessCredentialStatus ready=$accessReadyPublished inbox=$accessProvisionInbox operation=$accessOperationStatus dead_letters=$accessDeadLetterReasons"
     }
+    }
 
     $issueJSON = Invoke-MTLSProbe @("POST", "https://127.0.0.1:8087/internal/v1/subscriptions/$subscriptionID/subscription-url/issue", "secrets/dev-mtls/telegram-bot.crt", "secrets/dev-mtls/telegram-bot.key", "secrets/dev-mtls/ca.crt", "200", "Idempotency-Key", "smoke-issue-0001", "print-body")
     $issuedURL = ($issueJSON | ConvertFrom-Json).subscription_url
@@ -472,6 +518,12 @@ try {
     if ($profileStatus -ne "200" -or !(Select-String -Path $profileHeaders -Pattern '^Cache-Control: no-store' -Quiet) -or !(Select-String -Path $profileHeaders -Pattern '^profile-title: VPN Platform' -Quiet) -or !(Select-String -Path $profileBody -Pattern '^vless://' -Quiet)) {
         throw "Happ subscription response was not compatible or no-store"
     }
+	$vpnCredentialUUID = ""
+	if ($fullVPN) {
+		$profileText = Get-Content -Raw $profileBody
+		if ($profileText -notmatch 'vless://([0-9a-fA-F-]{36})@') { throw "Happ profile did not contain a VLESS credential" }
+		$vpnCredentialUUID = $Matches[1]
+	}
     $issuedToken = $issuedURL.Substring($issuedURL.LastIndexOf('/') + 1)
     $accessLogs = docker compose logs access-service
     if ("$accessLogs".Contains($issuedToken)) {
@@ -488,6 +540,62 @@ try {
             throw "malformed subscription path did not use the generic no-store 404"
         }
         Remove-Item $malformedHeaders, $malformedBody -Force
+    }
+
+    if ($fullVPN) {
+        $clientConfig = Get-Content -Raw "secrets/dev-xray/smoke-client.json" | ConvertFrom-Json
+        $clientConfig.outbounds[0].settings.id = $vpnCredentialUUID
+        [System.IO.File]::WriteAllText($vpnClientConfig, ($clientConfig | ConvertTo-Json -Depth 12), [System.Text.UTF8Encoding]::new($false))
+        docker run --rm -v "$($vpnClientConfig):/etc/xray/client.json:ro" $vpnClientImage run -test -config /etc/xray/client.json | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "generated Xray client configuration is invalid" }
+        docker run -d --name $vpnClientName --network vpn-service_vpn-data -p "127.0.0.1:11080:1080" -v "$($vpnClientConfig):/etc/xray/client.json:ro" $vpnClientImage run -config /etc/xray/client.json | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "start Stage 6 Xray client failed" }
+        $vpnBody = ""
+        foreach ($attempt in 1..40) {
+            $vpnBody = & curl.exe -sS --socks5-hostname 127.0.0.1:11080 --connect-timeout 2 --max-time 5 http://camouflage.local/ 2>$null
+            if ($LASTEXITCODE -eq 0 -and "$vpnBody" -match "local camouflage endpoint") { break }
+            Start-Sleep -Milliseconds 500
+        }
+        if ("$vpnBody" -notmatch "local camouflage endpoint") { throw "full-control-plane VLESS + REALITY request failed" }
+
+        Invoke-MTLSProbe @("GET", "https://127.0.0.1:18443/internal/v1/credentials/$accessCredentialID", "secrets/dev-mtls/identity-health.crt", "secrets/dev-mtls/identity-health.key", "secrets/dev-mtls/ca.crt", "403") | Out-Null
+
+        $paymentID = Invoke-ScalarSQL "billing_service" "SELECT id FROM payments LIMIT 1"
+        $orderID = Invoke-ScalarSQL "billing_service" "SELECT id FROM orders LIMIT 1"
+        $amountMinor = [int64](Invoke-ScalarSQL "billing_service" "SELECT amount_minor FROM orders WHERE id='$orderID'")
+        $currency = Invoke-ScalarSQL "billing_service" "SELECT currency FROM orders WHERE id='$orderID'"
+        $refundedAt = (Get-Date).ToUniversalTime().ToString("o")
+        $refundID = "52000000-0000-4000-8000-000000000001"
+        $refundEvent = @{
+            event_id = "52000000-0000-4000-8000-000000000002"; event_type = "billing.refund.succeeded.v1"; schema_version = 1
+            occurred_at = $refundedAt; producer = "billing-service"; correlation_id = "52000000-0000-4000-8000-000000000003"; causation_id = $null
+            aggregate_type = "refund"; aggregate_id = $refundID; partition_key = "user:$subscriptionUserID"
+            data = @{ refund_id = $refundID; payment_id = $paymentID; order_id = $orderID; user_id = $subscriptionUserID; amount_minor = $amountMinor; currency = $currency; refund_scope = "full"; refunded_at = $refundedAt }
+        } | ConvertTo-Json -Compress -Depth 6
+        $refundRecord = "user:$subscriptionUserID|$refundEvent`n"
+        $refundRecordBase64 = [Convert]::ToBase64String([System.Text.UTF8Encoding]::new($false).GetBytes($refundRecord))
+        docker compose exec -T -e "KAFKA_RECORD_BASE64=$refundRecordBase64" kafka sh -c 'printf %s $KAFKA_RECORD_BASE64 | base64 -d | /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic billing.refund.succeeded.v1 --reader-property parse.key=true --reader-property key.separator=\|'
+        if ($LASTEXITCODE -ne 0) { throw "publish Stage 6 terminal fact failed" }
+
+        foreach ($attempt in 1..180) {
+            $subscriptionRevoked = Invoke-ScalarSQL "subscription_service" "SELECT count(*) FROM outbox WHERE topic='subscription.revoked.v1' AND state='published' AND aggregate_id='$subscriptionID'"
+            $accessCredentialStatus = Invoke-ScalarSQL "access_service" "SELECT status FROM access_credentials WHERE id='$accessCredentialID'"
+            $revokeOutcomePublished = Invoke-ScalarSQL "provisioning_service" "SELECT count(*) FROM outbox WHERE topic='access.revoke.succeeded.v1' AND state='published' AND aggregate_id='$accessCredentialID'"
+            $revokedAllocations = Invoke-ScalarSQL "provisioning_service" "SELECT count(*) FROM allocations WHERE credential_id='$accessCredentialID' AND state='revoked'"
+            if ($subscriptionRevoked -eq "1" -and $accessCredentialStatus -eq "revoked" -and $revokeOutcomePublished -eq "1" -and $revokedAllocations -eq "2") { break }
+            Start-Sleep -Milliseconds 500
+        }
+        if ($subscriptionRevoked -ne "1" -or $accessCredentialStatus -ne "revoked" -or $revokeOutcomePublished -ne "1" -or $revokedAllocations -ne "2") {
+            docker compose logs --tail=120 subscription-service access-service provisioning-service node-agent-primary node-agent-failover
+            throw "full revoke did not converge: subscription=$subscriptionRevoked access=$accessCredentialStatus outcome=$revokeOutcomePublished allocations=$revokedAllocations"
+        }
+        $requestPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        & curl.exe -sS --socks5-hostname 127.0.0.1:11080 --connect-timeout 3 --max-time 5 http://camouflage.local/ 2>$null | Out-Null
+        $revokedExitCode = $LASTEXITCODE
+        $ErrorActionPreference = $requestPreference
+        if ($revokedExitCode -eq 0) { throw "revoked full-control-plane credential still passed traffic" }
+        Remove-Item $vpnClientConfig -Force
     }
 
     $outOfOrderWebhook = '{"type":"notification","event":"payment.canceled","object":{"id":"' + $providerPaymentID + '","status":"canceled"}}'
@@ -538,12 +646,17 @@ try {
     Invoke-MTLSProbe @("GET", "https://127.0.0.1:8084/internal/v1/users/00000000-0000-4000-8000-000000000001/orders/00000000-0000-4000-8000-000000000002", "secrets/dev-mtls/subscription-service.crt", "secrets/dev-mtls/subscription-service.key", "secrets/dev-mtls/ca.crt", "404") | Out-Null
     Invoke-MTLSProbe @("GET", "https://127.0.0.1:8086/internal/v1/users/$subscriptionUserID/subscription", "secrets/dev-mtls/telegram-bot.crt", "secrets/dev-mtls/telegram-bot.key", "secrets/dev-mtls/ca.crt", "200") | Out-Null
     Invoke-MTLSProbe @("GET", "https://127.0.0.1:8086/internal/v1/users/$subscriptionUserID/subscription", "secrets/dev-mtls/identity-health.crt", "secrets/dev-mtls/identity-health.key", "secrets/dev-mtls/ca.crt", "403") | Out-Null
-    Invoke-MTLSProbe @("GET", "https://127.0.0.1:8087/internal/v1/credentials/$accessCredentialID/provisioning-material", "secrets/dev-mtls/provisioning-service.crt", "secrets/dev-mtls/provisioning-service.key", "secrets/dev-mtls/ca.crt", "200") | Out-Null
-    Invoke-MTLSProbe @("GET", "https://127.0.0.1:8087/internal/v1/credentials/$accessCredentialID/provisioning-material", "secrets/dev-mtls/identity-health.crt", "secrets/dev-mtls/identity-health.key", "secrets/dev-mtls/ca.crt", "403") | Out-Null
-    $materialAuditCount = Invoke-ScalarSQL "access_service" "SELECT count(*) FROM security_audit_events WHERE credential_id='$accessCredentialID' AND actor_service='provisioning-service' AND action='credential_material.read' AND outcome='succeeded'"
-    if ($materialAuditCount -ne "1") {
-        throw "provisioning material read was not audited exactly once"
+    if (-not $fullVPN) {
+        Invoke-MTLSProbe @("GET", "https://127.0.0.1:8087/internal/v1/credentials/$accessCredentialID/provisioning-material", "secrets/dev-mtls/provisioning-service.crt", "secrets/dev-mtls/provisioning-service.key", "secrets/dev-mtls/ca.crt", "200") | Out-Null
+        Invoke-MTLSProbe @("GET", "https://127.0.0.1:8087/internal/v1/credentials/$accessCredentialID/provisioning-material", "secrets/dev-mtls/identity-health.crt", "secrets/dev-mtls/identity-health.key", "secrets/dev-mtls/ca.crt", "403") | Out-Null
+        $materialAuditCount = Invoke-ScalarSQL "access_service" "SELECT count(*) FROM security_audit_events WHERE credential_id='$accessCredentialID' AND actor_service='provisioning-service' AND action='credential_material.read' AND outcome='succeeded'"
+        if ($materialAuditCount -ne "1") { throw "provisioning material read was not audited exactly once" }
     }
 } finally {
-    docker compose --profile core --profile app down -v
+    $cleanupPreference = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    docker rm -f $vpnClientName 2>$null | Out-Null
+    if (Test-Path $vpnClientConfig) { Remove-Item $vpnClientConfig -Force }
+    docker compose @profiles down -v --remove-orphans
+    $ErrorActionPreference = $cleanupPreference
 }

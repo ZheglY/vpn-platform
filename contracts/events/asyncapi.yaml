@@ -341,7 +341,7 @@ components:
       x-dlq: access.provision.request.v1.dlq
       x-terminal-failure: primary node failed or operation exhausted retries
       x-secret-policy: No VLESS UUID, subscription token, or node private key in Kafka.
-      x-ordering: aggregate_sequence is credential-owned; provisioning must reject stale desired_revision or sequence
+      x-ordering: aggregate_sequence equals desired_revision and is credential-owned across provision and revoke commands; provisioning rejects mismatch, gaps, and stale values
     AccessRevokeRequestV1:
       name: access.revoke.request.v1
       payload:
@@ -359,7 +359,7 @@ components:
       x-command-timeout: PT60S
       x-retry: retry until removed from all assigned nodes or terminal escalation
       x-dlq: access.revoke.request.v1.dlq
-      x-ordering: aggregate_sequence is credential-owned; provisioning must reject stale desired_revision or sequence
+      x-ordering: aggregate_sequence equals desired_revision and is credential-owned across provision and revoke commands; provisioning rejects mismatch, gaps, and stale values
     AccessProvisionRequestDeadLetterV1:
       name: access.provision.request.v1.dlq
       payload:
@@ -402,6 +402,8 @@ components:
       x-json-schema: schemas/access.provision.succeeded.v1.schema.json
       x-partition-key: credential:{credential_id}
       x-consumers: [access-service]
+      x-ordering: aggregate_sequence is provisioning-owned across all four outcome topics; Access defers gaps without committing them
+      x-assignment-proof: assigned_node_ids is the complete allocation; endpoints contains only usable profile endpoints
     AccessProvisionFailedV1:
       name: access.provision.failed.v1
       payload:
@@ -416,6 +418,7 @@ components:
       x-json-schema: schemas/access.provision.failed.v1.schema.json
       x-partition-key: credential:{credential_id}
       x-consumers: [access-service, ops]
+      x-ordering: aggregate_sequence is provisioning-owned across all four outcome topics; Access defers gaps without committing them
     AccessRevokeSucceededV1:
       name: access.revoke.succeeded.v1
       payload:
@@ -431,6 +434,7 @@ components:
       x-partition-key: credential:{credential_id}
       x-consumers: [access-service, notification-service]
       x-terminal-proof: desired_revision and allocation_revision must match and node_ids must exactly cover all assigned nodes; an empty unique set confirms zero allocations
+      x-ordering: aggregate_sequence is provisioning-owned across all four outcome topics; Access defers gaps without committing them
     AccessRevokeFailedV1:
       name: access.revoke.failed.v1
       payload:
@@ -446,6 +450,7 @@ components:
       x-partition-key: credential:{credential_id}
       x-consumers: [access-service, ops]
       x-terminal-failure: failed after bounded retries; requires operator escalation and reconciliation
+      x-ordering: aggregate_sequence is provisioning-owned across all four outcome topics; Access defers gaps without committing them
     AccessReadyV1:
       name: access.ready.v1
       title: VPN access is ready for user delivery
@@ -659,6 +664,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/Envelope'
         - type: object
+          required: [aggregate_sequence]
           properties:
             event_type:
               const: access.provision.succeeded.v1
@@ -674,6 +680,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/Envelope'
         - type: object
+          required: [aggregate_sequence]
           properties:
             event_type:
               const: access.provision.failed.v1
@@ -689,6 +696,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/Envelope'
         - type: object
+          required: [aggregate_sequence]
           properties:
             event_type:
               const: access.revoke.succeeded.v1
@@ -704,6 +712,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/Envelope'
         - type: object
+          required: [aggregate_sequence]
           properties:
             event_type:
               const: access.revoke.failed.v1
@@ -882,7 +891,7 @@ components:
           minimum: 1
     AccessProvisionSucceededData:
       type: object
-      required: [operation_id, credential_id, applied_revision, status, endpoints, applied_at]
+      required: [operation_id, credential_id, applied_revision, status, assigned_node_ids, endpoints, applied_at]
       additionalProperties: false
       properties:
         operation_id:
@@ -897,6 +906,15 @@ components:
         status:
           type: string
           enum: [active, degraded]
+        assigned_node_ids:
+          type: array
+          minItems: 2
+          maxItems: 2
+          uniqueItems: true
+          description: Complete immutable allocation proof, including nodes without a usable endpoint.
+          items:
+            type: string
+            format: uuid
         endpoints:
           type: array
           minItems: 1

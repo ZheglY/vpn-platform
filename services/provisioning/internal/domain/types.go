@@ -97,6 +97,7 @@ type Allocation struct {
 
 type ReconciliationCandidate struct {
 	Allocation Allocation
+	ClaimID    string
 }
 
 type Endpoint struct {
@@ -192,7 +193,8 @@ type Store interface {
 	ListNodes(context.Context) ([]Node, error)
 	RecordNodeHealth(context.Context, AgentStatus, time.Duration) error
 	MarkNodeOffline(context.Context, string) error
-	ListReconciliationCandidates(context.Context, int) ([]ReconciliationCandidate, error)
+	ClaimReconciliationCandidates(context.Context, int, time.Duration) ([]ReconciliationCandidate, error)
+	RescheduleReconciliation(context.Context, string, string, time.Duration) error
 }
 
 type AccessClient interface {

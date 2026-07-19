@@ -56,8 +56,15 @@ type reconciliationStore struct {
 	revoked    int
 }
 
-func (s *reconciliationStore) ListReconciliationCandidates(context.Context, int) ([]domain.ReconciliationCandidate, error) {
+func (s *reconciliationStore) ClaimReconciliationCandidates(context.Context, int, time.Duration) ([]domain.ReconciliationCandidate, error) {
+	for index := range s.candidates {
+		s.candidates[index].ClaimID = "68000000-0000-4000-8000-000000000001"
+	}
 	return s.candidates, nil
+}
+
+func (s *reconciliationStore) RescheduleReconciliation(context.Context, string, string, time.Duration) error {
+	return nil
 }
 
 func (s *reconciliationStore) MarkAllocationApplied(context.Context, string, string, int64) error {

@@ -80,33 +80,46 @@ func (m *Manager) Apply(ctx context.Context, snapshot domain.Snapshot) error {
 	if err := m.validate(ctx, candidate); err != nil {
 		return err
 	}
-	if err := m.stopLocked(ctx); err != nil {
-		return fmt.Errorf("stop Xray before reload")
+	consistencyBound := 2*m.config.ReloadTimeout + 2*m.config.StartupGrace
+	consistencyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), consistencyBound)
+	defer cancel()
+	if err := m.stopLocked(consistencyCtx); err != nil {
+		if m.restoreCurrentLocked() {
+			return fmt.Errorf("stop Xray before reload; last-known-good restored")
+		}
+		return fmt.Errorf("stop Xray before reload and restore last-known-good")
 	}
 	current, backup := m.currentPath(), m.backupPath()
 	_ = os.Remove(backup)
 	if err := os.Rename(current, backup); err != nil {
-		_ = m.startLocked()
+		_ = m.restoreCurrentLocked()
 		return fmt.Errorf("preserve last-known-good Xray configuration: %w", err)
 	}
 	if err := os.Rename(candidate, current); err != nil {
 		_ = os.Rename(backup, current)
-		_ = m.startLocked()
+		_ = m.restoreCurrentLocked()
 		return fmt.Errorf("install Xray candidate: %w", err)
 	}
 	if err := m.startLocked(); err == nil && m.waitHealthyLocked(m.config.StartupGrace) {
 		_ = os.Remove(backup)
 		return nil
 	}
-	_ = m.stopLocked(context.Background())
+	_ = m.stopLocked(consistencyCtx)
 	_ = os.Remove(current)
 	if err := os.Rename(backup, current); err != nil {
 		return fmt.Errorf("xray reload and rollback failed")
 	}
-	if err := m.startLocked(); err != nil || !m.waitHealthyLocked(m.config.StartupGrace) {
+	if !m.restoreCurrentLocked() {
 		return fmt.Errorf("xray reload and rollback failed")
 	}
 	return fmt.Errorf("xray reload failed; last-known-good restored")
+}
+
+func (m *Manager) restoreCurrentLocked() bool {
+	if err := m.startLocked(); err != nil {
+		return false
+	}
+	return m.waitHealthyLocked(m.config.StartupGrace)
 }
 
 func (m *Manager) Healthy() bool {

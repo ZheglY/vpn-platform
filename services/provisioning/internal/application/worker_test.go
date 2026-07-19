@@ -69,8 +69,8 @@ type operationStore struct {
 
 func newOperationStore() *operationStore {
 	return &operationStore{allocations: []domain.Allocation{
-		{ID: "69000000-0000-4000-8000-000000000001", CredentialID: "62000000-0000-4000-8000-000000000001", Role: "primary", State: "pending", Node: domain.Node{ID: "61000000-0000-4000-8000-000000000001"}},
-		{ID: "69000000-0000-4000-8000-000000000002", CredentialID: "62000000-0000-4000-8000-000000000001", Role: "failover", State: "pending", Node: domain.Node{ID: "61000000-0000-4000-8000-000000000002"}},
+		{ID: "69000000-0000-4000-8000-000000000001", CredentialID: "62000000-0000-4000-8000-000000000001", DesiredOperationID: "63000000-0000-4000-8000-000000000001", Role: "primary", Protocol: "vless_reality", DesiredRevision: 1, DesiredState: "present", AllocationRevision: 1, State: "pending", Node: domain.Node{ID: "61000000-0000-4000-8000-000000000001"}},
+		{ID: "69000000-0000-4000-8000-000000000002", CredentialID: "62000000-0000-4000-8000-000000000001", DesiredOperationID: "63000000-0000-4000-8000-000000000001", Role: "failover", Protocol: "vless_reality", DesiredRevision: 1, DesiredState: "present", AllocationRevision: 1, State: "pending", Node: domain.Node{ID: "61000000-0000-4000-8000-000000000002"}},
 	}}
 }
 

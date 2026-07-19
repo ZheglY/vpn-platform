@@ -65,6 +65,19 @@ func TestProvisionSuccessRejectsReadyWithoutExpectedTopology(t *testing.T) {
 	}
 }
 
+func TestProvisionSuccessKeepsFullAssignmentSeparateFromDegradedEndpoints(t *testing.T) {
+	store := &fakeStore{}
+	service, _ := newTestService(t, store)
+	meta := domain.EventMeta{EventType: "access.provision.succeeded.v1", AggregateID: "018f0e61-bca5-7a40-a06f-e4c0f53128ad"}
+	data := []byte(`{"operation_id":"018f0e61-bca5-7a40-a06f-e4c0f53128ae","credential_id":"018f0e61-bca5-7a40-a06f-e4c0f53128ad","applied_revision":1,"status":"degraded","assigned_node_ids":["018f0e61-bca5-7a40-a06f-e4c0f53128af","018f0e61-bca5-7a40-a06f-e4c0f53128b0"],"endpoints":[{"node_id":"018f0e61-bca5-7a40-a06f-e4c0f53128af","role":"primary","address":"vpn.example.com","port":443,"server_name":"cdn.example.com","reality_public_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","short_id":"0011","label":"Primary"}],"applied_at":"2026-07-18T12:00:00Z"}`)
+	if err := service.ProcessEvent(context.Background(), meta, data); err != nil {
+		t.Fatalf("degraded result with complete assignment proof was rejected: %v", err)
+	}
+	if !store.provisionApplied {
+		t.Fatal("degraded result did not reach durable access state")
+	}
+}
+
 func TestRevokeSuccessAcceptsZeroAllocationsAndRejectsDuplicates(t *testing.T) {
 	store := &fakeStore{}
 	service, _ := newTestService(t, store)

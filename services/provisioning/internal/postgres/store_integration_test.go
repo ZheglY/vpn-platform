@@ -129,7 +129,7 @@ func TestIntegrationConcurrentPlacementRespectsReservedCapacity(t *testing.T) {
 	}
 }
 
-func TestIntegrationOperationClaimWaitsForEarlierCredentialCommand(t *testing.T) {
+func TestIntegrationHigherRevisionSupersedesUnstartedCredentialCommand(t *testing.T) {
 	store := integrationStore(t)
 	ctx := context.Background()
 	credentialID := "62000000-0000-4000-8000-000000000021"
@@ -143,21 +143,15 @@ func TestIntegrationOperationClaimWaitsForEarlierCredentialCommand(t *testing.T)
 	}
 
 	claimed, ok, err := store.ClaimOperation(ctx, 30*time.Second)
-	if err != nil || !ok || claimed.ID != first.OperationID {
-		t.Fatalf("first claim = %+v, %t, %v", claimed, ok, err)
-	}
-	if err := store.RetryOperation(ctx, claimed.ID, "test_retry", time.Hour); err != nil {
-		t.Fatal(err)
-	}
-	if blocked, ok, err := store.ClaimOperation(ctx, 30*time.Second); err != nil || ok {
-		t.Fatalf("later command bypassed retrying predecessor: %+v, %t, %v", blocked, ok, err)
-	}
-	if _, err := store.pool.Exec(ctx, `UPDATE operations SET state='failed',completed_at=clock_timestamp() WHERE id=$1`, first.OperationID); err != nil {
-		t.Fatal(err)
-	}
-	claimed, ok, err = store.ClaimOperation(ctx, 30*time.Second)
 	if err != nil || !ok || claimed.ID != second.OperationID {
-		t.Fatalf("second claim after predecessor completion = %+v, %t, %v", claimed, ok, err)
+		t.Fatalf("current generation claim = %+v, %t, %v", claimed, ok, err)
+	}
+	var firstState string
+	if err := store.pool.QueryRow(ctx, `SELECT state FROM operations WHERE id=$1`, first.OperationID).Scan(&firstState); err != nil || firstState != "superseded" {
+		t.Fatalf("older operation state = %q, %v", firstState, err)
+	}
+	if err := store.RetryOperation(ctx, first.OperationID, "stale_worker", time.Hour); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("superseded operation retry = %v", err)
 	}
 }
 
@@ -252,6 +246,254 @@ func TestIntegrationProvisionAndRevokeResultsAreTransactionalAndSecretFree(t *te
 	}
 }
 
+func TestIntegrationHigherRevisionRebindsRevokedAllocationGeneration(t *testing.T) {
+	store := integrationStore(t)
+	ctx := context.Background()
+	seeds := testNodeSeeds(10)
+	if err := store.SeedNodes(ctx, seeds); err != nil {
+		t.Fatal(err)
+	}
+	for _, seed := range seeds {
+		if err := store.RecordNodeHealth(ctx, domain.AgentStatus{NodeID: seed.ID, ConfigRevision: 1, XrayHealthy: true, AgentVersion: "test", XrayVersion: "Xray 26.3.27"}, 45*time.Second); err != nil {
+			t.Fatal(err)
+		}
+	}
+	credentialID := "62000000-0000-4000-8000-000000000041"
+	provision := recordAndClaimOperation(t, store, credentialID, "63000000-0000-4000-8000-000000000041", "65000000-0000-4000-8000-000000000041", "access.provision.request.v1", "provision", 1, 41)
+	placement := domain.Placement{SubscriptionID: "66000000-0000-4000-8000-000000000041", PeriodID: "67000000-0000-4000-8000-000000000041", Region: "ru-test", PrimaryNodes: 1, FailoverNodes: 1, ValidUntil: time.Now().Add(time.Hour)}
+	allocations, err := store.EnsureAllocations(ctx, provision, placement, "vless_reality")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, allocation := range allocations {
+		if err := store.MarkAllocationApplied(ctx, provision.ID, allocation.Node.ID, 2); err != nil {
+			t.Fatal(err)
+		}
+	}
+	allocations, _ = store.ListAllocations(ctx, credentialID)
+	if err := store.CompleteProvision(ctx, provision, "active", allocations); err != nil {
+		t.Fatal(err)
+	}
+
+	revoke := recordAndClaimOperation(t, store, credentialID, "63000000-0000-4000-8000-000000000042", "65000000-0000-4000-8000-000000000042", "access.revoke.request.v1", "revoke", 2, 42)
+	if err := store.PrepareRevoke(ctx, revoke); err != nil {
+		t.Fatal(err)
+	}
+	for _, allocation := range allocations {
+		if err := store.MarkAllocationRevoked(ctx, revoke.ID, allocation.Node.ID, 3); err != nil {
+			t.Fatal(err)
+		}
+	}
+	allocations, _ = store.ListAllocations(ctx, credentialID)
+	if err := store.CompleteRevoke(ctx, revoke, allocations); err != nil {
+		t.Fatal(err)
+	}
+
+	reactivation := recordAndClaimOperation(t, store, credentialID, "63000000-0000-4000-8000-000000000043", "65000000-0000-4000-8000-000000000043", "access.provision.request.v1", "provision", 3, 43)
+	allocations, err = store.EnsureAllocations(ctx, reactivation, placement, "vless_reality")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, allocation := range allocations {
+		if allocation.DesiredOperationID != reactivation.ID || allocation.DesiredRevision != 3 || allocation.DesiredState != "present" || allocation.State != "pending" {
+			t.Fatalf("allocation was not rebound to higher revision: %+v", allocation)
+		}
+		if err := store.MarkAllocationApplied(ctx, reactivation.ID, allocation.Node.ID, 4); err != nil {
+			t.Fatalf("higher-revision allocation apply failed: %v", err)
+		}
+	}
+	var reserved int
+	if err := store.pool.QueryRow(ctx, `SELECT sum(allocated_clients) FROM nodes`).Scan(&reserved); err != nil || reserved != 2 {
+		t.Fatalf("reactivation capacity = %d, %v; want exactly two reservations", reserved, err)
+	}
+}
+
+func TestIntegrationTerminalFailureRecoversAtHigherRevisionAndPublishesInOrder(t *testing.T) {
+	store := integrationStore(t)
+	ctx := context.Background()
+	seeds := testNodeSeeds(10)
+	if err := store.SeedNodes(ctx, seeds); err != nil {
+		t.Fatal(err)
+	}
+	for _, seed := range seeds {
+		if err := store.RecordNodeHealth(ctx, domain.AgentStatus{NodeID: seed.ID, ConfigRevision: 1, XrayHealthy: true, AgentVersion: "test", XrayVersion: "Xray 26.3.27"}, 45*time.Second); err != nil {
+			t.Fatal(err)
+		}
+	}
+	credentialID := "62000000-0000-4000-8000-000000000061"
+	placement := domain.Placement{SubscriptionID: "66000000-0000-4000-8000-000000000061", PeriodID: "67000000-0000-4000-8000-000000000061", Region: "ru-test", PrimaryNodes: 1, FailoverNodes: 1, ValidUntil: time.Now().Add(time.Hour)}
+	failed := recordAndClaimOperation(t, store, credentialID, "63000000-0000-4000-8000-000000000061", "65000000-0000-4000-8000-000000000061", "access.provision.request.v1", "provision", 1, 61)
+	allocations, err := store.EnsureAllocations(ctx, failed, placement, "vless_reality")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, allocation := range allocations {
+		if err := store.MarkAllocationFailed(ctx, failed.ID, allocation.Node.ID, "primary_apply_failed"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.CompleteProvisionFailure(ctx, failed, "primary", "primary_apply_failed", []string{allocations[0].Node.ID}); err != nil {
+		t.Fatal(err)
+	}
+
+	recovery := recordAndClaimOperation(t, store, credentialID, "63000000-0000-4000-8000-000000000062", "65000000-0000-4000-8000-000000000062", "access.provision.request.v1", "provision", 2, 62)
+	allocations, err = store.EnsureAllocations(ctx, recovery, placement, "vless_reality")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, allocation := range allocations {
+		if err := store.MarkAllocationApplied(ctx, recovery.ID, allocation.Node.ID, 2); err != nil {
+			t.Fatal(err)
+		}
+	}
+	allocations, _ = store.ListAllocations(ctx, credentialID)
+	if err := store.CompleteProvision(ctx, recovery, "active", allocations); err != nil {
+		t.Fatal(err)
+	}
+	var reserved int
+	if err := store.pool.QueryRow(ctx, `SELECT sum(allocated_clients) FROM nodes`).Scan(&reserved); err != nil || reserved != 2 {
+		t.Fatalf("recovery capacity = %d, %v", reserved, err)
+	}
+	if _, err := store.pool.Exec(ctx, `UPDATE outbox SET created_at=clock_timestamp()-aggregate_sequence*interval '1 hour' WHERE aggregate_id=$1`, credentialID); err != nil {
+		t.Fatal(err)
+	}
+	first, ok, err := store.ClaimOutbox(ctx, time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("claim first outcome: %+v %t %v", first, ok, err)
+	}
+	var firstEnvelope platformkafka.Envelope
+	if err := json.Unmarshal(first.Payload, &firstEnvelope); err != nil || firstEnvelope.AggregateSequence != 1 || firstEnvelope.EventType != "access.provision.failed.v1" {
+		t.Fatalf("first outcome = %+v, %v", firstEnvelope, err)
+	}
+	if blocked, ok, err := store.ClaimOutbox(ctx, time.Minute); err != nil || ok {
+		t.Fatalf("later outcome bypassed unpublished predecessor: %+v %t %v", blocked, ok, err)
+	}
+	if err := store.CompleteOutbox(ctx, first.EventID); err != nil {
+		t.Fatal(err)
+	}
+	second, ok, err := store.ClaimOutbox(ctx, time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("claim recovery outcome: %+v %t %v", second, ok, err)
+	}
+	var secondEnvelope platformkafka.Envelope
+	if err := json.Unmarshal(second.Payload, &secondEnvelope); err != nil || secondEnvelope.AggregateSequence != 2 || secondEnvelope.EventType != "access.provision.succeeded.v1" {
+		t.Fatalf("second outcome = %+v, %v", secondEnvelope, err)
+	}
+}
+
+func TestIntegrationReactivationSupersedesPartiallyAppliedRevoke(t *testing.T) {
+	store := integrationStore(t)
+	ctx := context.Background()
+	seeds := testNodeSeeds(10)
+	if err := store.SeedNodes(ctx, seeds); err != nil {
+		t.Fatal(err)
+	}
+	for _, seed := range seeds {
+		if err := store.RecordNodeHealth(ctx, domain.AgentStatus{NodeID: seed.ID, ConfigRevision: 1, XrayHealthy: true, AgentVersion: "test", XrayVersion: "Xray 26.3.27"}, 45*time.Second); err != nil {
+			t.Fatal(err)
+		}
+	}
+	credentialID := "62000000-0000-4000-8000-000000000071"
+	placement := domain.Placement{SubscriptionID: "66000000-0000-4000-8000-000000000071", PeriodID: "67000000-0000-4000-8000-000000000071", Region: "ru-test", PrimaryNodes: 1, FailoverNodes: 1, ValidUntil: time.Now().Add(time.Hour)}
+	provision := recordAndClaimOperation(t, store, credentialID, "63000000-0000-4000-8000-000000000071", "65000000-0000-4000-8000-000000000071", "access.provision.request.v1", "provision", 1, 71)
+	allocations, err := store.EnsureAllocations(ctx, provision, placement, "vless_reality")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, allocation := range allocations {
+		if err := store.MarkAllocationApplied(ctx, provision.ID, allocation.Node.ID, 2); err != nil {
+			t.Fatal(err)
+		}
+	}
+	allocations, _ = store.ListAllocations(ctx, credentialID)
+	if err := store.CompleteProvision(ctx, provision, "active", allocations); err != nil {
+		t.Fatal(err)
+	}
+
+	revoke := recordAndClaimOperation(t, store, credentialID, "63000000-0000-4000-8000-000000000072", "65000000-0000-4000-8000-000000000072", "access.revoke.request.v1", "revoke", 2, 72)
+	if err := store.PrepareRevoke(ctx, revoke); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkAllocationRevoked(ctx, revoke.ID, allocations[0].Node.ID, 3); err != nil {
+		t.Fatal(err)
+	}
+	reactivation := recordAndClaimOperation(t, store, credentialID, "63000000-0000-4000-8000-000000000073", "65000000-0000-4000-8000-000000000073", "access.provision.request.v1", "provision", 3, 73)
+	if err := store.MarkAllocationRevoked(ctx, revoke.ID, allocations[1].Node.ID, 4); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("stale revoke acknowledgement = %v", err)
+	}
+	allocations, err = store.EnsureAllocations(ctx, reactivation, placement, "vless_reality")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, allocation := range allocations {
+		if err := store.MarkAllocationApplied(ctx, reactivation.ID, allocation.Node.ID, 5); err != nil {
+			t.Fatal(err)
+		}
+	}
+	allocations, _ = store.ListAllocations(ctx, credentialID)
+	if err := store.CompleteProvision(ctx, reactivation, "active", allocations); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompleteRevoke(ctx, revoke, allocations); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("superseded revoke completion = %v", err)
+	}
+	var reserved int
+	if err := store.pool.QueryRow(ctx, `SELECT sum(allocated_clients) FROM nodes`).Scan(&reserved); err != nil || reserved != 2 {
+		t.Fatalf("reactivation capacity = %d, %v", reserved, err)
+	}
+}
+
+func TestIntegrationReconciliationClaimDoesNotStarveBeyondBatch(t *testing.T) {
+	store := integrationStore(t)
+	ctx := context.Background()
+	seed := testNodeSeeds(10)[0]
+	if err := store.SeedNodes(ctx, []domain.NodeSeed{seed}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordNodeHealth(ctx, domain.AgentStatus{NodeID: seed.ID, ConfigRevision: 1, XrayHealthy: true, AgentVersion: "test", XrayVersion: "Xray 26.3.27"}, 45*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	fixtures := [][3]string{
+		{"62000000-0000-4000-8000-000000000051", "63000000-0000-4000-8000-000000000051", "69000000-0000-4000-8000-000000000051"},
+		{"62000000-0000-4000-8000-000000000052", "63000000-0000-4000-8000-000000000052", "69000000-0000-4000-8000-000000000052"},
+		{"62000000-0000-4000-8000-000000000053", "63000000-0000-4000-8000-000000000053", "69000000-0000-4000-8000-000000000053"},
+	}
+	for index, fixture := range fixtures {
+		if _, err := store.pool.Exec(ctx, `INSERT INTO operations (id,credential_id,kind,desired_revision,command_sequence,state,correlation_id,causation_event_id,completed_at) VALUES ($1,$2,'provision',1,$3,'succeeded',$4,$5,clock_timestamp())`, fixture[1], fixture[0], index+1, "68000000-0000-4000-8000-000000000051", fixture[1]); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.pool.Exec(ctx, `INSERT INTO allocations (id,credential_id,operation_id,desired_operation_id,node_id,role,protocol,desired_revision,desired_state,allocation_revision,state,applied_config_revision) VALUES ($1,$2,$3,$3,$4,'primary','vless_reality',1,'present',1,'active',1)`, fixture[2], fixture[0], fixture[1], seed.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seen := map[string]struct{}{}
+	for range 2 {
+		candidates, err := store.ClaimReconciliationCandidates(ctx, 2, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, candidate := range candidates {
+			seen[candidate.Allocation.ID] = struct{}{}
+		}
+	}
+	if len(seen) != len(fixtures) {
+		t.Fatalf("reconciliation starved allocations beyond first batch: saw %d of %d", len(seen), len(fixtures))
+	}
+}
+
+func recordAndClaimOperation(t *testing.T, store *Store, credentialID, operationID, eventID, eventType, kind string, revision int, offset int64) domain.Operation {
+	t.Helper()
+	command := domain.Command{OperationID: operationID, CredentialID: credentialID, DesiredRevision: revision}
+	if err := store.RecordCommand(context.Background(), commandMeta(eventID, eventType, credentialID, offset, int64(revision)), command, kind, 5); err != nil {
+		t.Fatal(err)
+	}
+	operation, ok, err := store.ClaimOperation(context.Background(), 30*time.Second)
+	if err != nil || !ok || operation.ID != operationID {
+		t.Fatalf("claim operation %s: %+v, %t, %v", operationID, operation, ok, err)
+	}
+	return operation
+}
+
 func integrationStore(t *testing.T) *Store {
 	t.Helper()
 	databaseURL := os.Getenv("PROVISIONING_TEST_DATABASE_URL")
@@ -263,7 +505,7 @@ func integrationStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	truncate := func() error {
-		_, err := store.pool.Exec(context.Background(), `TRUNCATE outbox,consumer_dead_letters,node_health_snapshots,allocations,operations,command_inbox,credential_command_cursors,nodes CASCADE`)
+		_, err := store.pool.Exec(context.Background(), `TRUNCATE outbox,consumer_dead_letters,node_health_snapshots,allocations,operations,command_inbox,credential_outcome_cursors,credential_command_cursors,nodes CASCADE`)
 		return err
 	}
 	if err := truncate(); err != nil {

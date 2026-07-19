@@ -203,8 +203,12 @@ func (s *Service) newCredential() (string, string, []byte, int, error) {
 }
 
 func validateProvisionSucceeded(meta domain.EventMeta, event domain.ProvisionSucceeded) error {
-	if event.CredentialID != meta.AggregateID || !validUUIDs(event.OperationID, event.CredentialID) || event.AppliedRevision < 1 || event.AppliedAt.IsZero() || (event.Status != domain.StatusActive && event.Status != domain.StatusDegraded) {
+	if event.CredentialID != meta.AggregateID || !validUUIDs(event.OperationID, event.CredentialID) || event.AppliedRevision < 1 || event.AppliedAt.IsZero() || (event.Status != domain.StatusActive && event.Status != domain.StatusDegraded) || len(event.AssignedNodeIDs) != 2 || !validUniqueUUIDs(event.AssignedNodeIDs) {
 		return domain.ErrDurableStateConflict
+	}
+	assigned := make(map[string]struct{}, len(event.AssignedNodeIDs))
+	for _, nodeID := range event.AssignedNodeIDs {
+		assigned[nodeID] = struct{}{}
 	}
 	primary, failover := 0, 0
 	seen := make(map[string]struct{}, len(event.Endpoints))
@@ -213,6 +217,9 @@ func validateProvisionSucceeded(meta domain.EventMeta, event domain.ProvisionSuc
 			return domain.ErrDurableStateConflict
 		}
 		if _, ok := seen[endpoint.NodeID]; ok {
+			return domain.ErrDurableStateConflict
+		}
+		if _, ok := assigned[endpoint.NodeID]; !ok {
 			return domain.ErrDurableStateConflict
 		}
 		seen[endpoint.NodeID] = struct{}{}

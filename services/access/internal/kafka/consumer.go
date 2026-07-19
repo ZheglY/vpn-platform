@@ -85,7 +85,7 @@ func (c *Consumer) pollOnce(ctx context.Context) bool {
 		}
 		err := c.process(ctx, record)
 		if err != nil {
-			if errors.Is(err, domain.ErrLifecycleSequenceGap) {
+			if isSequenceGap(err) {
 				c.deferGap(record)
 				continue
 			}
@@ -171,10 +171,7 @@ func validateEnvelope(record *kgo.Record, envelope platformkafka.Envelope) error
 	if rule.partitionPrefix == "credential:" && partitionID(envelope.PartitionKey) != envelope.AggregateID {
 		return errors.New("invalid_envelope_aggregate_key")
 	}
-	if rule.aggregateType == "subscription" && envelope.AggregateSequence < 1 {
-		return errors.New("invalid_envelope_sequence")
-	}
-	if envelope.AggregateSequence < 0 {
+	if envelope.AggregateSequence < 1 {
 		return errors.New("invalid_envelope_sequence")
 	}
 	if len(envelope.Data) == 0 || bytes.Equal(envelope.Data, []byte("null")) {
@@ -224,7 +221,7 @@ func (c *Consumer) deferGap(record *kgo.Record) {
 	}
 	c.deferred[key] = record
 	c.client.PauseFetchPartitions(map[string][]int32{record.Topic: {record.Partition}})
-	c.logger.Warn("access lifecycle sequence gap deferred", zap.String("topic", record.Topic), zap.Int32("partition", record.Partition), zap.Int64("offset", record.Offset))
+	c.logger.Warn("access ordered event gap deferred", zap.String("topic", record.Topic), zap.Int32("partition", record.Partition), zap.Int64("offset", record.Offset))
 }
 
 func (c *Consumer) retryDeferred(ctx context.Context) {
@@ -235,7 +232,7 @@ func (c *Consumer) retryDeferred(ctx context.Context) {
 				return
 			}
 			err := c.process(ctx, record)
-			if errors.Is(err, domain.ErrLifecycleSequenceGap) {
+			if isSequenceGap(err) {
 				continue
 			}
 			if err != nil {
@@ -262,6 +259,10 @@ func (c *Consumer) retryDeferred(ctx context.Context) {
 			return
 		}
 	}
+}
+
+func isSequenceGap(err error) bool {
+	return errors.Is(err, domain.ErrLifecycleSequenceGap) || errors.Is(err, domain.ErrOutcomeSequenceGap)
 }
 
 func (c *Consumer) waitRetry(ctx context.Context, err error) {

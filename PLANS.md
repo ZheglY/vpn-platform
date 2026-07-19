@@ -229,7 +229,7 @@ Verification completed for the Stage 5 remediation on 2026-07-19:
 
 Depends on Stage 5 and threat review. Adds node registry, allocation, mTLS protocol, idempotent desired revision, Xray validation, atomic reload, rollback, and local real-Xray e2e tests.
 
-Status: implemented and verification-complete on `codex/stage6-provisioning-node-agent`; awaiting product-owner acceptance. Stage 7 has not started.
+Status: acceptance-review remediation implemented and verification-complete on `codex/stage6-provisioning-node-agent`; awaiting product-owner acceptance. Stage 7 has not started.
 
 Implementation plan:
 
@@ -242,6 +242,7 @@ Implementation plan:
 7. Reconcile pending operations, allocation state, node heartbeat/capacity, and agent actual revisions. Revoke succeeds only after exact removal from all allocation nodes at the allocation revision expected by Access.
 8. Add placement/capacity/concurrency, duplicate/gap/stale Kafka command, retry/DLQ/replay, mTLS identity, node-agent idempotency, invalid-config rollback, reload rollback, reconciliation, and local VLESS + REALITY data-plane tests.
 9. Update OpenAPI, AsyncAPI/JSON Schema, Compose, runbooks, threat model, risk register, Definition of Done, README, and CI verification together with behavior.
+10. Remediate the acceptance review with a full assignment proof distinct from usable endpoints, one cross-topic provisioning-outcome sequence, higher-revision allocation generations, durable reconciliation claims, cancellation-safe Xray consistency, and a control-plane VPN E2E.
 
 Acceptance criteria:
 
@@ -253,6 +254,10 @@ Acceptance criteria:
 - An invalid candidate never replaces last-known-good. A failed Xray reload restores the previous config and process before returning a bounded redacted error.
 - Provisioning reports `active` only after primary and failover success, `degraded` only after primary success and exhausted failover work, and terminal failure when primary cannot be applied within the bounded retry policy.
 - Revoke results contain the exact unique assigned-node set and allocation revision. Partial physical removal never becomes success.
+- Provisioning outcomes share a producer-owned credential sequence across all four result topics. Access durably defers gaps, treats exact replay as a no-op, and rejects sequence collisions.
+- Higher desired revisions atomically rebind allocations and fence stale workers. Reactivation after revoke or terminal provision failure preserves capacity exactly once and can converge without changing credential identity.
+- Reconciliation claims due allocations with durable leases and bounded batches so multiple replicas do not duplicate live work and rows beyond the first batch cannot starve.
+- Once Xray mutation starts, request cancellation cannot return until the candidate or last-known-good process is healthy within the configured consistency bound.
 - Sanitized DLQ notices, an operator replay command, reconciliation, node heartbeat loss, low capacity, primary failure, and degraded failover have tests and runbook procedures.
 - The `vpn` Compose profile proves real Xray config validation, live VLESS + REALITY traffic through a provisioned credential, idempotent replay, expiry/revoke removal, and continued last-known-good service after a rejected candidate.
 - `make verify`, migration-from-zero, race tests, contract tests, image scans, normal Compose smoke, and VPN Compose smoke pass before Stage 6 is presented for acceptance.
@@ -270,12 +275,13 @@ Non-goals:
 - No notification delivery, admin mutation API/CLI, RBAC workflow, or operational UI; those remain Stage 7.
 - No per-destination, DNS, packet, or browsing telemetry and no Happ HWID/device accounting.
 
-Verification completed for Stage 6 on 2026-07-19:
+Verification completed for the Stage 6 acceptance-review remediation on 2026-07-19:
 
-- `make verify` on the clean Stage 6 commit, including format/tidy/vet, unit, race, lint, govulncheck, secret scan, npm audit, contract checks, all service image builds, HIGH/CRITICAL image scans, and Compose config validation
+- `make verify` on the clean Stage 6 remediation commit, including format/tidy/vet, unit, race, lint, official-database govulncheck fallback, secret scan, npm audit, contract checks, all service image builds, HIGH/CRITICAL image scans, and Compose config validation
+- Access and Provisioning PostgreSQL regression suites for degraded assignment proof, terminal-failure recovery, revoke/reactivation fencing, cross-topic outcome order, exact replay/collision, capacity accounting, and reconciliation beyond one batch
 - `make compose-smoke` for the complete Telegram, YooKassa sandbox, entitlement, Access, Happ, Kafka, PostgreSQL, Redis, idempotency, redaction, and mTLS flow
-- `make vpn-smoke` for Provisioning PostgreSQL lifecycle/concurrency, two mTLS node-agents, real Xray validation, VLESS + REALITY traffic, replay, revoke, and last-known-good behavior
-- repeated Xray process-manager tests plus final review of service ownership, transaction boundaries, cross-topic ordering, capacity, replay/stale handling, SPIFFE binding, rollback, secret persistence, logging, contracts, and documentation
+- `make vpn-smoke` for the complete Access command, Kafka, Provisioning, audited material/placement reads, two mTLS node-agents, real Xray validation, Happ delivery, VLESS + REALITY traffic, refund-driven revoke, and post-revoke traffic rejection
+- cancellation-during-reload Xray tests plus final review of service ownership, transaction boundaries, generation fencing, cross-topic ordering, capacity, reconciliation leases, SPIFFE binding, rollback, secret persistence, cleanup, logging, contracts, and documentation
 
 ### Stage 7 - Notifications and admin operations
 

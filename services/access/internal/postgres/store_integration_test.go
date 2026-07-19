@@ -39,7 +39,7 @@ func TestIntegrationAccessLifecycleAndTokenRotation(t *testing.T) {
 	assertCount(t, store, "inbox", 1)
 	assertCount(t, store, "outbox", 1)
 
-	provisionMeta := integrationMeta("20000000-0000-4000-8000-000000000001", "access.provision.succeeded.v1", credentialID, 2, 0)
+	provisionMeta := integrationMeta("20000000-0000-4000-8000-000000000001", "access.provision.succeeded.v1", credentialID, 2, 1)
 	result := domain.ProvisionSucceeded{
 		OperationID: operationID, CredentialID: credentialID, AppliedRevision: 1, Status: domain.StatusActive, AppliedAt: now.Add(time.Second),
 		Endpoints: []domain.EndpointSnapshot{
@@ -47,13 +47,14 @@ func TestIntegrationAccessLifecycleAndTokenRotation(t *testing.T) {
 			{NodeID: "20000000-0000-4000-8000-000000000003", Role: "failover", Address: "backup.example.invalid", Port: 443, ServerName: "www.example.invalid", RealityPublicKey: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", ShortID: "2233", Label: "Failover"},
 		},
 	}
+	result.AssignedNodeIDs = []string{result.Endpoints[0].NodeID, result.Endpoints[1].NodeID}
 	if err := store.ApplyProvisionSucceeded(ctx, provisionMeta, result); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.ApplyProvisionSucceeded(ctx, provisionMeta, result); err != nil {
 		t.Fatalf("duplicate provision result: %v", err)
 	}
-	delayedFailureMeta := integrationMeta("20000000-0000-4000-8000-000000000004", "access.provision.failed.v1", credentialID, 20, 0)
+	delayedFailureMeta := integrationMeta("20000000-0000-4000-8000-000000000004", "access.provision.failed.v1", credentialID, 20, 2)
 	delayedFailure := domain.OperationFailed{OperationID: operationID, CredentialID: credentialID, FailedRevision: 1, FailureScope: "all", Terminal: true, ReasonCode: "delayed_failure", FailedAt: now.Add(2 * time.Second)}
 	if err := store.ApplyOperationFailed(ctx, delayedFailureMeta, delayedFailure, "provision"); err != nil {
 		t.Fatalf("apply delayed failure: %v", err)
@@ -95,6 +96,16 @@ func TestIntegrationAccessLifecycleAndTokenRotation(t *testing.T) {
 	terminal := domain.TerminalEvent{SubscriptionID: subscriptionID, UserID: userID, Reason: "expired", EffectiveAt: period.GraceEndsAt}
 	if err := store.ApplyTerminal(ctx, terminalMeta, terminal, "40000000-0000-4000-8000-000000000002"); err != nil {
 		t.Fatal(err)
+	}
+	var revokeCommandPayload []byte
+	if err := store.pool.QueryRow(ctx, `SELECT payload FROM outbox WHERE topic='access.revoke.request.v1'`).Scan(&revokeCommandPayload); err != nil {
+		t.Fatal(err)
+	}
+	var revokeCommandEnvelope struct {
+		AggregateSequence int64 `json:"aggregate_sequence"`
+	}
+	if err := json.Unmarshal(revokeCommandPayload, &revokeCommandEnvelope); err != nil || revokeCommandEnvelope.AggregateSequence != 2 {
+		t.Fatalf("revoke command sequence = %d, %v", revokeCommandEnvelope.AggregateSequence, err)
 	}
 	if _, err := store.GetProfileByTokenHMAC(ctx, secondLookup); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("revoked token lookup = %v", err)
@@ -184,8 +195,8 @@ func TestIntegrationLifecycleSequenceGapAndStaleEvent(t *testing.T) {
 		{NodeID: "61000000-0000-4000-8000-000000000012", Role: "primary", Address: "primary.example.invalid", Port: 443, ServerName: "cdn.example.invalid", RealityPublicKey: strings.Repeat("A", 43), ShortID: "0011", Label: "Primary"},
 		{NodeID: "61000000-0000-4000-8000-000000000013", Role: "failover", Address: "failover.example.invalid", Port: 443, ServerName: "www.example.invalid", RealityPublicKey: strings.Repeat("B", 43), ShortID: "2233", Label: "Failover"},
 	}
-	lateSuccess := domain.ProvisionSucceeded{OperationID: seed.OperationID, CredentialID: seed.CredentialID, AppliedRevision: 1, Status: domain.StatusActive, Endpoints: endpoints, AppliedAt: now}
-	if err := store.ApplyProvisionSucceeded(ctx, integrationMeta("61000000-0000-4000-8000-000000000014", "access.provision.succeeded.v1", seed.CredentialID, 4, 0), lateSuccess); err != nil {
+	lateSuccess := domain.ProvisionSucceeded{OperationID: seed.OperationID, CredentialID: seed.CredentialID, AppliedRevision: 1, Status: domain.StatusActive, AssignedNodeIDs: []string{endpoints[0].NodeID, endpoints[1].NodeID}, Endpoints: endpoints, AppliedAt: now}
+	if err := store.ApplyProvisionSucceeded(ctx, integrationMeta("61000000-0000-4000-8000-000000000014", "access.provision.succeeded.v1", seed.CredentialID, 4, 1), lateSuccess); err != nil {
 		t.Fatalf("late provision while revoking: %v", err)
 	}
 	var credentialStatus string
@@ -208,8 +219,79 @@ WHERE c.id=$1`, seed.CredentialID).Scan(&credentialStatus, &credentialAllocation
 		DesiredRevision: 2, AllocationRevision: 1, AllAssignedNodesRemoved: true,
 		NodeIDs: []string{endpoints[0].NodeID, endpoints[1].NodeID}, RevokedAt: now,
 	}
-	if err := store.ApplyRevokeSucceeded(ctx, integrationMeta("61000000-0000-4000-8000-000000000015", "access.revoke.succeeded.v1", seed.CredentialID, 5, 0), revokeResult); err != nil {
+	if err := store.ApplyRevokeSucceeded(ctx, integrationMeta("61000000-0000-4000-8000-000000000015", "access.revoke.succeeded.v1", seed.CredentialID, 5, 2), revokeResult); err != nil {
 		t.Fatalf("revoke late allocation: %v", err)
+	}
+}
+
+func TestIntegrationReorderedProvisionAndRevokeOutcomesConvergeBySequence(t *testing.T) {
+	ctx := context.Background()
+	store := integrationStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	unknown := domain.OperationFailed{
+		OperationID: "61500000-0000-4000-8000-000000000030", CredentialID: "61500000-0000-4000-8000-000000000031",
+		FailedRevision: 1, FailureScope: "primary", Terminal: true, ReasonCode: "unknown_credential", FailedAt: now,
+	}
+	if err := store.ApplyOperationFailed(ctx, integrationMeta("61500000-0000-4000-8000-000000000032", "access.provision.failed.v1", unknown.CredentialID, 1, 1), unknown, "provision"); !errors.Is(err, domain.ErrDurableStateConflict) {
+		t.Fatalf("unknown outcome = %v", err)
+	}
+	assertCount(t, store, "provisioning_outcome_state", 0)
+	assertCount(t, store, "inbox", 0)
+	subscriptionID := "61500000-0000-4000-8000-000000000001"
+	userID := "61500000-0000-4000-8000-000000000002"
+	credentialID := "61500000-0000-4000-8000-000000000003"
+	provisionOperationID := "61500000-0000-4000-8000-000000000004"
+	period := domain.PeriodEvent{
+		SubscriptionID: subscriptionID, UserID: userID,
+		PeriodID: "61500000-0000-4000-8000-000000000005", SourceOrderID: "61500000-0000-4000-8000-000000000006", SourcePaymentID: "61500000-0000-4000-8000-000000000007",
+		PeriodStart: now, PeriodEnd: now.Add(time.Hour), GraceEndsAt: now.Add(2 * time.Hour),
+	}
+	if err := store.ApplyPeriod(ctx, integrationMeta("61500000-0000-4000-8000-000000000008", "subscription.activated.v1", subscriptionID, 1, 1), period,
+		domain.CredentialSeed{CredentialID: credentialID, OperationID: provisionOperationID, Ciphertext: bytes.Repeat([]byte{0x61}, 64), KeyVersion: 1}); err != nil {
+		t.Fatal(err)
+	}
+	revokeOperationID := "61500000-0000-4000-8000-000000000009"
+	terminal := domain.TerminalEvent{SubscriptionID: subscriptionID, UserID: userID, Reason: "revoked", EffectiveAt: now}
+	if err := store.ApplyTerminal(ctx, integrationMeta("61500000-0000-4000-8000-000000000010", "subscription.revoked.v1", subscriptionID, 2, 2), terminal, revokeOperationID); err != nil {
+		t.Fatal(err)
+	}
+	nodeIDs := []string{"61500000-0000-4000-8000-000000000011", "61500000-0000-4000-8000-000000000012"}
+	revoke := domain.RevokeSucceeded{OperationID: revokeOperationID, CredentialID: credentialID, DesiredRevision: 2, AllocationRevision: 1, AllAssignedNodesRemoved: true, NodeIDs: nodeIDs, RevokedAt: now}
+	revokeMeta := integrationMeta("61500000-0000-4000-8000-000000000013", "access.revoke.succeeded.v1", credentialID, 20, 2)
+	if err := store.ApplyRevokeSucceeded(ctx, revokeMeta, revoke); !errors.Is(err, domain.ErrOutcomeSequenceGap) {
+		t.Fatalf("reordered revoke outcome = %v", err)
+	}
+
+	degraded := domain.ProvisionSucceeded{
+		OperationID: provisionOperationID, CredentialID: credentialID, AppliedRevision: 1, Status: domain.StatusDegraded,
+		AssignedNodeIDs: nodeIDs,
+		Endpoints:       []domain.EndpointSnapshot{{NodeID: nodeIDs[0], Role: "primary", Address: "primary.example.invalid", Port: 443, ServerName: "cdn.example.invalid", RealityPublicKey: strings.Repeat("A", 43), ShortID: "0011", Label: "Primary"}},
+		AppliedAt:       now,
+	}
+	if err := store.ApplyProvisionSucceeded(ctx, integrationMeta("61500000-0000-4000-8000-000000000014", "access.provision.succeeded.v1", credentialID, 10, 1), degraded); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ApplyRevokeSucceeded(ctx, revokeMeta, revoke); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ApplyRevokeSucceeded(ctx, revokeMeta, revoke); err != nil {
+		t.Fatalf("exact outcome replay: %v", err)
+	}
+	collision := integrationMeta("61500000-0000-4000-8000-000000000015", "access.revoke.failed.v1", credentialID, 21, 2)
+	failure := domain.OperationFailed{OperationID: revokeOperationID, CredentialID: credentialID, FailedRevision: 2, FailureScope: "all", Terminal: true, ReasonCode: "collision", FailedAt: now}
+	if err := store.ApplyOperationFailed(ctx, collision, failure, "revoke"); !errors.Is(err, domain.ErrDurableStateConflict) {
+		t.Fatalf("outcome sequence collision = %v", err)
+	}
+	var status string
+	var outcomeSequence int64
+	if err := store.pool.QueryRow(ctx, `SELECT status FROM access_credentials WHERE id=$1`, credentialID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.pool.QueryRow(ctx, `SELECT last_applied_sequence FROM provisioning_outcome_state WHERE credential_id=$1`, credentialID).Scan(&outcomeSequence); err != nil {
+		t.Fatal(err)
+	}
+	if status != domain.StatusRevoked || outcomeSequence != 2 {
+		t.Fatalf("reordered outcome state = %s sequence=%d", status, outcomeSequence)
 	}
 }
 
@@ -237,8 +319,8 @@ func TestIntegrationDelayedProvisioningAndCompleteRevokeProof(t *testing.T) {
 		{NodeID: "62000000-0000-4000-8000-000000000009", Role: "primary", Address: "primary.example.invalid", Port: 443, ServerName: "cdn.example.invalid", RealityPublicKey: strings.Repeat("A", 43), ShortID: "0011", Label: "Primary"},
 		{NodeID: "62000000-0000-4000-8000-000000000010", Role: "failover", Address: "failover.example.invalid", Port: 443, ServerName: "www.example.invalid", RealityPublicKey: strings.Repeat("B", 43), ShortID: "2233", Label: "Failover"},
 	}
-	result := domain.ProvisionSucceeded{OperationID: provisionOperationID, CredentialID: credentialID, AppliedRevision: 1, Status: domain.StatusActive, Endpoints: endpoints, AppliedAt: now}
-	if err := store.ApplyProvisionSucceeded(ctx, integrationMeta("62000000-0000-4000-8000-000000000011", "access.provision.succeeded.v1", credentialID, 2, 0), result); err != nil {
+	result := domain.ProvisionSucceeded{OperationID: provisionOperationID, CredentialID: credentialID, AppliedRevision: 1, Status: domain.StatusActive, AssignedNodeIDs: []string{endpoints[0].NodeID, endpoints[1].NodeID}, Endpoints: endpoints, AppliedAt: now}
+	if err := store.ApplyProvisionSucceeded(ctx, integrationMeta("62000000-0000-4000-8000-000000000011", "access.provision.succeeded.v1", credentialID, 2, 1), result); err != nil {
 		t.Fatal(err)
 	}
 	var credentialStatus, revokeOperationID string
@@ -257,12 +339,12 @@ WHERE c.id=$1`, credentialID).Scan(&credentialStatus, &revision, &allocationRevi
 		t.Fatalf("ready outbox count = %d, %v", readyCount, err)
 	}
 	partial := domain.RevokeSucceeded{OperationID: revokeOperationID, CredentialID: credentialID, DesiredRevision: 2, AllocationRevision: 1, AllAssignedNodesRemoved: true, NodeIDs: []string{endpoints[0].NodeID}, RevokedAt: now}
-	if err := store.ApplyRevokeSucceeded(ctx, integrationMeta("62000000-0000-4000-8000-000000000012", "access.revoke.succeeded.v1", credentialID, 3, 0), partial); !errors.Is(err, domain.ErrDurableStateConflict) {
+	if err := store.ApplyRevokeSucceeded(ctx, integrationMeta("62000000-0000-4000-8000-000000000012", "access.revoke.succeeded.v1", credentialID, 3, 2), partial); !errors.Is(err, domain.ErrDurableStateConflict) {
 		t.Fatalf("partial revoke proof = %v", err)
 	}
 	complete := partial
 	complete.NodeIDs = []string{endpoints[1].NodeID, endpoints[0].NodeID}
-	if err := store.ApplyRevokeSucceeded(ctx, integrationMeta("62000000-0000-4000-8000-000000000013", "access.revoke.succeeded.v1", credentialID, 4, 0), complete); err != nil {
+	if err := store.ApplyRevokeSucceeded(ctx, integrationMeta("62000000-0000-4000-8000-000000000013", "access.revoke.succeeded.v1", credentialID, 4, 2), complete); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.pool.QueryRow(ctx, `SELECT status FROM access_credentials WHERE id=$1`, credentialID).Scan(&credentialStatus); err != nil || credentialStatus != domain.StatusRevoked {
@@ -287,7 +369,7 @@ VALUES ($1,$2,'revoke',2,0,'pending',$3)`, operationID, credentialID, "63000000-
 		t.Fatal(err)
 	}
 	event := domain.RevokeSucceeded{OperationID: operationID, CredentialID: credentialID, DesiredRevision: 2, AllocationRevision: 0, AllAssignedNodesRemoved: true, NodeIDs: []string{}, RevokedAt: now}
-	if err := store.ApplyRevokeSucceeded(ctx, integrationMeta("63000000-0000-4000-8000-000000000006", "access.revoke.succeeded.v1", credentialID, 1, 0), event); err != nil {
+	if err := store.ApplyRevokeSucceeded(ctx, integrationMeta("63000000-0000-4000-8000-000000000006", "access.revoke.succeeded.v1", credentialID, 1, 1), event); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.RecordCredentialMaterialAccess(ctx, credentialID, "provisioning-service"); err != nil {
@@ -380,7 +462,7 @@ func integrationStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	truncate := func(ctx context.Context) error {
-		_, err := store.pool.Exec(ctx, `TRUNCATE security_audit_events, outbox, consumer_dead_letters, inbox, subscription_lifecycle_state, url_idempotency, subscription_tokens, access_operations, access_endpoint_snapshots, access_credentials CASCADE`)
+		_, err := store.pool.Exec(ctx, `TRUNCATE security_audit_events, outbox, consumer_dead_letters, inbox, provisioning_outcome_state, subscription_lifecycle_state, url_idempotency, subscription_tokens, access_operations, access_assignment_snapshots, access_endpoint_snapshots, access_credentials CASCADE`)
 		return err
 	}
 	if err := truncate(context.Background()); err != nil {
