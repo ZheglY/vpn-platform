@@ -118,10 +118,12 @@ func run(ctx context.Context) error {
 		recoveryAuth = policy("admin-service")
 	}
 	mux := http.NewServeMux()
+	registry := observability.NewRegistry()
+	httpMetrics := observability.NewHTTPMetrics(registry, serviceName)
 	mux.Handle("GET /livez", httpserver.LivenessHandler(serviceName))
 	mux.Handle("GET /readyz", httpserver.ReadinessHandler(serviceName, map[string]httpserver.Check{"postgres": store.Ping, "kafka": kafkaClient.Ping, "redis": func(ctx context.Context) error { return platformredis.Ping(ctx, redisClient) }}))
 	mux.Handle("GET /version", version.Handler(version.New(serviceName, buildVersion, buildCommit, buildDate)))
-	mux.Handle("GET /metrics", observability.Handler(observability.NewRegistry()))
+	mux.Handle("GET /metrics", observability.MTLSHandler(registry, cfg.MTLSTrustDomain, cfg.MTLSNamespace))
 	mux.Handle("POST /internal/v1/subscriptions/{subscription_id}/subscription-url/issue", issueAuth(http.HandlerFunc(api.IssueSubscriptionURL)))
 	mux.Handle("POST /internal/v1/subscriptions/{subscription_id}/subscription-url/rotate", rotateAuth(http.HandlerFunc(api.RotateSubscriptionURL)))
 	mux.Handle("GET /internal/v1/subscriptions/{subscription_id}/access", statusAuth(http.HandlerFunc(api.GetAccessStatus)))
@@ -130,7 +132,7 @@ func run(ctx context.Context) error {
 	mux.Handle("GET /s/{token}", http.HandlerFunc(api.GetHappSubscription))
 	mux.Handle("GET /s/", http.HandlerFunc(api.GetUnavailableHappSubscription))
 	mux.Handle("GET /s", http.HandlerFunc(api.GetUnavailableHappSubscription))
-	handler := httpserver.Chain(mux, httpserver.RequestID, httpserver.LimitBody(cfg.MaxBodyBytes), httpserver.Recover(logger), httpserver.LogRequests(logger))
+	handler := httpserver.Chain(mux, httpserver.RequestID, httpserver.LimitBody(cfg.MaxBodyBytes), httpserver.Recover(logger), httpserver.LogRequests(logger), httpMetrics.Middleware)
 	srv := httpserver.New(cfg.HTTP, handler)
 	srv.TLSConfig = cfg.TLS
 	logger.Info("starting service", zap.String("service", serviceName), zap.String("environment", cfg.Environment))

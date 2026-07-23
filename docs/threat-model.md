@@ -89,6 +89,17 @@ Out of scope for v1:
 | Compromised notification-service | It can request typed Telegram sends and read consent targets but cannot obtain Bot API token, subscription URL, VPN credential, or owner DB access. Fixed mTLS allowlists constrain calls. |
 | Compromised telegram-bot | It owns the Bot API token and receives transient typed messages/chat IDs, but cannot mutate Notification jobs or use arbitrary internal owner APIs. Token compromise still requires rotation and incident response. |
 
+## Stage 8 Observability Threat Scenarios
+
+| Threat | Mitigation and residual risk |
+|---|---|
+| Subscription bearer or identifier enters metrics | HTTP labels use only reviewed `net/http` route patterns, bounded methods, service, and status class. Tests inject a synthetic secret path and assert it is absent. Future domain metrics still require the ADR 0013 allowlist. |
+| Metrics endpoint exposes topology or operational state | Every service requires the dedicated environment-bound `observability` SPIFFE identity. Telegram metrics moved off public HTTP. Local Prometheus/Grafana ports bind only to loopback. Production network and Grafana authentication remain pending. |
+| Monitoring certificate becomes a general service credential | The generated certificate is client-only and application allowlists grant it only `/metrics`; it is not accepted by business endpoints. Production issuance, expiry alerting, and revocation remain pending. |
+| Metric cardinality exhaustion | Methods and status classes are bounded, unmatched paths collapse to one value, and route patterns are source-defined. User, payment, subscription, credential, event, request, correlation, and raw URL values are forbidden labels. |
+| Dashboard or alert leaks sensitive data | Provisioned queries use only aggregate series and bounded labels. The runbook forbids raw paths/payloads and production remote write is absent. A future writable production Grafana still requires RBAC and query review. |
+| Observability image ships vulnerable unused code | Prometheus and Grafana builds pin source/runtime integrity, verify modules, update the reviewed vulnerable gRPC dependency, and require zero HIGH/CRITICAL image scans. Grafana omits unused bundled Zipkin/Elasticsearch executables and includes only the Tempo protobuf DTO tree needed by its server graph. |
+
 ## High-Priority Threat Scenarios
 
 ### T1 - Fake YooKassa webhook activates access

@@ -30,17 +30,23 @@ export COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-2}"
 export COMPOSE_BAKE="${COMPOSE_BAKE:-false}"
 full_vpn="${VPN_SMOKE_FULL_CONTROL_PLANE:-0}"
 stage7_extended="${STAGE7_EXTENDED_SMOKE:-0}"
+observability="${OBSERVABILITY_SMOKE:-0}"
 if [[ "$stage7_extended" == "1" && "$full_vpn" != "1" ]]; then
   echo 'Stage 7 extended smoke requires the full VPN control plane' >&2
   exit 1
 fi
 profiles=(--profile core --profile app)
+profile_names=(core app)
 if [[ "$full_vpn" == "1" ]]; then
-  export COMPOSE_PROFILES=core,app,vpn
   profiles+=(--profile vpn)
-else
-  export COMPOSE_PROFILES="${COMPOSE_PROFILES:-core,app}"
+  profile_names+=(vpn)
 fi
+if [[ "$observability" == "1" ]]; then
+  profiles+=(--profile obs)
+  profile_names+=(obs)
+fi
+export COMPOSE_PROFILES
+COMPOSE_PROFILES="$(IFS=,; echo "${profile_names[*]}")"
 vpn_client_name=vpn-stage6-client
 vpn_client_image='ghcr.io/xtls/xray-core:26.3.27@sha256:592ec4d11f656db95598d01e76dbcc6e002d67360b96a5436500a938230f52c7'
 
@@ -97,6 +103,7 @@ wait_redis_processing_key() {
 
 build_services=(identity-migrate identity-service catalog-service billing-service subscription-service access-service notification-service admin-service yookassa-api telegram-api telegram-bot)
 if [[ "$full_vpn" == "1" ]]; then build_services+=(provisioning-migrate provisioning-service node-agent-primary); fi
+if [[ "$observability" == "1" ]]; then build_services+=(prometheus grafana); fi
 for service in "${build_services[@]}"; do
   docker compose "${profiles[@]}" build "$service"
 done
@@ -121,6 +128,9 @@ containers=(
 if [[ "$full_vpn" == "1" ]]; then
   containers+=(vpn-service-provisioning-service-1 vpn-service-node-agent-primary-1 vpn-service-node-agent-failover-1)
 fi
+if [[ "$observability" == "1" ]]; then
+  containers+=(vpn-service-prometheus-1 vpn-service-grafana-1)
+fi
 
 for _ in $(seq 1 60); do
   all_healthy=true
@@ -144,6 +154,29 @@ for container in "${containers[@]}"; do
     exit 1
   fi
 done
+
+if [[ "$observability" == "1" ]]; then
+  expected_targets=8
+  if [[ "$full_vpn" == "1" ]]; then expected_targets=11; fi
+  healthy_targets=0
+  for _ in $(seq 1 30); do
+    healthy_targets="$(
+      curl -fsS --get --data-urlencode 'query=sum(up{job=~"vpn-control-plane|vpn-provisioning|vpn-nodes"} == 1)' \
+        http://127.0.0.1:9090/api/v1/query |
+        node -e 'let b="";process.stdin.on("data",d=>b+=d).on("end",()=>{const r=JSON.parse(b).data.result;process.stdout.write(r.length?r[0].value[1]:"0")})'
+    )"
+    if [[ "$healthy_targets" == "$expected_targets" ]]; then break; fi
+    sleep 2
+  done
+  if [[ "$healthy_targets" != "$expected_targets" ]]; then
+    echo "Prometheus has ${healthy_targets} healthy VPN targets, expected ${expected_targets}" >&2
+    exit 1
+  fi
+  curl -fsS http://127.0.0.1:3000/api/health |
+    node -e 'let b="";process.stdin.on("data",d=>b+=d).on("end",()=>{if(JSON.parse(b).database!=="ok")process.exit(1)})'
+  curl -fsS 'http://127.0.0.1:3000/api/search?query=VPN%20Platform%20Overview' |
+    node -e 'let b="";process.stdin.on("data",d=>b+=d).on("end",()=>{if(!JSON.parse(b).some(x=>x.uid==="vpn-platform-overview"))process.exit(1)})'
+fi
 
 if [[ "$full_vpn" != "1" ]]; then
 docker stop vpn-service-admin-service-1 vpn-service-notification-service-1 vpn-service-telegram-bot-1 vpn-service-access-service-1 vpn-service-subscription-service-1 vpn-service-billing-service-1 >/dev/null

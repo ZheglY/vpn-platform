@@ -2,9 +2,9 @@
 
 ## Current Approval
 
-Approved milestone: Stage 7 - Notifications and admin operations.
+Approved milestone: Stage 8 - Observability, hardening, and deployment.
 
-Stage 6 was explicitly accepted by the product owner on 2026-07-19 with the instruction to begin Stage 7. Stage 8 and later implementation milestones are not approved. Stage 7 may add durable notifications, a protected admin API/CLI, RBAC, support-safe views, typed owner-executed operations, and append-only audit. It must not add production deployment, connect production VPS instances, or deploy production VPN infrastructure.
+Stage 7 was explicitly accepted by the product owner on 2026-07-23 with the instruction to begin Stage 8. Stage 9 is not approved. Stage 8 may add observability, operational hardening, reproducible deployment assets, drills, and release controls. It must not connect production VPS instances, deploy production VPN infrastructure, configure real alert receivers, or use production credentials without a separate explicit approval.
 
 ## Stage 0 Plan
 
@@ -287,7 +287,7 @@ Verification completed for the Stage 6 acceptance-review remediation on 2026-07-
 
 Depends on lifecycle events. Adds durable Telegram notifications, admin CLI/internal API, RBAC, and audit.
 
-Status: acceptance-review remediation complete on `codex/stage7-notifications-admin`; awaiting product-owner re-acceptance. Stage 8 has not started.
+Status: accepted by the product owner on 2026-07-23 after acceptance-review remediation on `codex/stage7-notifications-admin`.
 
 Implementation plan:
 
@@ -303,7 +303,7 @@ Implementation plan:
 10. Prove duplicate/gap/collision handling, Telegram retry/permanent outcomes, multiple workers, RBAC, owner idempotency, audit immutability, mTLS denial, secret absence, restart recovery, and the complete Stage 7 Compose flow without regressing Stage 6 VPN smoke.
 11. Remediate commit `8d651fc` acceptance findings with per-stream notification delivery barriers/current-state suppression and recoverable fenced admin owner outcomes. Required regressions are extension `429` followed by revoke and owner commit followed by a lost response plus same-key replay.
 
-Acceptance criteria are the Stage 7 Definition of Done and the product-owner request attached on 2026-07-19. On completion this status becomes `awaiting product-owner acceptance`; Stage 8 remains blocked.
+Acceptance criteria were the Stage 7 Definition of Done and the product-owner request attached on 2026-07-19.
 
 Verification completed on 2026-07-23:
 
@@ -320,6 +320,30 @@ Verification completed on 2026-07-23:
 ### Stage 8 - Observability, hardening, and deployment
 
 Depends on working services. Adds dashboards, alerts, runbooks, backup/restore drill, node hardening, secret rotation, privacy retention jobs, SBOM, and signing.
+
+Status: in progress on `codex/stage8-observability-hardening`. The first bounded slice implements the privacy-safe HTTP RED baseline and local Prometheus/Grafana profile. Stage 8 is not complete and Stage 9 remains blocked.
+
+Implementation plan:
+
+1. Establish the privacy-safe telemetry contract, protected scrape identity, HTTP RED metrics, pinned Prometheus/Grafana profile, initial dashboard/alerts, configuration validation, and Compose smoke.
+2. Add bounded Kafka producer/consumer, lag/retry/DLQ, outbox/inbox, PostgreSQL pool/query-class, billing, subscription, access, provisioning, node-capacity, and Xray reload metrics with owner-specific tests.
+3. Add W3C trace-context propagation for HTTP and Kafka plus OpenTelemetry Collector and Tempo. Add structured log collection through the collector/Loki without payloads, bearer paths, VPN material, or user-traffic metadata.
+4. Define SLI recording rules and multi-window burn-rate alerts for control API, subscription endpoint, and payment-to-provisioning objectives. Add Alertmanager routing templates without real receiver credentials.
+5. Implement configurable privacy retention jobs per owning service, legal holds for financial records, dry-run/reporting, deletion bounds, and PostgreSQL tests.
+6. Add database-per-service backup artifacts and perform a clean restore drill with integrity, ownership, and recovery-time evidence.
+7. Add Ansible roles for supported VPN-node OS hardening, firewall, WireGuard management plane, separate non-root node-agent/Xray systemd units, certificate deployment/rotation, and rollback. Test only against local disposable hosts until production approval.
+8. Exercise rotation for mTLS, Telegram/YooKassa credentials, Access encryption/HMAC keys, and REALITY keys with overlap/rollback rules and no secret output.
+9. Add load, soak, failure-injection, Kafka/DB outage, node-loss, reload-failure, and recovery scenarios with explicit pass/fail budgets.
+10. Produce release images and SBOMs, scan them, sign immutable artifacts through keyless CI where approved, verify provenance, and document rollback. Production deployment remains a separate approval gate.
+
+First-slice acceptance:
+
+- Every HTTP process exports request count, duration histogram, and in-flight gauge with bounded labels only.
+- A regression test proves a raw `/s/{token}` value cannot enter metric labels.
+- `/metrics` accepts only the environment-bound `observability` mTLS identity; Telegram metrics are absent from the public listener.
+- Integrity-pinned Prometheus and Grafana security rebuilds run with reduced container privileges, loopback-only host ports, 15-day local metric retention, immutable provisioning, no HIGH/CRITICAL scan finding, and no committed administrator password.
+- Prometheus configuration/rules, Grafana dashboard JSON, Compose configuration, unit/race/lint checks, `make verify`, and `make observability-smoke` pass.
+- ADR 0027, architecture, threat model, runbook, external sources, README, and Definition of Done agree with behavior and list the remaining Stage 8 work.
 
 ### Stage 9 - Production readiness review
 

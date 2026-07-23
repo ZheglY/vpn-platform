@@ -19,6 +19,7 @@ import (
 	platformhttpclient "github.com/ZheglY/vpn-platform/internal/platform/httpclient"
 	"github.com/ZheglY/vpn-platform/internal/platform/httpserver"
 	"github.com/ZheglY/vpn-platform/internal/platform/logging"
+	"github.com/ZheglY/vpn-platform/internal/platform/observability"
 	"github.com/ZheglY/vpn-platform/internal/platform/version"
 	"github.com/ZheglY/vpn-platform/services/node-agent/internal/application"
 	"github.com/ZheglY/vpn-platform/services/node-agent/internal/httpapi"
@@ -88,14 +89,17 @@ func run(ctx context.Context) error {
 	}
 	managementAuth := policy("provisioning-service")
 	healthAuth := policy(cfg.healthCallerIdentity)
+	registry := observability.NewRegistry()
+	httpMetrics := observability.NewHTTPMetrics(registry, serviceName)
 	mux := http.NewServeMux()
 	mux.Handle("GET /livez", healthAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })))
 	mux.Handle("GET /readyz", healthAuth(http.HandlerFunc(api.Readiness)))
 	mux.Handle("GET /version", healthAuth(version.Handler(version.New(serviceName, buildVersion, buildCommit, buildDate))))
+	mux.Handle("GET /metrics", observability.MTLSHandler(registry, cfg.trustDomain, cfg.namespace))
 	mux.Handle("GET /internal/v1/status", managementAuth(http.HandlerFunc(api.Status)))
 	mux.Handle("GET /internal/v1/credentials/{credential_id}", managementAuth(http.HandlerFunc(api.CredentialState)))
 	mux.Handle("PUT /internal/v1/credentials/{credential_id}", managementAuth(http.HandlerFunc(api.ApplyDesiredState)))
-	handler := httpserver.Chain(mux, httpserver.RequestID, httpserver.LimitBody(cfg.maxBodyBytes), httpserver.Recover(logger))
+	handler := httpserver.Chain(mux, httpserver.RequestID, httpserver.LimitBody(cfg.maxBodyBytes), httpserver.Recover(logger), httpMetrics.Middleware)
 	srv := httpserver.New(cfg.http, handler)
 	srv.TLSConfig = cfg.tls
 	logger.Info("starting node agent", zap.String("service", serviceName), zap.String("node_id", cfg.nodeID), zap.String("environment", cfg.environment))

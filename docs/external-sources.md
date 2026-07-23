@@ -1,6 +1,6 @@
 # External Sources Checked
 
-Checked through 2026-07-18.
+Checked through 2026-07-23.
 
 These sources are used only to shape Stage 0 decisions. Implementation stages must re-check the relevant official documentation before coding an integration.
 
@@ -33,5 +33,10 @@ These sources are used only to shape Stage 0 decisions. Implementation stages mu
 | Trivy image | `docker run aquasec/trivy:latest --version` | Stage 1 verified the current Trivy image reports version 0.72.0, and `make image-scan` pins `aquasec/trivy:0.72.0`. |
 | GitHub Actions refs | `git ls-remote` for `actions/checkout`, `actions/setup-go`, and `actions/setup-node` | Stage 1 pins the v5/v6/v6 action refs by full commit SHA in CI. |
 | Local container image digests | `docker buildx imagetools inspect` | Stage 1 pins `postgres:18-alpine`, `redis:8-alpine`, and `apache/kafka:4.3.1` by manifest digest in Compose. |
+| Prometheus configuration and alerting rules | https://prometheus.io/docs/prometheus/latest/configuration/configuration/ and https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/ | Stage 8 re-checked configuration validation, TLS scrape configuration, rule syntax, `for`, labels, and annotations before adding the local protected scrape profile and runbook-linked alerts. |
+| Prometheus releases and security rebuild | https://github.com/prometheus/prometheus/releases and official tag `v3.13.1` | Re-checked 2026-07-24: 3.13.1 is the current 3.13 LTS bugfix release. Its official image still contains gRPC-Go 1.81.1, so Stage 8 integrity-pins commit `3c2a2ff7aec85b531d74954cc99da75844dc106a`, source SHA-256 `a9a56eb599bbcc7c100385cb7c66193a94b723aaab70d43b2f1702f4c9d439ff`, and prebuilt web UI SHA-256 `2194bfbb5d36457df2b8f480037ce89786ee32f03b5ee6ad5597989f14deafb0`, then rebuilds with Go 1.26.5 and gRPC-Go 1.82.1. Trivy HIGH/CRITICAL scan and `promtool` are required gates. |
+| Grafana provisioning and Docker installation | https://grafana.com/docs/grafana/latest/administration/provisioning/ and https://grafana.com/docs/grafana/latest/setup-grafana/installation/docker/ | Stage 8 provisions immutable data sources/dashboards from files and uses a loopback-only anonymous Viewer profile without a committed administrator password. |
+| Grafana releases and security rebuild | https://github.com/grafana/grafana/releases and official tag `v13.1.1` | Re-checked 2026-07-24. Stage 8 pins commit `a9cee6e1724a455676bb6c05eef7fc54aa4b19f4`, source SHA-256 `722f7374891d375f0900dbee6e638d8b692edeba5d2353dd1d9315a3372cf78c`, and official runtime digest `sha256:7cb8c64c4d57a57e734073f3cc94620adb24a0acb929bd80ba9f14017e3a975b`. The security rebuild updates gRPC-Go, copies only the verified Tempo protobuf tree needed by the server, removes unused bundled Zipkin/Elasticsearch backend executables, and must pass health/dashboard smoke plus a zero HIGH/CRITICAL Trivy gate. |
+| OpenTelemetry Collector | https://opentelemetry.io/docs/collector/ | Re-checked for the Stage 8 plan. Collector, tracing, Tempo, and Loki are intentionally deferred from the first metrics slice rather than represented as implemented. |
 | Apache Kafka releases | https://kafka.apache.org/downloads | Stage 1 local Compose uses Apache Kafka in KRaft mode; image version must be revisited before production. |
 | Go module registry | `go list -m -versions` | Stage 1 pinned current module versions for zap, pgx/v5, franz-go, go-redis/v9, Prometheus client, and goose. |

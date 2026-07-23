@@ -89,6 +89,12 @@ func run(outDir string) error {
 			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		},
 		{
+			name:       "observability",
+			commonName: "ignored",
+			spiffeName: "observability",
+			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		},
+		{
 			name:       "catalog-service",
 			commonName: "catalog-service.local",
 			dnsNames:   []string{"catalog-service", "catalog-service.local", "localhost"},

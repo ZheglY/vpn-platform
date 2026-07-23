@@ -64,6 +64,7 @@ func run(ctx context.Context) error {
 	}()
 
 	registry := observability.NewRegistry()
+	httpMetrics := observability.NewHTTPMetrics(registry, serviceName)
 	store, err := identitypostgres.Open(ctx, appCfg.DatabaseURL)
 	if err != nil {
 		return err
@@ -82,7 +83,7 @@ func run(ctx context.Context) error {
 		"postgres": store.Ping,
 	}))
 	mux.Handle("GET /version", version.Handler(version.New(serviceName, buildVersion, buildCommit, buildDate)))
-	mux.Handle("GET /metrics", observability.Handler(registry))
+	mux.Handle("GET /metrics", observability.MTLSHandler(registry, appCfg.MTLSTrustDomain, appCfg.MTLSNamespace))
 	mux.Handle("PUT /internal/v1/telegram-users/{telegram_id}", authTelegramBot(http.HandlerFunc(api.UpsertTelegramIdentity)))
 	mux.Handle("GET /internal/v1/users/{user_id}", authService(http.HandlerFunc(api.GetUser)))
 	mux.Handle("POST /internal/v1/users/{user_id}/consents", authTelegramBot(http.HandlerFunc(api.AcceptConsent)))
@@ -95,6 +96,7 @@ func run(ctx context.Context) error {
 		httpserver.LimitBody(appCfg.MaxBodyBytes),
 		httpserver.Recover(logger),
 		httpserver.LogRequests(logger),
+		httpMetrics.Middleware,
 	)
 
 	srv := httpserver.New(appCfg.HTTP, handler)

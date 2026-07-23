@@ -8,7 +8,7 @@ Happ is only the user client. It is not the VPN provider. User VPN traffic must 
 
 ## Current Scope
 
-Stage 7 adds durable user notifications and bounded administrator operations. `notification-service` owns Kafka inbox/cursors, causal delivery stream/sequence barriers, business deduplication, typed template versions, durable delivery jobs, leases, retries, and sanitized dead-letter metadata in its own PostgreSQL database. `admin-service` owns principals, role grants, fenced owner attempts, recoverable unknown outcomes, idempotent action requests, and append-only audit in another database; it reaches fixed owning-service APIs over mTLS and has no credentials for their databases.
+Stage 7 adds durable user notifications and bounded administrator operations. `notification-service` owns Kafka inbox/cursors, causal delivery stream/sequence barriers, business deduplication, typed template versions, durable delivery jobs, leases, retries, and sanitized dead-letter metadata in its own PostgreSQL database. `admin-service` owns principals, role grants, fenced owner attempts, recoverable unknown outcomes, idempotent action requests, and append-only audit in another database; it reaches fixed owning-service APIs over mTLS and has no credentials for their databases. Stage 8 is in progress; its first slice adds a shared privacy-safe HTTP RED contract and a local protected Prometheus/Grafana profile.
 
 The current environment is portfolio/sandbox only. It does not use real YooKassa credentials, issue receipts, initiate provider refunds, enroll production VPS hosts, or carry real user traffic. Normal Compose smoke keeps a contract-injected provisioning result for the Stage 5 delivery path. The `vpn` profile runs the full Access command, Kafka, Provisioning, two-node Xray, outcome, Happ delivery, and revoke path with real local VLESS + REALITY traffic. `stage7-smoke` extends that path with fake Telegram failures and local development administrator identities. Production certificate issuance, key custody, alert routing, and VPS deployment remain Stage 8.
 
@@ -342,6 +342,10 @@ Implemented access and Stage 6 provisioning behavior:
 ## Observability
 
 Metrics must be useful without exposing secrets or high-cardinality identifiers. Labels must not contain user IDs, payment IDs, subscription tokens, VLESS UUIDs, raw paths, destination IPs, or Telegram payload data.
+
+The implemented HTTP baseline exports request count, duration, and in-flight requests. Labels contain only service, an allowlisted method, the registered `net/http` route pattern, and response status class. Unknown values collapse to bounded labels. In particular, `/s/<bearer>` is represented only as `GET /s/{token}`. Every service, including node-agent, protects `/metrics` with the dedicated `observability` mTLS identity; telegram-bot serves metrics only on its internal TLS listener.
+
+The local `obs` profile uses integrity-pinned Prometheus and Grafana security rebuilds, scrapes control-plane services and optional node agents over mTLS, evaluates initial target/error/latency alerts linked to runbooks, and provisions a read-only Grafana overview. Both observability images are HIGH/CRITICAL scan gates. Local Prometheus retains 15 days and has no remote write. Production alert routing, authentication, storage, Kafka/DB/domain metrics, tracing, and log collection remain later Stage 8 slices.
 
 Initial SLOs come from the specification:
 

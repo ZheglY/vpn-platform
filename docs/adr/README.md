@@ -30,3 +30,4 @@ ADRs are immutable decision records. If a decision changes after implementation 
 | [0024](0024-stage6-outcome-ordering-and-generation-recovery.md) | Stage 6 outcome ordering and generation recovery | Accepted |
 | [0025](0025-stage7-notification-ordering-and-telegram-delivery.md) | Stage 7 notification ordering and Telegram delivery | Accepted for Stage 7 implementation |
 | [0026](0026-stage7-admin-mtls-rbac-actions-and-audit.md) | Stage 7 admin mTLS, RBAC, actions, and audit | Accepted for Stage 7 implementation |
+| [0027](0027-stage8-observability-metrics-and-local-stack.md) | Stage 8 observability metrics and local stack | Accepted for Stage 8 implementation |

@@ -105,6 +105,7 @@ func run(ctx context.Context) error {
 	rateLimiter := redisstore.NewRateLimiter(redisClient, "telegram", int64(appCfg.WebhookRateLimit), appCfg.WebhookRateWindow)
 
 	registry := observability.NewRegistry()
+	httpMetrics := observability.NewHTTPMetrics(registry, serviceName)
 	mux := http.NewServeMux()
 	mux.Handle("GET /livez", httpserver.LivenessHandler(serviceName))
 	mux.Handle("GET /readyz", httpserver.ReadinessHandler(serviceName, map[string]httpserver.Check{
@@ -116,7 +117,6 @@ func run(ctx context.Context) error {
 		"billing":  billing.Ping,
 	}))
 	mux.Handle("GET /version", version.Handler(version.New(serviceName, buildVersion, buildCommit, buildDate)))
-	mux.Handle("GET /metrics", observability.Handler(registry))
 	mux.Handle("POST /webhooks/telegram", bot.NewWebhookHandlerWithCommerce(bot.Config{
 		WebhookSecret:  appCfg.WebhookSecret,
 		ConsentVersion: appCfg.ConsentVersion,
@@ -135,6 +135,7 @@ func run(ctx context.Context) error {
 	internalMux := http.NewServeMux()
 	internalMux.Handle("GET /livez", httpserver.LivenessHandler(serviceName+"-internal"))
 	internalMux.Handle("GET /version", version.Handler(version.New(serviceName, buildVersion, buildCommit, buildDate)))
+	internalMux.Handle("GET /metrics", observability.MTLSHandler(registry, appCfg.MTLSTrustDomain, appCfg.MTLSNamespace))
 	internalMux.Handle("POST /internal/v1/notifications/{delivery_id}/telegram", deliveryAuth(http.HandlerFunc(deliveryHandler.Deliver)))
 	internalHandler := httpserver.Chain(
 		internalMux,
@@ -142,6 +143,7 @@ func run(ctx context.Context) error {
 		httpserver.LimitBody(appCfg.MaxBodyBytes),
 		httpserver.Recover(logger),
 		httpserver.LogRequests(logger),
+		httpMetrics.Middleware,
 	)
 
 	handler := httpserver.Chain(
@@ -150,6 +152,7 @@ func run(ctx context.Context) error {
 		httpserver.LimitBody(appCfg.MaxBodyBytes),
 		httpserver.Recover(logger),
 		httpserver.LogRequests(logger),
+		httpMetrics.Middleware,
 	)
 
 	srv := httpserver.New(appCfg.HTTP, handler)

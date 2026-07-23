@@ -2,7 +2,7 @@
 
 Production-grade portfolio project for selling prepaid VPN subscriptions through a Telegram bot and delivering Happ-compatible subscription URLs backed by Xray-core nodes.
 
-Current milestone: Stage 7 durable notifications and administrator operations, awaiting product-owner acceptance. Stage 8 has not started.
+Current milestone: Stage 8 observability, hardening, and deployment. Stage 7 is accepted; the first Stage 8 slice adds privacy-safe HTTP RED metrics and a protected local Prometheus/Grafana profile. Stage 8 is still in progress.
 
 ## What Exists Now
 
@@ -19,6 +19,7 @@ Current milestone: Stage 7 durable notifications and administrator operations, a
 - `notification-service` with a separate database, ordered Kafka inbox, causal delivery-stream barriers, business deduplication, typed escaped templates, durable leases/retries, current-state suppression, and typed mTLS delivery through telegram-bot.
 - `admin-service` and Go `admin-cli` with administrator mTLS identities, default-deny RBAC, fenced recoverable owner attempts, idempotent typed mutations, safe reads, and append-only audit.
 - Local Compose stack with isolated service databases, Kafka, Redis, fake external APIs, and an optional two-node VLESS + REALITY data plane.
+- Optional `obs` Compose profile with integrity-pinned Prometheus 3.13.1 and Grafana 13.1.1 security rebuilds, a provisioned read-only dashboard, initial HTTP alerts, and mTLS-only service scraping.
 - Goose migration runner tool.
 - OpenAPI/AsyncAPI contract linting.
 - Makefile and CI verification workflow, including Go vulnerability checks, secret scan, image build, and image scan.
@@ -53,7 +54,7 @@ Internal service endpoints use generated development mTLS certificates. Use `mak
 - `GET /livez`
 - `GET /readyz`
 - `GET /version`
-- `GET /metrics`
+- `GET /metrics` with the `observability` mTLS identity
 
 The telegram-bot service listens on `http://localhost:8081` by default:
 
@@ -61,11 +62,14 @@ The telegram-bot service listens on `http://localhost:8081` by default:
 - `GET /livez`
 - `GET /readyz`
 - `GET /version`
-- `GET /metrics`
+
+Telegram metrics are served only by its internal mTLS listener on port 8090 and require the `observability` identity.
 
 Catalog, billing, subscription, and access listen on `https://localhost:8083`, `https://localhost:8084`, `https://localhost:8086`, and `https://localhost:8087`. The YooKassa webhook is public TLS ingress on billing; internal order, payment, entitlement, URL issuance, and credential-material endpoints require an allowlisted service certificate. Happ fetches `GET /s/{token}` without a client certificate.
 
 `make compose-smoke` exercises onboarding and a complete sandbox purchase through entitlement activation and access delivery. It runs real Billing, Subscription, and Access PostgreSQL suites, injects a provisioning result, verifies one-time issue replay, Happ headers/body, token-path redaction, event publication, and mTLS authorization. It does not start Xray.
+
+`make observability-validate` checks Prometheus configuration/rules and the provisioned Grafana dashboard. `make observability-smoke` runs the normal Compose flow with the `obs` profile and verifies all eight always-on control-plane scrape targets plus the Grafana dashboard. Provisioning and node-agent targets are discovered when the `vpn` profile is present. Local Prometheus and Grafana listen on `127.0.0.1:9090` and `127.0.0.1:3000`.
 
 `make vpn-smoke` generates local-only keys on D and runs the full Stage 6 acceptance path: Access command outbox, Kafka, Provisioning, authenticated material and placement reads, two node-agents with the integrity-checked Xray-core `26.3.27` security rebuild, sequenced outcome consumption, one-time Happ profile issuance, real VLESS + REALITY traffic, refund-driven revoke, and proof that traffic no longer passes afterward.
 

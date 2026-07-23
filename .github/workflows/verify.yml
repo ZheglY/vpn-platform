@@ -31,7 +31,7 @@ jobs:
         run: npm ci
       - name: Verify
         run: make verify
-      - name: Compose smoke
-        run: make compose-smoke
+      - name: Compose and observability smoke
+        run: make observability-smoke
       - name: Stage 7 end-to-end smoke
         run: make stage7-smoke

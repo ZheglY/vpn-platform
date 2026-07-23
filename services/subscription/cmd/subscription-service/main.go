@@ -102,14 +102,16 @@ func run(ctx context.Context) error {
 		adminAuth = httpauth.RequireService(httpauth.ServicePolicy{TrustDomain: cfg.MTLSTrustDomain, Namespace: cfg.MTLSNamespace, Allowed: []string{"admin-service"}})
 	}
 	mux := http.NewServeMux()
+	registry := observability.NewRegistry()
+	httpMetrics := observability.NewHTTPMetrics(registry, serviceName)
 	mux.Handle("GET /livez", httpserver.LivenessHandler(serviceName))
 	mux.Handle("GET /readyz", httpserver.ReadinessHandler(serviceName, map[string]httpserver.Check{"postgres": store.Ping, "billing": billing.Ping, "kafka": kafkaClient.Ping}))
 	mux.Handle("GET /version", version.Handler(version.New(serviceName, buildVersion, buildCommit, buildDate)))
-	mux.Handle("GET /metrics", observability.Handler(observability.NewRegistry()))
+	mux.Handle("GET /metrics", observability.MTLSHandler(registry, cfg.MTLSTrustDomain, cfg.MTLSNamespace))
 	mux.Handle("GET /internal/v1/users/{user_id}/subscription", internalAuth(http.HandlerFunc(api.GetSubscription)))
 	mux.Handle("GET /internal/v1/subscriptions/{subscription_id}/placement", placementAuth(http.HandlerFunc(api.GetPlacement)))
 	mux.Handle("POST /internal/v1/subscriptions/{subscription_id}/admin-revoke", adminAuth(http.HandlerFunc(api.AdminRevoke)))
-	handler := httpserver.Chain(mux, httpserver.RequestID, httpserver.LimitBody(cfg.MaxBodyBytes), httpserver.Recover(logger), httpserver.LogRequests(logger))
+	handler := httpserver.Chain(mux, httpserver.RequestID, httpserver.LimitBody(cfg.MaxBodyBytes), httpserver.Recover(logger), httpserver.LogRequests(logger), httpMetrics.Middleware)
 	srv := httpserver.New(cfg.HTTP, handler)
 	srv.TLSConfig = cfg.TLS
 	logger.Info("starting service", zap.String("service", serviceName), zap.String("environment", cfg.Environment))

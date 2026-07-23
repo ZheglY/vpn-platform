@@ -40,5 +40,5 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-docker compose --profile core --profile app --profile vpn config --quiet
+docker compose --profile core --profile app --profile vpn --profile obs config --quiet
 exit $LASTEXITCODE

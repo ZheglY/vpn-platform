@@ -39,14 +39,15 @@ Set-DefaultEnv "TEMP" "D:\Work\Projects\dev\tmp"
 Set-DefaultEnv "TMP" "D:\Work\Projects\dev\tmp"
 $fullVPN = [Environment]::GetEnvironmentVariable("VPN_SMOKE_FULL_CONTROL_PLANE") -eq "1"
 $stage7Extended = [Environment]::GetEnvironmentVariable("STAGE7_EXTENDED_SMOKE") -eq "1"
+$observability = [Environment]::GetEnvironmentVariable("OBSERVABILITY_SMOKE") -eq "1"
 if ($stage7Extended -and !$fullVPN) { throw "Stage 7 extended smoke requires the full VPN control plane" }
-if ($fullVPN) {
-    [Environment]::SetEnvironmentVariable("COMPOSE_PROFILES", "core,app,vpn", "Process")
-} else {
-    Set-DefaultEnv "COMPOSE_PROFILES" "core,app"
-}
 $profiles = @("--profile", "core", "--profile", "app")
 if ($fullVPN) { $profiles += @("--profile", "vpn") }
+if ($observability) { $profiles += @("--profile", "obs") }
+$profileNames = @("core", "app")
+if ($fullVPN) { $profileNames += "vpn" }
+if ($observability) { $profileNames += "obs" }
+[Environment]::SetEnvironmentVariable("COMPOSE_PROFILES", ($profileNames -join ","), "Process")
 $vpnClientName = "vpn-stage6-client"
 $vpnClientImage = "ghcr.io/xtls/xray-core:26.3.27@sha256:592ec4d11f656db95598d01e76dbcc6e002d67360b96a5436500a938230f52c7"
 
@@ -163,6 +164,7 @@ try {
 
     $buildServices = @("identity-migrate", "identity-service", "catalog-service", "billing-service", "subscription-service", "access-service", "notification-service", "admin-service", "yookassa-api", "telegram-api", "telegram-bot")
 	if ($fullVPN) { $buildServices += @("provisioning-migrate", "provisioning-service", "node-agent-primary") }
+    if ($observability) { $buildServices += @("prometheus", "grafana") }
     foreach ($service in $buildServices) {
         docker compose @profiles build $service
         if ($LASTEXITCODE -ne 0) {
@@ -193,6 +195,9 @@ try {
 	if ($fullVPN) {
 		$containers += @("vpn-service-provisioning-service-1", "vpn-service-node-agent-primary-1", "vpn-service-node-agent-failover-1")
 	}
+    if ($observability) {
+        $containers += @("vpn-service-prometheus-1", "vpn-service-grafana-1")
+    }
     foreach ($attempt in 1..60) {
         $statuses = @()
         foreach ($container in $containers) {
@@ -206,6 +211,33 @@ try {
             throw "Compose services did not become healthy: $($statuses -join ', ')"
         }
         Start-Sleep -Seconds 2
+    }
+
+    if ($observability) {
+        $expectedTargets = if ($fullVPN) { 11 } else { 8 }
+        $healthyTargets = 0
+        $query = [uri]::EscapeDataString('sum(up{job=~"vpn-control-plane|vpn-provisioning|vpn-nodes"} == 1)')
+        foreach ($attempt in 1..30) {
+            $result = Invoke-RestMethod -Uri "http://127.0.0.1:9090/api/v1/query?query=$query" -TimeoutSec 10
+            if ($result.status -eq "success" -and $result.data.result.Count -eq 1) {
+                $healthyTargets = [int][double]$result.data.result[0].value[1]
+            }
+            if ($healthyTargets -eq $expectedTargets) {
+                break
+            }
+            Start-Sleep -Seconds 2
+        }
+        if ($healthyTargets -ne $expectedTargets) {
+            throw "Prometheus has $healthyTargets healthy VPN targets, expected $expectedTargets"
+        }
+        $grafanaHealth = Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/health" -TimeoutSec 10
+        if ($grafanaHealth.database -ne "ok") {
+            throw "Grafana database is not healthy"
+        }
+        $dashboards = Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/search?query=VPN%20Platform%20Overview" -TimeoutSec 10
+        if (@($dashboards | Where-Object { $_.uid -eq "vpn-platform-overview" }).Count -ne 1) {
+            throw "provisioned VPN Platform dashboard was not found"
+        }
     }
 
     if (-not $fullVPN) {
