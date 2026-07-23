@@ -22,6 +22,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ZheglY/vpn-platform/internal/platform/config"
+	"github.com/ZheglY/vpn-platform/internal/platform/httpauth"
 	platformhttpclient "github.com/ZheglY/vpn-platform/internal/platform/httpclient"
 	"github.com/ZheglY/vpn-platform/internal/platform/httpserver"
 	platformkafka "github.com/ZheglY/vpn-platform/internal/platform/kafka"
@@ -31,6 +32,7 @@ import (
 	accessclient "github.com/ZheglY/vpn-platform/services/provisioning/internal/access"
 	"github.com/ZheglY/vpn-platform/services/provisioning/internal/application"
 	"github.com/ZheglY/vpn-platform/services/provisioning/internal/domain"
+	"github.com/ZheglY/vpn-platform/services/provisioning/internal/httpapi"
 	provisioningkafka "github.com/ZheglY/vpn-platform/services/provisioning/internal/kafka"
 	nodeagentclient "github.com/ZheglY/vpn-platform/services/provisioning/internal/nodeagent"
 	provisioningpostgres "github.com/ZheglY/vpn-platform/services/provisioning/internal/postgres"
@@ -120,10 +122,13 @@ func run(ctx context.Context) error {
 	go outboxWorker.Run(ctx)
 
 	mux := http.NewServeMux()
+	api := httpapi.New(store)
+	adminAuth := httpauth.RequireService(httpauth.ServicePolicy{TrustDomain: cfg.TrustDomain, Namespace: cfg.Environment, Allowed: []string{"admin-service"}})
 	mux.Handle("GET /livez", httpserver.LivenessHandler(serviceName))
 	mux.Handle("GET /readyz", httpserver.ReadinessHandler(serviceName, map[string]httpserver.Check{"postgres": store.Ping, "access": access.Ping, "subscription": subscription.Ping, "kafka": kafkaClient.Ping}))
 	mux.Handle("GET /version", version.Handler(version.New(serviceName, buildVersion, buildCommit, buildDate)))
 	mux.Handle("GET /metrics", observability.Handler(observability.NewRegistry()))
+	mux.Handle("GET /internal/v1/credentials/{credential_id}/support-status", adminAuth(http.HandlerFunc(api.GetCredentialSupportSnapshot)))
 	handler := httpserver.Chain(mux, httpserver.RequestID, httpserver.LimitBody(cfg.MaxBodyBytes), httpserver.Recover(logger), httpserver.LogRequests(logger))
 	srv := httpserver.New(cfg.HTTP, handler)
 	srv.TLSConfig = cfg.TLS
@@ -255,6 +260,7 @@ func runReplay(ctx context.Context, args []string) error {
 
 type appConfig struct {
 	Environment, LogLevel, DatabaseURL, AccessBaseURL, SubscriptionBaseURL string
+	TrustDomain                                                            string
 	ClientCertFile, ClientKeyFile, ServerCAFile                            string
 	KafkaBrokers                                                           []string
 	ConsumerGroup                                                          string
@@ -335,7 +341,7 @@ func loadConfig() (appConfig, error) {
 	if consumerGroup == "" {
 		return appConfig{}, fmt.Errorf("KAFKA_CONSUMER_GROUP must not be empty")
 	}
-	return appConfig{Environment: environment, LogLevel: config.String("LOG_LEVEL", "info"), DatabaseURL: databaseURL, AccessBaseURL: accessURL, SubscriptionBaseURL: subscriptionURL, ClientCertFile: clientCert, ClientKeyFile: clientKey, ServerCAFile: serverCA, KafkaBrokers: brokers, ConsumerGroup: consumerGroup, OutboundTimeout: outbound, WorkerPollInterval: poll, WorkerRetryDelay: retry, WorkerLease: lease, HealthInterval: health, HealthStaleAfter: stale, ReconciliationInterval: reconciliation, ReconciliationBatch: reconciliationBatch, MaxAttempts: maxAttempts, MaxBodyBytes: int64(maxBody), HTTP: httpConfig, TLS: tlsConfig}, nil
+	return appConfig{Environment: environment, LogLevel: config.String("LOG_LEVEL", "info"), DatabaseURL: databaseURL, AccessBaseURL: accessURL, SubscriptionBaseURL: subscriptionURL, TrustDomain: config.String("MTLS_TRUST_DOMAIN", "vpn-service"), ClientCertFile: clientCert, ClientKeyFile: clientKey, ServerCAFile: serverCA, KafkaBrokers: brokers, ConsumerGroup: consumerGroup, OutboundTimeout: outbound, WorkerPollInterval: poll, WorkerRetryDelay: retry, WorkerLease: lease, HealthInterval: health, HealthStaleAfter: stale, ReconciliationInterval: reconciliation, ReconciliationBatch: reconciliationBatch, MaxAttempts: maxAttempts, MaxBodyBytes: int64(maxBody), HTTP: httpConfig, TLS: tlsConfig}, nil
 }
 
 func splitCSV(value string) []string {

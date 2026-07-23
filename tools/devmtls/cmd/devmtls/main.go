@@ -31,6 +31,7 @@ type certSpec struct {
 	dnsNames   []string
 	ipAddrs    []net.IP
 	spiffeName string
+	spiffeURI  string
 	extUsages  []x509.ExtKeyUsage
 }
 
@@ -75,9 +76,11 @@ func run(outDir string) error {
 		},
 		{
 			name:       "telegram-bot",
-			commonName: "ignored",
+			commonName: "telegram-bot.local",
+			dnsNames:   []string{"telegram-bot", "telegram-bot.local", "localhost"},
+			ipAddrs:    []net.IP{net.ParseIP("127.0.0.1")},
 			spiffeName: "telegram-bot",
-			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		},
 		{
 			name:       "identity-health",
@@ -158,6 +161,46 @@ func run(outDir string) error {
 			spiffeName: "admin-cli",
 			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		},
+		{
+			name:       "notification-service",
+			commonName: "notification-service.local",
+			dnsNames:   []string{"notification-service", "notification-service.local", "localhost"},
+			ipAddrs:    []net.IP{net.ParseIP("127.0.0.1")},
+			spiffeName: "notification-service",
+			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		},
+		{
+			name:       "notification-health",
+			commonName: "ignored",
+			spiffeName: "notification-health",
+			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		},
+		{
+			name:       "admin-service",
+			commonName: "admin-service.local",
+			dnsNames:   []string{"admin-service", "admin-service.local", "localhost"},
+			ipAddrs:    []net.IP{net.ParseIP("127.0.0.1")},
+			spiffeName: "admin-service",
+			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		},
+		{
+			name:       "admin-health",
+			commonName: "ignored",
+			spiffeName: "admin-health",
+			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		},
+		{
+			name:       "admin-support-local",
+			commonName: "ignored",
+			spiffeURI:  "spiffe://vpn-service/ns/local/admin/support-local",
+			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		},
+		{
+			name:       "admin-operations-local",
+			commonName: "ignored",
+			spiffeURI:  "spiffe://vpn-service/ns/local/admin/operations-local",
+			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		},
 	}
 
 	for _, spec := range specs {
@@ -218,8 +261,12 @@ func newLeaf(spec certSpec, caCert *x509.Certificate, caKey *ecdsa.PrivateKey) (
 		DNSNames:     spec.dnsNames,
 		IPAddresses:  spec.ipAddrs,
 	}
-	if spec.spiffeName != "" {
-		spiffeID, err := httpauth.SPIFFEID(trustDomain, namespace, spec.spiffeName)
+	if spec.spiffeName != "" || spec.spiffeURI != "" {
+		spiffeID := spec.spiffeURI
+		var err error
+		if spiffeID == "" {
+			spiffeID, err = httpauth.SPIFFEID(trustDomain, namespace, spec.spiffeName)
+		}
 		if err != nil {
 			return nil, nil, err
 		}

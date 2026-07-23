@@ -13,6 +13,9 @@ export BILLING_DB_PASSWORD="${BILLING_DB_PASSWORD:-local-compose-billing}"
 export SUBSCRIPTION_DB_PASSWORD="${SUBSCRIPTION_DB_PASSWORD:-local-compose-subscription}"
 export ACCESS_DB_PASSWORD="${ACCESS_DB_PASSWORD:-local-compose-access}"
 export PROVISIONING_DB_PASSWORD="${PROVISIONING_DB_PASSWORD:-local-compose-provisioning}"
+export NOTIFICATION_DB_PASSWORD="${NOTIFICATION_DB_PASSWORD:-local-compose-notification}"
+export ADMIN_DB_PASSWORD="${ADMIN_DB_PASSWORD:-local-compose-admin}"
+export ADMIN_MIGRATOR_DB_PASSWORD="${ADMIN_MIGRATOR_DB_PASSWORD:-local-compose-admin-migrator}"
 export ACCESS_CREDENTIAL_KEY_BASE64="${ACCESS_CREDENTIAL_KEY_BASE64:-MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}"
 export ACCESS_TOKEN_HMAC_KEY_BASE64="${ACCESS_TOKEN_HMAC_KEY_BASE64:-ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA=}"
 export SUBSCRIPTION_PUBLIC_BASE_URL="${SUBSCRIPTION_PUBLIC_BASE_URL:-https://127.0.0.1:8087}"
@@ -26,6 +29,11 @@ export PAYMENT_RETURN_URL="${PAYMENT_RETURN_URL:-https://example.invalid/payment
 export COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-2}"
 export COMPOSE_BAKE="${COMPOSE_BAKE:-false}"
 full_vpn="${VPN_SMOKE_FULL_CONTROL_PLANE:-0}"
+stage7_extended="${STAGE7_EXTENDED_SMOKE:-0}"
+if [[ "$stage7_extended" == "1" && "$full_vpn" != "1" ]]; then
+  echo 'Stage 7 extended smoke requires the full VPN control plane' >&2
+  exit 1
+fi
 profiles=(--profile core --profile app)
 if [[ "$full_vpn" == "1" ]]; then
   export COMPOSE_PROFILES=core,app,vpn
@@ -87,7 +95,7 @@ wait_redis_processing_key() {
   exit 1
 }
 
-build_services=(identity-migrate identity-service catalog-service billing-service subscription-service access-service yookassa-api telegram-api telegram-bot)
+build_services=(identity-migrate identity-service catalog-service billing-service subscription-service access-service notification-service admin-service yookassa-api telegram-api telegram-bot)
 if [[ "$full_vpn" == "1" ]]; then build_services+=(provisioning-migrate provisioning-service node-agent-primary); fi
 for service in "${build_services[@]}"; do
   docker compose "${profiles[@]}" build "$service"
@@ -105,6 +113,8 @@ containers=(
   vpn-service-billing-service-1
   vpn-service-subscription-service-1
   vpn-service-access-service-1
+  vpn-service-notification-service-1
+  vpn-service-admin-service-1
   vpn-service-telegram-api-1
   vpn-service-telegram-bot-1
 )
@@ -136,7 +146,7 @@ for container in "${containers[@]}"; do
 done
 
 if [[ "$full_vpn" != "1" ]]; then
-docker stop vpn-service-telegram-bot-1 vpn-service-access-service-1 vpn-service-subscription-service-1 vpn-service-billing-service-1 >/dev/null
+docker stop vpn-service-admin-service-1 vpn-service-notification-service-1 vpn-service-telegram-bot-1 vpn-service-access-service-1 vpn-service-subscription-service-1 vpn-service-billing-service-1 >/dev/null
 BILLING_TEST_DATABASE_URL="postgres://billing_app:${BILLING_DB_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/billing_service?sslmode=disable" \
   go test ./services/billing/internal/postgres -run '^TestIntegration' -count=1
 SUBSCRIPTION_TEST_DATABASE_URL="postgres://subscription_app:${SUBSCRIPTION_DB_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/subscription_service?sslmode=disable" \
@@ -145,19 +155,26 @@ ACCESS_TEST_DATABASE_URL="postgres://access_app:${ACCESS_DB_PASSWORD}@127.0.0.1:
   go test ./services/access/internal/postgres -run '^TestIntegration' -count=1
 ACCESS_TEST_REDIS_ADDR="127.0.0.1:6379" ACCESS_TEST_REDIS_PASSWORD="${REDIS_PASSWORD}" \
   go test ./services/access/internal/ratelimit -run '^TestIntegration' -count=1
-docker start vpn-service-billing-service-1 vpn-service-subscription-service-1 vpn-service-access-service-1 vpn-service-telegram-bot-1 >/dev/null
+NOTIFICATION_TEST_DATABASE_URL="postgres://notification_app:${NOTIFICATION_DB_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/notification_service?sslmode=disable" \
+  go test ./services/notification/internal/postgres -run '^TestIntegration' -count=1
+ADMIN_TEST_DATABASE_URL="postgres://admin_app:${ADMIN_DB_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/admin_service?sslmode=disable" \
+ADMIN_MIGRATOR_TEST_DATABASE_URL="postgres://admin_migrator:${ADMIN_MIGRATOR_DB_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/admin_service?sslmode=disable" \
+  go test ./services/admin/internal/postgres -run '^TestIntegration' -count=1
+docker start vpn-service-billing-service-1 vpn-service-subscription-service-1 vpn-service-access-service-1 vpn-service-telegram-bot-1 vpn-service-notification-service-1 vpn-service-admin-service-1 >/dev/null
 for _ in $(seq 1 60); do
   billing_status="$(docker inspect -f '{{.State.Health.Status}}' vpn-service-billing-service-1)"
   subscription_status="$(docker inspect -f '{{.State.Health.Status}}' vpn-service-subscription-service-1)"
   access_status="$(docker inspect -f '{{.State.Health.Status}}' vpn-service-access-service-1)"
   bot_status="$(docker inspect -f '{{.State.Health.Status}}' vpn-service-telegram-bot-1)"
-  if [[ "$billing_status" == "healthy" && "$subscription_status" == "healthy" && "$access_status" == "healthy" && "$bot_status" == "healthy" ]]; then
+  notification_status="$(docker inspect -f '{{.State.Health.Status}}' vpn-service-notification-service-1)"
+  admin_status="$(docker inspect -f '{{.State.Health.Status}}' vpn-service-admin-service-1)"
+  if [[ "$billing_status" == "healthy" && "$subscription_status" == "healthy" && "$access_status" == "healthy" && "$bot_status" == "healthy" && "$notification_status" == "healthy" && "$admin_status" == "healthy" ]]; then
     break
   fi
   sleep 2
 done
-if [[ "$billing_status" != "healthy" || "$subscription_status" != "healthy" || "$access_status" != "healthy" || "$bot_status" != "healthy" ]]; then
-  echo "services did not recover after integration tests: billing=$billing_status subscription=$subscription_status access=$access_status bot=$bot_status" >&2
+if [[ "$billing_status" != "healthy" || "$subscription_status" != "healthy" || "$access_status" != "healthy" || "$bot_status" != "healthy" || "$notification_status" != "healthy" || "$admin_status" != "healthy" ]]; then
+  echo "services did not recover after integration tests: billing=$billing_status subscription=$subscription_status access=$access_status bot=$bot_status notification=$notification_status admin=$admin_status" >&2
   exit 1
 fi
 fi
@@ -398,6 +415,19 @@ for malformed_path in "$subscription_base" "$subscription_base/" "$subscription_
 done
 rm -f tmp/stage5-malformed-headers.txt tmp/stage5-malformed-body.txt
 
+if [[ "$stage7_extended" == "1" ]]; then
+  if ! bash scripts/stage7-e2e.sh BeforeRevoke "$subscription_user_id" "$subscription_id" "$access_credential_id"; then
+    echo "Stage 7 notification job counts (type|status|count):"
+    docker compose exec -T postgres psql --username="$POSTGRES_USER" --dbname notification_service -tAc "SELECT notification_type || '|' || status || '|' || count(*) FROM notification_jobs GROUP BY notification_type,status ORDER BY notification_type,status"
+    echo "Stage 7 notification inbox counts (event_type|count):"
+    docker compose exec -T postgres psql --username="$POSTGRES_USER" --dbname notification_service -tAc "SELECT event_type || '|' || count(*) FROM notification_inbox GROUP BY event_type ORDER BY event_type"
+    echo "Stage 7 notification DLQ counts (reason|count):"
+    docker compose exec -T postgres psql --username="$POSTGRES_USER" --dbname notification_service -tAc "SELECT reason_code || '|' || count(*) FROM notification_dead_letters GROUP BY reason_code ORDER BY reason_code"
+    docker compose logs --tail=120 notification-service telegram-bot
+    exit 1
+  fi
+fi
+
 if [[ "$full_vpn" == "1" ]]; then
   sed -E 's/("id": ")[0-9a-f-]{36}(")/\1'"${vpn_credential_uuid}"'\2/' secrets/dev-xray/smoke-client.json >tmp/stage6-client.json
   docker run --rm -v "$(pwd)/tmp/stage6-client.json:/etc/xray/client.json:ro" "$vpn_client_image" run -test -config /etc/xray/client.json >/dev/null
@@ -440,6 +470,9 @@ if [[ "$full_vpn" == "1" ]]; then
   if curl -sS --socks5-hostname 127.0.0.1:11080 --connect-timeout 3 --max-time 5 http://camouflage.local/ >/dev/null 2>&1; then
     echo 'revoked full-control-plane credential still passed traffic' >&2
     exit 1
+  fi
+  if [[ "$stage7_extended" == "1" ]]; then
+    bash scripts/stage7-e2e.sh AfterRevoke "$subscription_user_id" "$subscription_id" "$access_credential_id"
   fi
   docker rm -f "$vpn_client_name" >/dev/null
   rm -f tmp/stage6-client.json

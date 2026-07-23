@@ -6,6 +6,7 @@ ARG XRAY_COMMIT=d2758a023cd7f4174a5a5fa4ff66e487d4342ba0
 ARG XRAY_SOURCE_SHA256=14fa566ee0a801d3d51144c67018b449f5dcf462ddfacadd032da069787e61f9
 ARG XRAY_CRYPTO_VERSION=v0.52.0
 ARG XRAY_NET_VERSION=v0.55.0
+ARG XRAY_GRPC_VERSION=v1.82.1
 
 FROM golang:${GO_VERSION}-alpine@${GO_BUILDER_DIGEST} AS xray-build
 ARG XRAY_VERSION
@@ -13,17 +14,18 @@ ARG XRAY_COMMIT
 ARG XRAY_SOURCE_SHA256
 ARG XRAY_CRYPTO_VERSION
 ARG XRAY_NET_VERSION
+ARG XRAY_GRPC_VERSION
 WORKDIR /src/xray
 RUN wget -q -O /tmp/xray.tar.gz "https://github.com/XTLS/Xray-core/archive/${XRAY_COMMIT}.tar.gz" \
     && echo "${XRAY_SOURCE_SHA256}  /tmp/xray.tar.gz" | sha256sum -c - \
     && tar -xzf /tmp/xray.tar.gz --strip-components=1 \
     && rm /tmp/xray.tar.gz
-RUN go mod edit -require="golang.org/x/crypto@${XRAY_CRYPTO_VERSION}" -require="golang.org/x/net@${XRAY_NET_VERSION}" \
+RUN go mod edit -require="golang.org/x/crypto@${XRAY_CRYPTO_VERSION}" -require="golang.org/x/net@${XRAY_NET_VERSION}" -require="google.golang.org/grpc@${XRAY_GRPC_VERSION}" \
     && go mod tidy \
     && go mod verify
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false \
     -gcflags="all=-l=4" \
-    -ldflags="-X github.com/xtls/xray-core/core.build=stage6-security-rebuild-${XRAY_VERSION} -s -w -buildid=" \
+    -ldflags="-X github.com/xtls/xray-core/core.build=stage7-security-rebuild-${XRAY_VERSION} -s -w -buildid=" \
     -o /out/xray ./main
 
 FROM golang:${GO_VERSION}-alpine@${GO_BUILDER_DIGEST} AS build

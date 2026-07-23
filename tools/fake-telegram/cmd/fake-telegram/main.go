@@ -24,6 +24,13 @@ type server struct {
 	mu       sync.Mutex
 	messages []message
 	delay    time.Duration
+	failure  failurePlan
+}
+
+type failurePlan struct {
+	Mode              string
+	Remaining         int
+	RetryAfterSeconds int
 }
 
 func main() {
@@ -52,6 +59,7 @@ func run() error {
 	})
 	mux.HandleFunc("POST /", s.sendMessage)
 	mux.HandleFunc("POST /reset", s.reset)
+	mux.HandleFunc("POST /behavior", s.setBehavior)
 	mux.HandleFunc("GET /messages", s.listMessages)
 
 	httpServer := &http.Server{
@@ -97,8 +105,9 @@ func (s *server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var req struct {
-		ChatID json.RawMessage `json:"chat_id"`
-		Text   string          `json:"text"`
+		ChatID    json.RawMessage `json:"chat_id"`
+		Text      string          `json:"text"`
+		ParseMode string          `json:"parse_mode,omitempty"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -111,12 +120,15 @@ func (s *server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	chatID, ok := normalizeChatID(req.ChatID)
-	if !ok || req.Text == "" {
+	if !ok || req.Text == "" || req.ParseMode != "" && req.ParseMode != "HTML" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"ok":          false,
 			"error_code":  400,
 			"description": "bad request",
 		})
+		return
+	}
+	if s.writePlannedFailure(w) {
 		return
 	}
 
@@ -164,8 +176,60 @@ func (s *server) listMessages(w http.ResponseWriter, _ *http.Request) {
 func (s *server) reset(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock()
 	s.messages = nil
+	s.failure = failurePlan{}
 	s.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) setBehavior(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Mode              string `json:"mode"`
+		Count             int    `json:"count"`
+		RetryAfterSeconds int    `json:"retry_after_seconds"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || request.Count < 0 || request.Count > 100 || request.RetryAfterSeconds < 0 || request.RetryAfterSeconds > 60 {
+		http.Error(w, "invalid behavior", http.StatusBadRequest)
+		return
+	}
+	allowed := map[string]bool{"success": true, "rate_limited": true, "blocked": true, "unauthorized": true, "server_error": true}
+	if !allowed[request.Mode] || request.Mode == "rate_limited" && request.RetryAfterSeconds < 1 {
+		http.Error(w, "invalid behavior", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	s.failure = failurePlan{Mode: request.Mode, Remaining: request.Count, RetryAfterSeconds: request.RetryAfterSeconds}
+	s.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) writePlannedFailure(w http.ResponseWriter) bool {
+	s.mu.Lock()
+	plan := s.failure
+	if plan.Remaining > 0 {
+		s.failure.Remaining--
+	}
+	s.mu.Unlock()
+	if plan.Remaining < 1 || plan.Mode == "success" {
+		return false
+	}
+	switch plan.Mode {
+	case "rate_limited":
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{
+			"ok": false, "error_code": 429, "description": "too many requests",
+			"parameters": map[string]int{"retry_after": plan.RetryAfterSeconds},
+		})
+	case "blocked":
+		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error_code": 403, "description": "bot was blocked by the user"})
+	case "unauthorized":
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error_code": 401, "description": "unauthorized"})
+	case "server_error":
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error_code": 500, "description": "temporary failure"})
+	default:
+		return false
+	}
+	return true
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

@@ -341,6 +341,47 @@ func (s *Store) ListAllocations(ctx context.Context, credentialID string) ([]dom
 	return listAllocationsQuery(ctx, s.pool, credentialID)
 }
 
+func (s *Store) GetSupportSnapshot(ctx context.Context, credentialID string) (domain.SupportSnapshot, error) {
+	var snapshot domain.SupportSnapshot
+	err := s.pool.QueryRow(ctx, `
+SELECT credential_id, id, kind, desired_revision, state, attempts, max_attempts,
+       last_error_code, created_at, completed_at
+FROM operations WHERE credential_id = $1
+ORDER BY desired_revision DESC, created_at DESC LIMIT 1`, credentialID).Scan(
+		&snapshot.CredentialID, &snapshot.OperationID, &snapshot.Kind, &snapshot.DesiredRevision,
+		&snapshot.State, &snapshot.Attempts, &snapshot.MaxAttempts, &snapshot.LastErrorCode,
+		&snapshot.CreatedAt, &snapshot.CompletedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.SupportSnapshot{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.SupportSnapshot{}, fmt.Errorf("get provisioning support operation: %w", err)
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT a.node_id, n.label, n.region, n.status, a.role, a.desired_revision,
+       a.desired_state, a.allocation_revision, a.state, a.last_error_code
+FROM allocations a JOIN nodes n ON n.id = a.node_id
+WHERE a.credential_id = $1
+ORDER BY CASE a.role WHEN 'primary' THEN 0 ELSE 1 END, a.node_id`, credentialID)
+	if err != nil {
+		return domain.SupportSnapshot{}, fmt.Errorf("list provisioning support allocations: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var allocation domain.SupportAllocation
+		if err := rows.Scan(&allocation.NodeID, &allocation.NodeLabel, &allocation.Region, &allocation.NodeStatus,
+			&allocation.Role, &allocation.DesiredRevision, &allocation.DesiredState,
+			&allocation.AllocationRevision, &allocation.State, &allocation.LastErrorCode); err != nil {
+			return domain.SupportSnapshot{}, fmt.Errorf("scan provisioning support allocation: %w", err)
+		}
+		snapshot.Allocations = append(snapshot.Allocations, allocation)
+	}
+	if err := rows.Err(); err != nil {
+		return domain.SupportSnapshot{}, fmt.Errorf("iterate provisioning support allocations: %w", err)
+	}
+	return snapshot, nil
+}
+
 func (s *Store) PrepareRevoke(ctx context.Context, operation domain.Operation) error {
 	tag, err := s.pool.Exec(ctx, `
 UPDATE allocations AS allocation

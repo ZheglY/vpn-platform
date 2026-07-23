@@ -22,6 +22,9 @@ func (f fakeBilling) CreateOrder(context.Context, string, string, string, string
 func (f fakeBilling) GetOrder(context.Context, string, string) (domain.Order, error) {
 	return f.order, nil
 }
+func (f fakeBilling) GetPaymentStatus(context.Context, string, string, string) (domain.PaymentStatus, error) {
+	return domain.PaymentStatus{}, nil
+}
 func (f fakeBilling) CreatePayment(context.Context, string, string, string) (domain.Payment, bool, error) {
 	return f.payment, true, nil
 }

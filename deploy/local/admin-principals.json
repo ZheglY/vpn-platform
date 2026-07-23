@@ -1,0 +1,16 @@
+{
+  "principals": [
+    {
+      "spiffe_id": "spiffe://vpn-service/ns/local/admin/support-local",
+      "display_name": "Local support operator",
+      "enabled": true,
+      "roles": ["support_readonly"]
+    },
+    {
+      "spiffe_id": "spiffe://vpn-service/ns/local/admin/operations-local",
+      "display_name": "Local operations operator",
+      "enabled": true,
+      "roles": ["operations"]
+    }
+  ]
+}

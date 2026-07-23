@@ -144,6 +144,9 @@ func (f *fakeStore) Ping(context.Context) error { return nil }
 func (f *fakeStore) ApplyPeriod(context.Context, domain.EventMeta, domain.PeriodEvent, domain.CredentialSeed) error {
 	return nil
 }
+func (f *fakeStore) ApplyGrace(context.Context, domain.EventMeta, domain.GraceEvent) error {
+	return nil
+}
 func (f *fakeStore) ApplyTerminal(context.Context, domain.EventMeta, domain.TerminalEvent, string) error {
 	return nil
 }
@@ -164,6 +167,9 @@ func (f *fakeStore) IssueToken(_ context.Context, _ string, operation string, se
 }
 func (f *fakeStore) GetAccessStatus(context.Context, string) (domain.AccessStatus, error) {
 	return domain.AccessStatus{}, nil
+}
+func (f *fakeStore) RecoverProvisioning(context.Context, domain.AdminRecoveryInput) (domain.AdminRecoveryResult, error) {
+	return domain.AdminRecoveryResult{}, nil
 }
 func (f *fakeStore) GetProfileByTokenHMAC(context.Context, []byte) (domain.ProfileRecord, error) {
 	if len(f.profile.Ciphertext) == 0 {

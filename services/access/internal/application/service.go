@@ -21,7 +21,10 @@ import (
 	"github.com/ZheglY/vpn-platform/services/access/internal/happ"
 )
 
-var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
+var (
+	uuidPattern       = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
+	reasonCodePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{2,63}$`)
+)
 
 type Service struct {
 	store     domain.Store
@@ -72,7 +75,7 @@ func (s *Service) ProcessEvent(ctx context.Context, meta domain.EventMeta, data 
 		if err := strictDecode(data, &event); err != nil {
 			return ContractError("invalid_event_data", err)
 		}
-		if event.SubscriptionID != meta.AggregateID || meta.PartitionKey != "user:"+event.UserID || event.UserID == "" || event.EffectiveAt.IsZero() {
+		if event.SubscriptionID != meta.AggregateID || meta.PartitionKey != "user:"+event.UserID || event.UserID == "" || event.EffectiveAt.IsZero() || !validRevocationReason(event.Reason) {
 			return ContractError("event_invariant_failed", domain.ErrDurableStateConflict)
 		}
 		operationID, err := cryptoutil.RandomUUID()
@@ -80,6 +83,15 @@ func (s *Service) ProcessEvent(ctx context.Context, meta domain.EventMeta, data 
 			return err
 		}
 		return s.store.ApplyTerminal(ctx, meta, event, operationID)
+	case "subscription.grace.started.v1":
+		var event domain.GraceEvent
+		if err := strictDecode(data, &event); err != nil {
+			return ContractError("invalid_event_data", err)
+		}
+		if event.SubscriptionID != meta.AggregateID || meta.PartitionKey != "user:"+event.UserID || event.UserID == "" || event.PeriodEnd.IsZero() || event.EffectiveAt.IsZero() || !event.GraceEndsAt.After(event.PeriodEnd) || !event.EffectiveAt.Equal(event.PeriodEnd) {
+			return ContractError("event_invariant_failed", domain.ErrDurableStateConflict)
+		}
+		return s.store.ApplyGrace(ctx, meta, event)
 	case "access.provision.succeeded.v1":
 		var event domain.ProvisionSucceeded
 		if err := strictDecode(data, &event); err != nil {
@@ -94,7 +106,7 @@ func (s *Service) ProcessEvent(ctx context.Context, meta domain.EventMeta, data 
 		if err := strictDecode(data, &event); err != nil {
 			return ContractError("invalid_event_data", err)
 		}
-		if event.CredentialID != meta.AggregateID || !validUUIDs(event.OperationID, event.CredentialID) || event.FailedRevision < 1 || event.ReasonCode == "" || len(event.ReasonCode) > 64 || event.FailedAt.IsZero() || !validFailureScope(event.FailureScope) || !validUniqueUUIDs(event.PendingNodeIDs) {
+		if event.CredentialID != meta.AggregateID || !validUUIDs(event.OperationID, event.CredentialID) || event.FailedRevision < 1 || !reasonCodePattern.MatchString(event.ReasonCode) || event.FailedAt.IsZero() || !validFailureScope(event.FailureScope) || !validUniqueUUIDs(event.PendingNodeIDs) {
 			return ContractError("event_invariant_failed", domain.ErrDurableStateConflict)
 		}
 		kind := "provision"
@@ -141,6 +153,15 @@ func (s *Service) IssueSubscriptionURL(ctx context.Context, subscriptionID, idem
 
 func (s *Service) GetAccessStatus(ctx context.Context, subscriptionID string) (domain.AccessStatus, error) {
 	return s.store.GetAccessStatus(ctx, subscriptionID)
+}
+
+func (s *Service) RecoverProvisioning(ctx context.Context, input domain.AdminRecoveryInput) (domain.AdminRecoveryResult, error) {
+	operationID, err := cryptoutil.RandomUUID()
+	if err != nil {
+		return domain.AdminRecoveryResult{}, err
+	}
+	input.OperationID = operationID
+	return s.store.RecoverProvisioning(ctx, input)
 }
 
 func (s *Service) GetProfile(ctx context.Context, token string) (Profile, error) {
@@ -263,6 +284,10 @@ func validUniqueUUIDs(values []string) bool {
 
 func validFailureScope(value string) bool {
 	return value == "primary" || value == "failover" || value == "all" || value == "unknown"
+}
+
+func validRevocationReason(value string) bool {
+	return value == "expired" || value == "refund" || value == "refund_gap" || value == "admin_block" || value == "abuse" || value == "deleted"
 }
 
 func strictDecode(data []byte, target any) error {

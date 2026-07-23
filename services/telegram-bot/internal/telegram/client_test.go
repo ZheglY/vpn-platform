@@ -73,6 +73,15 @@ func TestClientSendMessageReturnsErrorOnNon2xx(t *testing.T) {
 	}
 }
 
+func TestTelegramAPIErrorBoundsRetryAfter(t *testing.T) {
+	err := telegramAPIError(ErrorKindHTTPStatus, http.StatusTooManyRequests, responseEnvelope{
+		Parameters: &responseParameters{RetryAfter: 999999999},
+	})
+	if err.Kind != ErrorKindRateLimited || err.RetryAfter != 15*time.Minute {
+		t.Fatalf("api error = %+v, want bounded 15m Retry-After", err)
+	}
+}
+
 func TestClientSendMessageReturnsErrorOnOkFalse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)

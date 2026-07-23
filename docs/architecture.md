@@ -8,9 +8,9 @@ Happ is only the user client. It is not the VPN provider. User VPN traffic must 
 
 ## Current Scope
 
-Stage 6 adds the provisioning control plane and local node data plane. `provisioning-service` owns node registry, health, capacity, allocations, ordered operations, reconciliation, inbox, outbox, and sanitized dead-letter coordinates in its own PostgreSQL database. It obtains encrypted-at-rest credential material and immutable paid-period placement through allowlisted mTLS APIs. Two local node-agents converge revisioned desired state into pinned Xray-core and keep node-local operation journals and last-known-good snapshots.
+Stage 7 adds durable user notifications and bounded administrator operations. `notification-service` owns Kafka inbox/cursors, business deduplication, typed template versions, durable delivery jobs, leases, retries, and sanitized dead-letter metadata in its own PostgreSQL database. `admin-service` owns principals, role grants, idempotent action requests, and append-only audit in another database; it reaches fixed owning-service APIs over mTLS and has no credentials for their databases.
 
-The current environment is portfolio/sandbox only. It does not use real YooKassa credentials, issue receipts, initiate provider refunds, enroll production VPS hosts, or carry real user traffic. Normal Compose smoke keeps a contract-injected provisioning result for the Stage 5 delivery path. The separate `vpn` profile runs the full Access command, Kafka, Provisioning, two-node Xray, outcome, Happ delivery, and revoke path with real local VLESS + REALITY traffic. Active entitlement explicitly does not mean VPN access is ready.
+The current environment is portfolio/sandbox only. It does not use real YooKassa credentials, issue receipts, initiate provider refunds, enroll production VPS hosts, or carry real user traffic. Normal Compose smoke keeps a contract-injected provisioning result for the Stage 5 delivery path. The `vpn` profile runs the full Access command, Kafka, Provisioning, two-node Xray, outcome, Happ delivery, and revoke path with real local VLESS + REALITY traffic. `stage7-smoke` extends that path with fake Telegram failures and local development administrator identities. Production certificate issuance, key custody, alert routing, and VPS deployment remain Stage 8.
 
 ## Product Decisions Already Accepted
 
@@ -66,6 +66,7 @@ flowchart LR
 | `access-service` | Subscription URL tokens, Happ document rendering, credential lifecycle | Yes |
 | `provisioning-service` | Nodes, allocations, desired state, operations, health snapshots | Yes |
 | `notification-service` | Durable Telegram notifications and retry | Yes |
+| `admin-service` | Administrator identity mapping, RBAC, typed action orchestration, and append-only audit | Yes |
 | `node-agent` | Applies Xray desired state on a VPN node, validates config, reports aggregate health | Local last-known-good and operation journal |
 | `Xray-core` | Data-plane VPN traffic processing | Local config/state only |
 
@@ -125,6 +126,8 @@ Root `internal/platform` may contain technical helpers only. It must not define 
 | Async command | Kafka command message | Explicit owner, timeout, retry, DLQ, terminal failure |
 | Credential material retrieval | HTTP/mTLS | Provisioning-service fetches minimum material from access-service by credential ID |
 | Node desired state | HTTPS/mTLS over private WireGuard network | Idempotent operation ID and desired revision |
+| Notification delivery | HTTP/mTLS from notification-service to telegram-bot | Stable delivery ID; typed send only; Telegram token remains in telegram-bot |
+| Administrator read/action | Admin mTLS to admin-service, then fixed owner HTTP/mTLS | Explicit permission and typed owner endpoint; no cross-service SQL |
 | Public subscription document | `GET /s/{token}` on separate hostname | Bearer token in path, redacted everywhere, no-store |
 
 Kafka never replaces HTTP when an immediate answer is required. PostgreSQL commit and Kafka publish are connected through transactional outbox, not a distributed transaction.
@@ -255,6 +258,18 @@ sequenceDiagram
 ```
 
 The plaintext subscription token is never created before provisioning and is never sent through Kafka. The bot must not persist or log the returned URL.
+
+### Notification Delivery
+
+Subscription and Access producers own independent positive sequences across their user-facing topics. Notification keeps one cursor per `(producer, aggregate_type, aggregate_id)`, defers a gap without committing it, treats exact replay as a no-op, and rejects a changed reuse. Billing facts remain unsequenced and are deduplicated by event identity plus a business key.
+
+Jobs never persist rendered text or Telegram chat ID. At each attempt Notification resolves the current consent-eligible target from Identity, checks current entitlement in Subscription for access-related messages, checks current Access state for readiness messages, renders an HTML-escaped versioned template, and calls telegram-bot over mTLS. PostgreSQL leases and bounded retries are durable; Redis only guards the stable delivery ID immediately around the Telegram call. Telegram can accept a message while its HTTP response is lost, so user-visible delivery is at-least-once and a duplicate remains possible in that ambiguous case.
+
+### Administrator Operations
+
+Admin certificates use exactly one verified URI `spiffe://<trust-domain>/ns/<environment>/admin/<principal>`. Admin-service maps that URI to local role grants and checks a distinct permission on every endpoint. A valid non-admin platform certificate receives `403`; missing verified client identity is unauthenticated.
+
+Read paths proxy only support-safe owner DTOs from configured fixed URLs. Mutations are limited to notification retry, subscription revoke, and higher-revision Access recovery. Admin records the accepted action and immutable audit before calling the owner, then records the bounded result. Exact replay uses the same owner action ID; changed input conflicts. No payment mutation, arbitrary URL, SQL, shell, Kafka payload, role mutation, subscription URL, VLESS UUID, or node configuration operation exists.
 
 ### Revoke Lifecycle
 

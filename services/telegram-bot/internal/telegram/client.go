@@ -55,10 +55,19 @@ func NewClientWithHTTPClient(apiBaseURL, token string, httpClient *http.Client) 
 }
 
 func (c *Client) SendMessage(ctx context.Context, chatID int64, text string) error {
+	return c.sendMessage(ctx, chatID, text, "")
+}
+
+func (c *Client) SendHTMLMessage(ctx context.Context, chatID int64, text string) error {
+	return c.sendMessage(ctx, chatID, text, "HTML")
+}
+
+func (c *Client) sendMessage(ctx context.Context, chatID int64, text, parseMode string) error {
 	endpoint := c.apiBaseURL.ResolveReference(&url.URL{Path: "/bot" + c.token + "/sendMessage"})
 	payload, err := json.Marshal(sendMessageRequest{
-		ChatID: chatID,
-		Text:   text,
+		ChatID:    chatID,
+		Text:      text,
+		ParseMode: parseMode,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal Telegram sendMessage request: %w", err)
@@ -98,8 +107,9 @@ type responseEnvelope struct {
 }
 
 type sendMessageRequest struct {
-	ChatID int64  `json:"chat_id"`
-	Text   string `json:"text"`
+	ChatID    int64  `json:"chat_id"`
+	Text      string `json:"text"`
+	ParseMode string `json:"parse_mode,omitempty"`
 }
 
 type responseParameters struct {
@@ -138,7 +148,11 @@ func decodeEnvelope(body io.Reader) (responseEnvelope, error) {
 func telegramAPIError(kind string, statusCode int, envelope responseEnvelope) *APIError {
 	retryAfter := time.Duration(0)
 	if envelope.Parameters != nil && envelope.Parameters.RetryAfter > 0 {
-		retryAfter = time.Duration(envelope.Parameters.RetryAfter) * time.Second
+		seconds := envelope.Parameters.RetryAfter
+		if seconds > 900 {
+			seconds = 900
+		}
+		retryAfter = time.Duration(seconds) * time.Second
 		kind = ErrorKindRateLimited
 	}
 	return &APIError{

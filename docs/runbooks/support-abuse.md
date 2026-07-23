@@ -21,4 +21,4 @@ Real support and abuse contacts are not required for the sandbox portfolio envir
 
 - No real customer support channel.
 - No real abuse mailbox.
-- Operator actions still require reason and audit once admin operations exist.
+- The Stage 7 admin CLI requires an operations certificate, explicit permission, human reason, idempotency key, owner execution, and append-only audit for a subscription revoke. It does not initiate a refund or expose VPN credentials.

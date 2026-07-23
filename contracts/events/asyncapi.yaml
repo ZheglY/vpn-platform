@@ -1,10 +1,10 @@
 asyncapi: 3.1.0
 info:
   title: VPN Subscription Platform Events
-  version: 0.6.0-stage6
+  version: 0.7.0-stage7
   description: >
-    Stage 6 event contract. Provisioning-service consumes ordered, secret-free
-    commands and publishes durable results or sanitized DLQ notices.
+    Stage 7 event contract. Notification-service consumes normalized, ordered,
+    secret-free user facts while existing provisioning contracts remain stable.
 defaultContentType: application/json
 channels:
   billing.payment.succeeded.v1:
@@ -37,6 +37,12 @@ channels:
     messages:
       subscriptionExtended:
         $ref: '#/components/messages/SubscriptionExtendedV1'
+  subscription.grace.started.v1:
+    address: subscription.grace.started.v1
+    x-contract-status: implemented-stage7
+    messages:
+      subscriptionGraceStarted:
+        $ref: '#/components/messages/SubscriptionGraceStartedV1'
   subscription.expired.v1:
     address: subscription.expired.v1
     x-contract-status: implemented-stage4
@@ -103,6 +109,18 @@ channels:
     messages:
       accessReady:
         $ref: '#/components/messages/AccessReadyV1'
+  access.provisioning.failed.v1:
+    address: access.provisioning.failed.v1
+    x-contract-status: implemented-stage7
+    messages:
+      accessProvisioningFailed:
+        $ref: '#/components/messages/AccessProvisioningFailedV1'
+  access.revoked.v1:
+    address: access.revoked.v1
+    x-contract-status: implemented-stage7
+    messages:
+      accessRevoked:
+        $ref: '#/components/messages/AccessRevokedV1'
 operations:
   publishBillingPaymentSucceeded:
     action: send
@@ -131,6 +149,11 @@ operations:
     channel:
       $ref: '#/channels/subscription.extended.v1'
     summary: subscription-service publishes an appended immutable entitlement period.
+  publishSubscriptionGraceStarted:
+    action: send
+    channel:
+      $ref: '#/channels/subscription.grace.started.v1'
+    summary: subscription-service publishes the exact active-to-grace transition.
   publishSubscriptionExpired:
     action: send
     channel:
@@ -199,6 +222,18 @@ operations:
       $ref: '#/channels/access.ready.v1'
     summary: access-service announces VPN access can now be delivered to the user.
     x-contract-status: implemented-stage5
+  publishAccessProvisioningFailed:
+    action: send
+    channel:
+      $ref: '#/channels/access.provisioning.failed.v1'
+    summary: access-service publishes a user-safe terminal provisioning failure fact.
+    x-contract-status: implemented-stage7
+  publishAccessRevoked:
+    action: send
+    channel:
+      $ref: '#/channels/access.revoked.v1'
+    summary: access-service publishes physical revoke completion without credential or node details.
+    x-contract-status: implemented-stage7
 components:
   messages:
     BillingPaymentSucceededV1:
@@ -264,7 +299,7 @@ components:
       x-contract-status: implemented-stage4
       x-json-schema: schemas/subscription.activated.v1.schema.json
       x-partition-key: user:{user_id}
-      x-consumers: [access-service]
+      x-consumers: [access-service, notification-service]
       x-retry: durable outbox retry with exponential backoff capped at five minutes
       x-dlq-policy: unpublished records remain durable and operator-visible in the subscription outbox
       x-ordering: aggregate_sequence is subscription-owned; Access defers and retries gaps without committing the later offset
@@ -283,7 +318,7 @@ components:
       x-contract-status: implemented-stage4
       x-json-schema: schemas/subscription.extended.v1.schema.json
       x-partition-key: user:{user_id}
-      x-consumers: [access-service]
+      x-consumers: [access-service, notification-service]
       x-retry: durable outbox retry with exponential backoff capped at five minutes
       x-dlq-policy: unpublished records remain durable and operator-visible in the subscription outbox
       x-ordering: aggregate_sequence is subscription-owned; Access defers and retries gaps without committing the later offset
@@ -304,6 +339,24 @@ components:
       x-retry: durable outbox retry with exponential backoff capped at five minutes
       x-dlq-policy: unpublished records remain durable and operator-visible in the subscription outbox
       x-ordering: aggregate_sequence is subscription-owned; Access defers and retries gaps without committing the later offset
+    SubscriptionGraceStartedV1:
+      name: subscription.grace.started.v1
+      title: Subscription grace period started
+      payload:
+        $ref: '#/components/schemas/SubscriptionGraceStartedEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            pattern: '^user:[0-9a-fA-F-]{36}$'
+      x-owner: subscription-service
+      x-contract-status: implemented-stage7
+      x-json-schema: schemas/subscription.grace.started.v1.schema.json
+      x-partition-key: user:{user_id}
+      x-consumers: [access-service, notification-service]
+      x-retry: durable outbox retry with exponential backoff capped at five minutes
+      x-dlq-policy: unpublished records remain durable and operator-visible in the subscription outbox
+      x-ordering: aggregate_sequence is subscription-owned across every lifecycle topic; consumers defer gaps without committing the later offset
     SubscriptionRevokedV1:
       name: subscription.revoked.v1
       payload:
@@ -468,6 +521,40 @@ components:
       x-consumers: [notification-service, telegram-bot]
       x-secret-policy: This event never contains the subscription URL or token.
       x-ordering: aggregate_sequence is credential-owned; consumers must reject stale readiness after a later command or state
+    AccessProvisioningFailedV1:
+      name: access.provisioning.failed.v1
+      title: User-facing access provisioning failed
+      payload:
+        $ref: '#/components/schemas/AccessProvisioningFailedEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            pattern: '^user:[0-9a-fA-F-]{36}$'
+      x-owner: access-service
+      x-contract-status: implemented-stage7
+      x-json-schema: schemas/access.provisioning.failed.v1.schema.json
+      x-partition-key: user:{user_id}
+      x-consumers: [notification-service]
+      x-secret-policy: No node IDs, provider diagnostics, URL, token, UUID credential, or ciphertext.
+      x-ordering: aggregate_sequence is credential-owned across Access facts
+    AccessRevokedV1:
+      name: access.revoked.v1
+      title: User access was physically revoked
+      payload:
+        $ref: '#/components/schemas/AccessRevokedEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            pattern: '^user:[0-9a-fA-F-]{36}$'
+      x-owner: access-service
+      x-contract-status: implemented-stage7
+      x-json-schema: schemas/access.revoked.v1.schema.json
+      x-partition-key: user:{user_id}
+      x-consumers: [notification-service]
+      x-secret-policy: No node assignment, URL, token, UUID credential, or ciphertext.
+      x-ordering: aggregate_sequence is credential-owned across Access facts
   schemas:
     Envelope:
       type: object
@@ -596,6 +683,22 @@ components:
               pattern: '^user:[0-9a-fA-F-]{36}$'
             data:
               $ref: '#/components/schemas/SubscriptionPeriodData'
+    SubscriptionGraceStartedEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [aggregate_sequence]
+          properties:
+            event_type:
+              const: subscription.grace.started.v1
+            producer:
+              const: subscription-service
+            aggregate_type:
+              const: subscription
+            partition_key:
+              pattern: '^user:[0-9a-fA-F-]{36}$'
+            data:
+              $ref: '#/components/schemas/SubscriptionGraceStartedData'
     SubscriptionExpiredEnvelope:
       allOf:
         - $ref: '#/components/schemas/Envelope'
@@ -740,6 +843,38 @@ components:
               pattern: '^user:[0-9a-fA-F-]{36}$'
             data:
               $ref: '#/components/schemas/AccessReadyData'
+    AccessProvisioningFailedEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [aggregate_sequence]
+          properties:
+            event_type:
+              const: access.provisioning.failed.v1
+            producer:
+              const: access-service
+            aggregate_type:
+              const: access
+            partition_key:
+              pattern: '^user:[0-9a-fA-F-]{36}$'
+            data:
+              $ref: '#/components/schemas/AccessProvisioningFailedData'
+    AccessRevokedEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          required: [aggregate_sequence]
+          properties:
+            event_type:
+              const: access.revoked.v1
+            producer:
+              const: access-service
+            aggregate_type:
+              const: access
+            partition_key:
+              pattern: '^user:[0-9a-fA-F-]{36}$'
+            data:
+              $ref: '#/components/schemas/AccessRevokedData'
     BillingPaymentSucceededData:
       type: object
       required: [payment_id, order_id, user_id, plan_id, amount_minor, currency, paid_at]
@@ -851,6 +986,26 @@ components:
           type: string
           format: date-time
         grace_ends_at:
+          type: string
+          format: date-time
+    SubscriptionGraceStartedData:
+      type: object
+      required: [subscription_id, user_id, period_end, grace_ends_at, effective_at]
+      additionalProperties: false
+      properties:
+        subscription_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        period_end:
+          type: string
+          format: date-time
+        grace_ends_at:
+          type: string
+          format: date-time
+        effective_at:
           type: string
           format: date-time
     SubscriptionTerminalData:
@@ -1043,3 +1198,49 @@ components:
         link_issuance_required:
           type: boolean
           const: true
+    AccessProvisioningFailedData:
+      type: object
+      required: [subscription_id, credential_id, user_id, failed_revision, reason_code, failed_at]
+      additionalProperties: false
+      properties:
+        subscription_id:
+          type: string
+          format: uuid
+        credential_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        failed_revision:
+          type: integer
+          minimum: 1
+        reason_code:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{2,63}$'
+        failed_at:
+          type: string
+          format: date-time
+    AccessRevokedData:
+      type: object
+      required: [subscription_id, credential_id, user_id, desired_revision, reason, revoked_at]
+      additionalProperties: false
+      properties:
+        subscription_id:
+          type: string
+          format: uuid
+        credential_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        desired_revision:
+          type: integer
+          minimum: 1
+        reason:
+          type: string
+          enum: [expired, refund, refund_gap, admin_block, abuse, deleted]
+        revoked_at:
+          type: string
+          format: date-time

@@ -72,8 +72,9 @@ func run(ctx context.Context) error {
 
 	api := httpapi.New(store)
 	authTelegramBot := internalAuth(appCfg, []string{"telegram-bot"})
-	authService := internalAuth(appCfg, []string{"telegram-bot", "billing-service", "admin-cli"})
-	authConsentRead := internalAuth(appCfg, []string{"telegram-bot", "billing-service"})
+	authService := internalAuth(appCfg, []string{"telegram-bot", "billing-service", "admin-service"})
+	authConsentRead := internalAuth(appCfg, []string{"telegram-bot", "billing-service", "admin-service"})
+	authNotification := internalAuth(appCfg, []string{"notification-service"})
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /livez", httpserver.LivenessHandler(serviceName))
@@ -86,6 +87,7 @@ func run(ctx context.Context) error {
 	mux.Handle("GET /internal/v1/users/{user_id}", authService(http.HandlerFunc(api.GetUser)))
 	mux.Handle("POST /internal/v1/users/{user_id}/consents", authTelegramBot(http.HandlerFunc(api.AcceptConsent)))
 	mux.Handle("GET /internal/v1/users/{user_id}/consents/{document_type}/{document_version}", authConsentRead(http.HandlerFunc(api.HasConsent)))
+	mux.Handle("GET /internal/v1/users/{user_id}/notification-target", authNotification(http.HandlerFunc(api.GetNotificationTarget)))
 
 	handler := httpserver.Chain(
 		mux,

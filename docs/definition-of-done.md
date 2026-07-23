@@ -87,3 +87,18 @@ This Definition of Done applies to every implementation task after Stage 0. Stag
 - Request cancellation during Xray reload cannot leave the process stopped; candidate startup or last-known-good restoration completes under an independent bounded context.
 - Local `vpn` Compose proves the complete Access command, Kafka, Provisioning, both node-agents, real Xray, outcome, Happ profile, VLESS + REALITY traffic, and terminal revoke path. Direct node mutation alone is insufficient.
 - Migration from zero, PostgreSQL concurrency, contracts, race tests, normal Compose smoke, VPN smoke, service images, and image scans pass before acceptance.
+
+## Stage 7 Specific
+
+- Notification and Admin each own a separate database, migration path, runtime credential, and Docker image. Admin has no credentials for another service database.
+- Notification uses a payload-free durable inbox, producer/aggregate cursor, unique business key, PostgreSQL job lease, bounded retry, database time, and sanitized DLQ metadata.
+- Exact source replay is a no-op; changed event/sequence reuse is a durable conflict; gaps remain uncommitted; several workers cannot claim one job concurrently; expired leases recover.
+- Telegram target and consent are resolved just in time. Notification storage, logs, metrics, traces, audit, Kafka, and DLQ contain no chat ID, rendered text, Bot token, subscription URL, VLESS UUID, ciphertext, or private key.
+- telegram-bot remains the token owner and exposes one allowlisted typed mTLS send endpoint with a stable delivery ID. `429`, network/5xx, blocked/missing target, unauthorized token, invalid request, overflow, and ambiguous timeout semantics are tested and documented.
+- Access-related jobs query current Subscription entitlement; readiness jobs also query Access state. Delivery is suppressed after revoke/expiry even while Access is still converging. Initial activation and physical revoke facts follow the accepted business-notification suppression policy.
+- Admin derives actor only from one verified admin SPIFFE URI, maps enabled local principals to built-in default-deny roles, and checks an explicit permission on every endpoint. No superadmin/wildcard exists.
+- Admin CLI verifies the server certificate, uses bounded timeout/request ID, exposes typed commands only, requires reason and idempotency key for mutations, rejects unsafe output, and exits nonzero on failure.
+- Admin mutations are limited to notification retry, subscription revoke, and higher-revision Access recovery. Owning services execute them idempotently; no financial mutation, arbitrary SQL/Kafka/shell, URL rotation, role grant, or direct node/Xray change exists.
+- Accepted and completion audit rows are append-only, use PostgreSQL time, retain safe identity/permission/request snapshots, and cannot be updated/deleted/truncated by the runtime role.
+- OpenAPI, AsyncAPI, JSON Schemas/examples, ADRs, threat model, runbooks, risk register, README, Compose, Makefile, and CI match behavior.
+- Migration from zero, unit/PostgreSQL/race/security/contract checks, all images and scans, normal Compose smoke, VPN smoke, and Stage 7 E2E pass before acceptance. Stage 8 remains blocked.

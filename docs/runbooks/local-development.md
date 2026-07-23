@@ -21,7 +21,7 @@ make verify
 - OpenAPI lint
 - AsyncAPI parser validation
 - billing and subscription event JSON Schema example validation
-- identity-service, catalog-service, billing-service, subscription-service, and telegram-bot Docker builds
+- all service images, including notification-service, admin-service, admin-cli, provisioning, node-agent, and telegram-bot
 - Trivy HIGH/CRITICAL vulnerability scan for service images
 - `docker compose config --quiet`
 - `git diff --exit-code`
@@ -74,6 +74,8 @@ Stage 4 smoke also verifies:
 - one immutable paid period activates one subscription and publishes one `subscription.activated.v1`
 - the entitlement endpoint accepts `telegram-bot` mTLS identity and rejects a different valid identity
 
+Stage 7 adds separate Notification and Admin PostgreSQL integration suites to normal Compose smoke. `make stage7-smoke` additionally runs the full Stage 6 VPN path and verifies notification duplicate suppression, Telegram `429` and permanent errors, admin mTLS/RBAC/action replay, safe audit/output, restart recovery, and stale access-ready suppression after revoke.
+
 Stop:
 
 ```powershell
@@ -90,12 +92,15 @@ Invoke-RestMethod http://localhost:8081/version
 docker compose exec -T catalog-service /catalog-service healthcheck
 docker compose exec -T billing-service /billing-service healthcheck
 docker compose exec -T subscription-service /subscription-service healthcheck
+docker compose exec -T notification-service /notification-service healthcheck
+docker compose exec -T admin-service /admin-service healthcheck
 ```
 
 Automated smoke:
 
 ```powershell
 make compose-smoke
+make stage7-smoke
 ```
 
 ## Notes
@@ -103,6 +108,6 @@ make compose-smoke
 - Local Compose credentials are development-only and must never be reused in production.
 - Local development mTLS keys are generated secrets and must never be committed.
 - Redis is ephemeral in this project and is not a source of truth.
-- Identity, catalog, billing, and subscription use distinct logical databases and credentials even though local Compose shares one PostgreSQL instance.
+- Every durable service, including Notification and Admin, uses a distinct logical database and credential even though local Compose shares one PostgreSQL instance.
 - `TERMS_URL` must point to the immutable terms document matching `CONSENT_VERSION`; local Compose defaults to `https://example.invalid/terms/terms-v1`.
 - `YOOKASSA_SHOP_ID` and `YOOKASSA_SECRET_KEY` are local fake-provider values. Never place real credentials in `.env` or run Stage 3 against a production shop.

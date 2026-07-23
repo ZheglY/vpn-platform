@@ -64,6 +64,16 @@ type Payment struct {
 	CreatedAt       time.Time  `json:"created_at"`
 }
 
+type PaymentStatus struct {
+	PaymentID   string     `json:"payment_id"`
+	OrderID     string     `json:"order_id"`
+	Status      string     `json:"status"`
+	AmountMinor int64      `json:"amount_minor"`
+	Currency    string     `json:"currency"`
+	PaidAt      *time.Time `json:"paid_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+}
+
 type CreateOrderInput struct {
 	UserID               string
 	PlanID               string

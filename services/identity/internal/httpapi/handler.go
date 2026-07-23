@@ -140,6 +140,32 @@ func (h *Handler) HasConsent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"accepted": accepted})
 }
 
+func (h *Handler) GetNotificationTarget(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("user_id")
+	documentType := strings.TrimSpace(r.URL.Query().Get("document_type"))
+	documentVersion := strings.TrimSpace(r.URL.Query().Get("document_version"))
+	if !isUUID(userID) || documentType == "" || documentVersion == "" || len(documentType) > 64 || len(documentVersion) > 64 {
+		httperror.Write(w, r, http.StatusBadRequest, "invalid_notification_target_request", "notification target request is invalid")
+		return
+	}
+	target, err := h.store.GetNotificationTarget(r.Context(), userID, documentType, documentVersion)
+	if errors.Is(err, domain.ErrNotFound) {
+		httperror.Write(w, r, http.StatusNotFound, "not_found", "user was not found")
+		return
+	}
+	if err != nil {
+		httperror.Write(w, r, http.StatusInternalServerError, "notification_target_failed", "notification target lookup failed")
+		return
+	}
+	response := struct {
+		Eligible       bool    `json:"eligible"`
+		ReasonCode     string  `json:"reason_code,omitempty"`
+		TelegramChatID *int64  `json:"telegram_chat_id,omitempty"`
+		Locale         *string `json:"locale,omitempty"`
+	}{target.Eligible, target.ReasonCode, target.TelegramChatID, target.Locale}
+	writeJSON(w, http.StatusOK, response)
+}
+
 type upsertTelegramRequest struct {
 	Username     *string `json:"username"`
 	DisplayName  *string `json:"display_name"`

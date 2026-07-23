@@ -8,6 +8,7 @@ const contracts = [
   "billing.refund.succeeded.v1",
   "subscription.activated.v1",
   "subscription.extended.v1",
+  "subscription.grace.started.v1",
   "subscription.expired.v1",
   "subscription.revoked.v1",
   "access.provision.request.v1",
@@ -19,6 +20,8 @@ const contracts = [
   "access.revoke.succeeded.v1",
   "access.revoke.failed.v1",
   "access.ready.v1",
+  "access.provisioning.failed.v1",
+  "access.revoked.v1",
 ];
 
 const ajv = new Ajv2020({ allErrors: true, strict: true });

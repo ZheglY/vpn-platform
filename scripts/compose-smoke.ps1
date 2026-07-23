@@ -18,6 +18,9 @@ Set-DefaultEnv "BILLING_DB_PASSWORD" "local-compose-billing"
 Set-DefaultEnv "SUBSCRIPTION_DB_PASSWORD" "local-compose-subscription"
 Set-DefaultEnv "ACCESS_DB_PASSWORD" "local-compose-access"
 Set-DefaultEnv "PROVISIONING_DB_PASSWORD" "local-compose-provisioning"
+Set-DefaultEnv "NOTIFICATION_DB_PASSWORD" "local-compose-notification"
+Set-DefaultEnv "ADMIN_DB_PASSWORD" "local-compose-admin"
+Set-DefaultEnv "ADMIN_MIGRATOR_DB_PASSWORD" "local-compose-admin-migrator"
 Set-DefaultEnv "ACCESS_CREDENTIAL_KEY_BASE64" "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
 Set-DefaultEnv "ACCESS_TOKEN_HMAC_KEY_BASE64" "ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA="
 Set-DefaultEnv "SUBSCRIPTION_PUBLIC_BASE_URL" "https://127.0.0.1:8087"
@@ -35,6 +38,8 @@ Set-DefaultEnv "GOTMPDIR" "D:\Work\Projects\dev\go-work\tmp"
 Set-DefaultEnv "TEMP" "D:\Work\Projects\dev\tmp"
 Set-DefaultEnv "TMP" "D:\Work\Projects\dev\tmp"
 $fullVPN = [Environment]::GetEnvironmentVariable("VPN_SMOKE_FULL_CONTROL_PLANE") -eq "1"
+$stage7Extended = [Environment]::GetEnvironmentVariable("STAGE7_EXTENDED_SMOKE") -eq "1"
+if ($stage7Extended -and !$fullVPN) { throw "Stage 7 extended smoke requires the full VPN control plane" }
 if ($fullVPN) {
     [Environment]::SetEnvironmentVariable("COMPOSE_PROFILES", "core,app,vpn", "Process")
 } else {
@@ -156,7 +161,7 @@ try {
         exit $LASTEXITCODE
     }
 
-    $buildServices = @("identity-migrate", "identity-service", "catalog-service", "billing-service", "subscription-service", "access-service", "yookassa-api", "telegram-api", "telegram-bot")
+    $buildServices = @("identity-migrate", "identity-service", "catalog-service", "billing-service", "subscription-service", "access-service", "notification-service", "admin-service", "yookassa-api", "telegram-api", "telegram-bot")
 	if ($fullVPN) { $buildServices += @("provisioning-migrate", "provisioning-service", "node-agent-primary") }
     foreach ($service in $buildServices) {
         docker compose @profiles build $service
@@ -180,6 +185,8 @@ try {
         "vpn-service-billing-service-1",
         "vpn-service-subscription-service-1",
         "vpn-service-access-service-1",
+        "vpn-service-notification-service-1",
+        "vpn-service-admin-service-1",
         "vpn-service-telegram-api-1",
         "vpn-service-telegram-bot-1"
     )
@@ -202,7 +209,7 @@ try {
     }
 
     if (-not $fullVPN) {
-    docker stop "vpn-service-telegram-bot-1" "vpn-service-access-service-1" "vpn-service-subscription-service-1" "vpn-service-billing-service-1" | Out-Null
+    docker stop "vpn-service-admin-service-1" "vpn-service-notification-service-1" "vpn-service-telegram-bot-1" "vpn-service-access-service-1" "vpn-service-subscription-service-1" "vpn-service-billing-service-1" | Out-Null
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
@@ -249,7 +256,26 @@ try {
         $env:ACCESS_TEST_REDIS_ADDR = $previousAccessRedisAddr
         $env:ACCESS_TEST_REDIS_PASSWORD = $previousAccessRedisPassword
     }
-    docker start "vpn-service-billing-service-1" "vpn-service-subscription-service-1" "vpn-service-access-service-1" "vpn-service-telegram-bot-1" | Out-Null
+    $previousNotificationTestDatabaseURL = $env:NOTIFICATION_TEST_DATABASE_URL
+    try {
+        $env:NOTIFICATION_TEST_DATABASE_URL = "postgres://notification_app:$($env:NOTIFICATION_DB_PASSWORD)@127.0.0.1:$($env:POSTGRES_PORT)/notification_service?sslmode=disable"
+        go test ./services/notification/internal/postgres -run '^TestIntegration' -count=1
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    } finally {
+        $env:NOTIFICATION_TEST_DATABASE_URL = $previousNotificationTestDatabaseURL
+    }
+    $previousAdminTestDatabaseURL = $env:ADMIN_TEST_DATABASE_URL
+    $previousAdminMigratorTestDatabaseURL = $env:ADMIN_MIGRATOR_TEST_DATABASE_URL
+    try {
+        $env:ADMIN_TEST_DATABASE_URL = "postgres://admin_app:$($env:ADMIN_DB_PASSWORD)@127.0.0.1:$($env:POSTGRES_PORT)/admin_service?sslmode=disable"
+        $env:ADMIN_MIGRATOR_TEST_DATABASE_URL = "postgres://admin_migrator:$($env:ADMIN_MIGRATOR_DB_PASSWORD)@127.0.0.1:$($env:POSTGRES_PORT)/admin_service?sslmode=disable"
+        go test ./services/admin/internal/postgres -run '^TestIntegration' -count=1
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    } finally {
+        $env:ADMIN_TEST_DATABASE_URL = $previousAdminTestDatabaseURL
+        $env:ADMIN_MIGRATOR_TEST_DATABASE_URL = $previousAdminMigratorTestDatabaseURL
+    }
+    docker start "vpn-service-billing-service-1" "vpn-service-subscription-service-1" "vpn-service-access-service-1" "vpn-service-telegram-bot-1" "vpn-service-notification-service-1" "vpn-service-admin-service-1" | Out-Null
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
@@ -258,11 +284,13 @@ try {
         $subscriptionStatus = docker inspect -f "{{.State.Health.Status}}" "vpn-service-subscription-service-1"
         $accessStatus = docker inspect -f "{{.State.Health.Status}}" "vpn-service-access-service-1"
         $botStatus = docker inspect -f "{{.State.Health.Status}}" "vpn-service-telegram-bot-1"
-        if ($billingStatus -eq "healthy" -and $subscriptionStatus -eq "healthy" -and $accessStatus -eq "healthy" -and $botStatus -eq "healthy") {
+        $notificationStatus = docker inspect -f "{{.State.Health.Status}}" "vpn-service-notification-service-1"
+        $adminStatus = docker inspect -f "{{.State.Health.Status}}" "vpn-service-admin-service-1"
+        if ($billingStatus -eq "healthy" -and $subscriptionStatus -eq "healthy" -and $accessStatus -eq "healthy" -and $botStatus -eq "healthy" -and $notificationStatus -eq "healthy" -and $adminStatus -eq "healthy") {
             break
         }
         if ($attempt -eq 60) {
-            throw "Services did not recover after integration tests: billing=$billingStatus subscription=$subscriptionStatus access=$accessStatus bot=$botStatus"
+            throw "Services did not recover after integration tests: billing=$billingStatus subscription=$subscriptionStatus access=$accessStatus bot=$botStatus notification=$notificationStatus admin=$adminStatus"
         }
         Start-Sleep -Seconds 2
     }
@@ -542,6 +570,21 @@ try {
         Remove-Item $malformedHeaders, $malformedBody -Force
     }
 
+    if ($stage7Extended) {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stage7-e2e.ps1 -Phase BeforeRevoke -UserID $subscriptionUserID -SubscriptionID $subscriptionID -CredentialID $accessCredentialID
+        if ($LASTEXITCODE -ne 0) {
+            $stage7ExitCode = $LASTEXITCODE
+            Write-Host "Stage 7 notification job counts (type|status|count):"
+            docker compose exec -T postgres psql --username="$env:POSTGRES_USER" --dbname notification_service -tAc "SELECT notification_type || '|' || status || '|' || count(*) FROM notification_jobs GROUP BY notification_type,status ORDER BY notification_type,status"
+            Write-Host "Stage 7 notification inbox counts (event_type|count):"
+            docker compose exec -T postgres psql --username="$env:POSTGRES_USER" --dbname notification_service -tAc "SELECT event_type || '|' || count(*) FROM notification_inbox GROUP BY event_type ORDER BY event_type"
+            Write-Host "Stage 7 notification DLQ counts (reason|count):"
+            docker compose exec -T postgres psql --username="$env:POSTGRES_USER" --dbname notification_service -tAc "SELECT reason_code || '|' || count(*) FROM notification_dead_letters GROUP BY reason_code ORDER BY reason_code"
+            docker compose logs --tail=120 notification-service telegram-bot
+            exit $stage7ExitCode
+        }
+    }
+
     if ($fullVPN) {
         $clientConfig = Get-Content -Raw "secrets/dev-xray/smoke-client.json" | ConvertFrom-Json
         $clientConfig.outbounds[0].settings.id = $vpnCredentialUUID
@@ -595,6 +638,10 @@ try {
         $revokedExitCode = $LASTEXITCODE
         $ErrorActionPreference = $requestPreference
         if ($revokedExitCode -eq 0) { throw "revoked full-control-plane credential still passed traffic" }
+        if ($stage7Extended) {
+            & powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stage7-e2e.ps1 -Phase AfterRevoke -UserID $subscriptionUserID -SubscriptionID $subscriptionID -CredentialID $accessCredentialID
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        }
         Remove-Item $vpnClientConfig -Force
     }
 

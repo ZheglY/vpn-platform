@@ -146,6 +146,7 @@ type envelopeRule struct {
 var envelopeRules = map[string]envelopeRule{
 	"subscription.activated.v1":     {"subscription-service", "subscription", "user:"},
 	"subscription.extended.v1":      {"subscription-service", "subscription", "user:"},
+	"subscription.grace.started.v1": {"subscription-service", "subscription", "user:"},
 	"subscription.expired.v1":       {"subscription-service", "subscription", "user:"},
 	"subscription.revoked.v1":       {"subscription-service", "subscription", "user:"},
 	"access.provision.succeeded.v1": {"provisioning-service", "credential", "credential:"},

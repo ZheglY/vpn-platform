@@ -95,9 +95,11 @@ func run(ctx context.Context) error {
 	api := httpapi.New(store)
 	internalAuth := func(next http.Handler) http.Handler { return next }
 	placementAuth := func(next http.Handler) http.Handler { return next }
+	adminAuth := func(next http.Handler) http.Handler { return next }
 	if cfg.InternalAuth == "mtls" {
-		internalAuth = httpauth.RequireService(httpauth.ServicePolicy{TrustDomain: cfg.MTLSTrustDomain, Namespace: cfg.MTLSNamespace, Allowed: []string{"telegram-bot", "access-service", "admin-cli"}})
+		internalAuth = httpauth.RequireService(httpauth.ServicePolicy{TrustDomain: cfg.MTLSTrustDomain, Namespace: cfg.MTLSNamespace, Allowed: []string{"telegram-bot", "access-service", "notification-service", "admin-service"}})
 		placementAuth = httpauth.RequireService(httpauth.ServicePolicy{TrustDomain: cfg.MTLSTrustDomain, Namespace: cfg.MTLSNamespace, Allowed: []string{"provisioning-service"}})
+		adminAuth = httpauth.RequireService(httpauth.ServicePolicy{TrustDomain: cfg.MTLSTrustDomain, Namespace: cfg.MTLSNamespace, Allowed: []string{"admin-service"}})
 	}
 	mux := http.NewServeMux()
 	mux.Handle("GET /livez", httpserver.LivenessHandler(serviceName))
@@ -106,6 +108,7 @@ func run(ctx context.Context) error {
 	mux.Handle("GET /metrics", observability.Handler(observability.NewRegistry()))
 	mux.Handle("GET /internal/v1/users/{user_id}/subscription", internalAuth(http.HandlerFunc(api.GetSubscription)))
 	mux.Handle("GET /internal/v1/subscriptions/{subscription_id}/placement", placementAuth(http.HandlerFunc(api.GetPlacement)))
+	mux.Handle("POST /internal/v1/subscriptions/{subscription_id}/admin-revoke", adminAuth(http.HandlerFunc(api.AdminRevoke)))
 	handler := httpserver.Chain(mux, httpserver.RequestID, httpserver.LimitBody(cfg.MaxBodyBytes), httpserver.Recover(logger), httpserver.LogRequests(logger))
 	srv := httpserver.New(cfg.HTTP, handler)
 	srv.TLSConfig = cfg.TLS

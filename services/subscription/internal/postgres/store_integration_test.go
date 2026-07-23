@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -97,6 +98,7 @@ func TestIntegrationLifecycleExactBoundariesAndLeaseRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertStatus(t, store, userID, domain.StatusGrace)
+	assertCount(t, store, `SELECT count(*) FROM outbox WHERE topic='subscription.grace.started.v1'`, 1)
 	if _, ok, err := store.claimDueAt(context.Background(), periodEnd.Add(time.Hour-time.Nanosecond), time.Minute); err != nil || ok {
 		t.Fatalf("claimed before grace boundary ok=%v err=%v", ok, err)
 	}
@@ -116,6 +118,39 @@ func TestIntegrationLifecycleExactBoundariesAndLeaseRecovery(t *testing.T) {
 	if !effectiveAt.Equal(periodEnd.Add(time.Hour)) {
 		t.Fatalf("expiry effective_at=%s, want grace boundary %s", effectiveAt, periodEnd.Add(time.Hour))
 	}
+}
+
+func TestIntegrationAdminRevokeIsOwnerControlledAndIdempotent(t *testing.T) {
+	store := openIntegrationStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	userID := newUUID(t)
+	payment, order := paymentFixture(t, userID, now)
+	if err := store.applyPaymentAt(context.Background(), paymentMeta(t, payment), payment, order, now); err != nil {
+		t.Fatal(err)
+	}
+	var subscriptionID string
+	if err := store.pool.QueryRow(context.Background(), `SELECT id FROM subscriptions WHERE user_id=$1`, userID).Scan(&subscriptionID); err != nil {
+		t.Fatal(err)
+	}
+	input := domain.AdminRevokeInput{
+		SubscriptionID: subscriptionID, IdempotencyKey: "admin-revoke-integration-0001", RequestSHA256: strings.Repeat("a", 64),
+		ActionID: newUUID(t), CorrelationID: newUUID(t), ReasonCode: "abuse",
+	}
+	result, err := store.AdminRevoke(context.Background(), input)
+	if err != nil || result.Replay || result.Status != domain.StatusRevoked || result.ReasonCode != "abuse" {
+		t.Fatalf("admin revoke=%+v err=%v", result, err)
+	}
+	replay, err := store.AdminRevoke(context.Background(), input)
+	if err != nil || !replay.Replay {
+		t.Fatalf("admin revoke replay=%+v err=%v", replay, err)
+	}
+	collision := input
+	collision.RequestSHA256 = strings.Repeat("b", 64)
+	if _, err := store.AdminRevoke(context.Background(), collision); !errors.Is(err, domain.ErrIdempotencyConflict) {
+		t.Fatalf("admin revoke collision=%v", err)
+	}
+	assertCount(t, store, `SELECT count(*) FROM admin_revoke_requests`, 1)
+	assertCount(t, store, `SELECT count(*) FROM outbox WHERE topic='subscription.revoked.v1'`, 1)
 }
 
 func TestIntegrationSchedulerProductionPathUsesPostgresTime(t *testing.T) {
@@ -408,7 +443,7 @@ func openIntegrationStore(t *testing.T) *Store {
 
 func resetSubscription(t *testing.T, store *Store) {
 	t.Helper()
-	if _, err := store.pool.Exec(context.Background(), `TRUNCATE outbox,consumer_dead_letters,inbox,subscription_periods,subscriptions`); err != nil {
+	if _, err := store.pool.Exec(context.Background(), `TRUNCATE admin_revoke_requests,outbox,consumer_dead_letters,inbox,subscription_periods,subscriptions`); err != nil {
 		t.Fatal(err)
 	}
 }

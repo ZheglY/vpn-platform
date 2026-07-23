@@ -209,6 +209,66 @@ WHERE s.id = $1 AND s.status IN ('active', 'grace')`, subscriptionID).Scan(
 	return placement, nil
 }
 
+func (s *Store) AdminRevoke(ctx context.Context, input domain.AdminRevokeInput) (domain.AdminRevokeResult, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.AdminRevokeResult{}, fmt.Errorf("begin admin revoke: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "admin-revoke:"+input.IdempotencyKey); err != nil {
+		return domain.AdminRevokeResult{}, fmt.Errorf("lock admin revoke: %w", err)
+	}
+	var storedHash, subscriptionID, reasonCode, status string
+	err = tx.QueryRow(ctx, `
+SELECT request_sha256, subscription_id, reason_code, result_status
+FROM admin_revoke_requests WHERE idempotency_key = $1`, input.IdempotencyKey).Scan(&storedHash, &subscriptionID, &reasonCode, &status)
+	if err == nil {
+		if storedHash != input.RequestSHA256 || subscriptionID != input.SubscriptionID || reasonCode != input.ReasonCode {
+			return domain.AdminRevokeResult{}, domain.ErrIdempotencyConflict
+		}
+		return domain.AdminRevokeResult{SubscriptionID: subscriptionID, Status: status, ReasonCode: reasonCode, Replay: true}, tx.Commit(ctx)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return domain.AdminRevokeResult{}, fmt.Errorf("read admin revoke replay: %w", err)
+	}
+	var userID, currentStatus string
+	if err := tx.QueryRow(ctx, `SELECT user_id, status FROM subscriptions WHERE id = $1 FOR UPDATE`, input.SubscriptionID).Scan(&userID, &currentStatus); errors.Is(err, pgx.ErrNoRows) {
+		return domain.AdminRevokeResult{}, domain.ErrNotFound
+	} else if err != nil {
+		return domain.AdminRevokeResult{}, fmt.Errorf("lock subscription for admin revoke: %w", err)
+	}
+	if currentStatus == domain.StatusExpired || currentStatus == domain.StatusRevoked {
+		return domain.AdminRevokeResult{}, domain.ErrAdminRevokeNotAllowed
+	}
+	now, err := transactionTime(ctx, tx, nil)
+	if err != nil {
+		return domain.AdminRevokeResult{}, err
+	}
+	causationID := input.ActionID
+	data := terminalEventData{SubscriptionID: input.SubscriptionID, UserID: userID, Reason: input.ReasonCode, EffectiveAt: now}
+	if err := insertOutbox(ctx, tx, "subscription.revoked.v1", input.SubscriptionID, userID, "admin-revoke:"+input.ActionID, input.CorrelationID, &causationID, now, data); err != nil {
+		return domain.AdminRevokeResult{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE subscriptions
+SET status = 'revoked', next_transition_at = NULL, transition_lease_until = NULL, updated_at = $2
+WHERE id = $1`, input.SubscriptionID, now); err != nil {
+		return domain.AdminRevokeResult{}, fmt.Errorf("apply admin revoke: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+INSERT INTO admin_revoke_requests (
+    idempotency_key, request_sha256, action_id, correlation_id,
+    subscription_id, reason_code, result_status, completed_at
+) VALUES ($1,$2,$3,$4,$5,$6,'revoked',$7)`, input.IdempotencyKey, input.RequestSHA256, input.ActionID,
+		input.CorrelationID, input.SubscriptionID, input.ReasonCode, now); err != nil {
+		return domain.AdminRevokeResult{}, fmt.Errorf("record admin revoke: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.AdminRevokeResult{}, fmt.Errorf("commit admin revoke: %w", err)
+	}
+	return domain.AdminRevokeResult{SubscriptionID: input.SubscriptionID, Status: domain.StatusRevoked, ReasonCode: input.ReasonCode}, nil
+}
+
 func statusAt(now, start, end, grace time.Time) (string, *time.Time) {
 	if now.Before(start) {
 		return domain.StatusPending, timePtr(start)
@@ -569,6 +629,18 @@ func (s *Store) completeDue(ctx context.Context, subscriptionID string, nowOverr
 			return err
 		}
 	}
+	if oldStatus == domain.StatusActive && state.Status == domain.StatusGrace {
+		data := graceStartedEventData{
+			SubscriptionID: subscriptionID,
+			UserID:         userID,
+			PeriodEnd:      state.End,
+			GraceEndsAt:    state.Grace,
+			EffectiveAt:    state.End,
+		}
+		if err := insertOutbox(ctx, tx, "subscription.grace.started.v1", subscriptionID, userID, "grace:"+subscriptionID+":"+state.End.UTC().Format(time.RFC3339Nano), "", nil, now, data); err != nil {
+			return err
+		}
+	}
 	if err := updateSubscription(ctx, tx, subscriptionID, state.Status, state.Start, state.End, state.Grace, state.Next, now); err != nil {
 		return err
 	}
@@ -757,6 +829,14 @@ type terminalEventData struct {
 	Reason            string    `json:"reason"`
 	AffectedPeriodIDs []string  `json:"affected_period_ids,omitempty"`
 	EffectiveAt       time.Time `json:"effective_at"`
+}
+
+type graceStartedEventData struct {
+	SubscriptionID string    `json:"subscription_id"`
+	UserID         string    `json:"user_id"`
+	PeriodEnd      time.Time `json:"period_end"`
+	GraceEndsAt    time.Time `json:"grace_ends_at"`
+	EffectiveAt    time.Time `json:"effective_at"`
 }
 
 func insertOutbox(ctx context.Context, tx pgx.Tx, topic, subscriptionID, userID, dedupeKey, correlationID string, causationID *string, occurredAt time.Time, data any) error {

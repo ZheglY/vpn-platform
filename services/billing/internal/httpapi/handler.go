@@ -17,6 +17,7 @@ import (
 type Billing interface {
 	CreateOrder(context.Context, string, string, string, string, string) (domain.Order, bool, error)
 	GetOrder(context.Context, string, string) (domain.Order, error)
+	GetPaymentStatus(context.Context, string, string, string) (domain.PaymentStatus, error)
 	CreatePayment(context.Context, string, string, string) (domain.Payment, bool, error)
 }
 
@@ -78,6 +79,20 @@ func (h *Handler) GetOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, order)
+}
+
+func (h *Handler) GetPaymentStatus(w http.ResponseWriter, r *http.Request) {
+	userID, orderID, paymentID := r.PathValue("user_id"), r.PathValue("order_id"), r.PathValue("payment_id")
+	if !isUUID(userID) || !isUUID(orderID) || !isUUID(paymentID) {
+		httperror.Write(w, r, http.StatusBadRequest, "invalid_request", "payment status request is invalid")
+		return
+	}
+	payment, err := h.billing.GetPaymentStatus(r.Context(), userID, orderID, paymentID)
+	if err != nil {
+		writeDomainError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payment)
 }
 
 func (h *Handler) CreatePayment(w http.ResponseWriter, r *http.Request) {

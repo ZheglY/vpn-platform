@@ -2,9 +2,9 @@
 
 ## Current Approval
 
-Approved milestone: Stage 6 - Provisioning control plane and node-agent.
+Approved milestone: Stage 7 - Notifications and admin operations.
 
-Stage 5 was accepted by the user's instruction on 2026-07-19 to begin the next milestone. Stage 7 and later implementation milestones are not approved. Stage 6 may create local node placement, Xray mutation, reconciliation, and real-Xray test infrastructure. It must not create notification/admin behavior, connect production VPS instances, or deploy production VPN infrastructure.
+Stage 6 was explicitly accepted by the product owner on 2026-07-19 with the instruction to begin Stage 7. Stage 8 and later implementation milestones are not approved. Stage 7 may add durable notifications, a protected admin API/CLI, RBAC, support-safe views, typed owner-executed operations, and append-only audit. It must not add production deployment, connect production VPS instances, or deploy production VPN infrastructure.
 
 ## Stage 0 Plan
 
@@ -229,7 +229,7 @@ Verification completed for the Stage 5 remediation on 2026-07-19:
 
 Depends on Stage 5 and threat review. Adds node registry, allocation, mTLS protocol, idempotent desired revision, Xray validation, atomic reload, rollback, and local real-Xray e2e tests.
 
-Status: acceptance-review remediation implemented and verification-complete on `codex/stage6-provisioning-node-agent`; awaiting product-owner acceptance. Stage 7 has not started.
+Status: accepted by the product owner on 2026-07-19 after acceptance-review remediation and complete verification on `codex/stage6-provisioning-node-agent`.
 
 Implementation plan:
 
@@ -286,6 +286,32 @@ Verification completed for the Stage 6 acceptance-review remediation on 2026-07-
 ### Stage 7 - Notifications and admin operations
 
 Depends on lifecycle events. Adds durable Telegram notifications, admin CLI/internal API, RBAC, and audit.
+
+Status: awaiting product-owner acceptance on `codex/stage7-notifications-admin`; Stage 8 has not started.
+
+Implementation plan:
+
+1. Record notification policy, cross-topic ordering, Telegram delivery semantics, administrator identity, RBAC, action ownership, and append-only audit in ADRs.
+2. Add versioned Subscription grace and Access user-facing outcome facts without credentials or bearer material.
+3. Add notification-service with its own PostgreSQL database, migrations, normalized inbox, aggregate cursors, business dedupe, typed templates, durable leases/retries, sanitized DLQ, and support-safe status/retry API.
+4. Keep the Telegram token in telegram-bot and add one allowlisted typed mTLS delivery endpoint with a stable delivery ID and ephemeral Redis collision guard.
+5. Resolve active Telegram target and current terms consent just in time through an allowlisted Identity API; do not persist or log chat IDs or rendered message text.
+6. Add admin-service with its own PostgreSQL database, validated principal bootstrap, default-deny RBAC, idempotent action requests, fixed owner clients, and append-only audit protected from the runtime DB role.
+7. Add Go admin CLI using mTLS, bounded timeouts, request IDs, mandatory idempotency keys/reasons for mutations, support-safe human/JSON output, and nonzero error exits.
+8. Expose only typed notification retry, subscription revoke, and higher-revision Access recovery mutations. Keep all secrets and unapproved financial/node/role operations inaccessible.
+9. Update OpenAPI, AsyncAPI/JSON Schema/examples, Compose, Dockerfiles, CI, threat model, runbooks, README, and Definition of Done together with implementation.
+10. Prove duplicate/gap/collision handling, Telegram retry/permanent outcomes, multiple workers, RBAC, owner idempotency, audit immutability, mTLS denial, secret absence, restart recovery, and the complete Stage 7 Compose flow without regressing Stage 6 VPN smoke.
+
+Acceptance criteria are the Stage 7 Definition of Done and the product-owner request attached on 2026-07-19. On completion this status becomes `awaiting product-owner acceptance`; Stage 8 remains blocked.
+
+Verification completed on 2026-07-23:
+
+- Go formatting, tidy, vet, unit/PostgreSQL tests, race tests, and golangci-lint pass; the full test and lint suites were also executed in the pinned Go 1.26.5 Linux image because Windows Application Control can block generated test binaries.
+- OpenAPI, AsyncAPI, and all 19 event schema examples pass contract validation; PowerShell and Bash Stage 7 scripts pass parser checks.
+- `npm audit`, `govulncheck`, and Gitleaks pass. Fresh advisories were remediated with `golang.org/x/text v0.39.0`, `fast-uri v3.1.4`, and an ADR-recorded Xray security rebuild using gRPC-Go `v1.82.1`.
+- All 11 service/CLI images build, and Trivy reports zero HIGH/CRITICAL findings across all 24 OS and Go-binary targets.
+- Compose configuration and the complete `make stage7-smoke` flow pass after final security review, including notification retry/permanent outcomes, RBAC denial, action replay/collision, audit, restart recovery, real VLESS + REALITY traffic, revoke, and post-revoke stale-delivery suppression.
+- Final review found and fixed bounded-body enforcement for the admin facade and all Stage 7 owner delivery/mutation endpoints. No cross-service internal imports or SQL access, sensitive log/audit/DLQ fields, floating-point money, or unapproved admin operations remain in the reviewed diff.
 
 ### Stage 8 - Observability, hardening, and deployment
 

@@ -8,6 +8,8 @@ Implemented local and sandbox runbooks are listed below. Production operations s
 - [Subscription lifecycle recovery](subscription-lifecycle.md)
 - [Access delivery and leaked-token response](access-delivery.md)
 - [Provisioning, node health, DLQ replay, and Xray recovery](provisioning.md)
+- [Telegram notifications and notification recovery](notifications.md)
+- [Administrator CLI, RBAC, action recovery, and audit](admin-operations.md)
 - [Support and abuse](support-abuse.md)
 
 Required before production:

@@ -37,11 +37,19 @@ type ConsentInput struct {
 	Source          string
 }
 
+type NotificationTarget struct {
+	Eligible       bool
+	ReasonCode     string
+	TelegramChatID *int64
+	Locale         *string
+}
+
 type Store interface {
 	UpsertTelegramIdentity(ctx context.Context, profile TelegramProfile) (User, error)
 	GetUser(ctx context.Context, userID string) (User, error)
 	AcceptConsent(ctx context.Context, input ConsentInput) error
 	HasConsent(ctx context.Context, userID, documentType, documentVersion string) (bool, error)
+	GetNotificationTarget(ctx context.Context, userID, documentType, documentVersion string) (NotificationTarget, error)
 	Ping(ctx context.Context) error
 	Close()
 }

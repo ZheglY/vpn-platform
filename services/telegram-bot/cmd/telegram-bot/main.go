@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ZheglY/vpn-platform/internal/platform/config"
+	"github.com/ZheglY/vpn-platform/internal/platform/httpauth"
 	platformhttpclient "github.com/ZheglY/vpn-platform/internal/platform/httpclient"
 	"github.com/ZheglY/vpn-platform/internal/platform/httpserver"
 	"github.com/ZheglY/vpn-platform/internal/platform/logging"
@@ -122,6 +124,26 @@ func run(ctx context.Context) error {
 		CleanupTimeout: appCfg.DedupeCleanupTimeout,
 	}, identity, catalog, billing, telegram, stateStore, stateStore, rateLimiter, logger))
 
+	deliveryHandler := bot.NewDeliveryHandler(stateStore, telegram)
+	deliveryAuth := passthrough
+	if appCfg.DeliveryAuthMode == "mtls" {
+		deliveryAuth = httpauth.RequireService(httpauth.ServicePolicy{
+			TrustDomain: appCfg.MTLSTrustDomain, Namespace: appCfg.MTLSNamespace,
+			Allowed: []string{"notification-service"},
+		})
+	}
+	internalMux := http.NewServeMux()
+	internalMux.Handle("GET /livez", httpserver.LivenessHandler(serviceName+"-internal"))
+	internalMux.Handle("GET /version", version.Handler(version.New(serviceName, buildVersion, buildCommit, buildDate)))
+	internalMux.Handle("POST /internal/v1/notifications/{delivery_id}/telegram", deliveryAuth(http.HandlerFunc(deliveryHandler.Deliver)))
+	internalHandler := httpserver.Chain(
+		internalMux,
+		httpserver.RequestID,
+		httpserver.LimitBody(appCfg.MaxBodyBytes),
+		httpserver.Recover(logger),
+		httpserver.LogRequests(logger),
+	)
+
 	handler := httpserver.Chain(
 		mux,
 		httpserver.RequestID,
@@ -131,9 +153,21 @@ func run(ctx context.Context) error {
 	)
 
 	srv := httpserver.New(appCfg.HTTP, handler)
+	internalSrv := httpserver.New(appCfg.InternalHTTP, internalHandler)
+	internalSrv.TLSConfig = appCfg.InternalTLS
 	logger.Info("starting service", zap.String("service", serviceName), zap.String("environment", appCfg.Environment))
-	return httpserver.Run(ctx, srv, appCfg.HTTP.ShutdownTimeout, logger)
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errs := make(chan error, 2)
+	go func() { errs <- httpserver.Run(runCtx, srv, appCfg.HTTP.ShutdownTimeout, logger) }()
+	go func() { errs <- httpserver.Run(runCtx, internalSrv, appCfg.InternalHTTP.ShutdownTimeout, logger) }()
+	err = <-errs
+	cancel()
+	<-errs
+	return err
 }
+
+func passthrough(next http.Handler) http.Handler { return next }
 
 type appConfig struct {
 	Environment            string
@@ -145,6 +179,9 @@ type appConfig struct {
 	CatalogBaseURL         string
 	BillingBaseURL         string
 	IdentityAuthMode       string
+	DeliveryAuthMode       string
+	MTLSTrustDomain        string
+	MTLSNamespace          string
 	IdentityClientCertFile string
 	IdentityClientKeyFile  string
 	IdentityServerCAFile   string
@@ -162,12 +199,16 @@ type appConfig struct {
 	WebhookRateLimit       int
 	WebhookRateWindow      time.Duration
 	HTTP                   httpserver.Config
+	InternalHTTP           httpserver.Config
+	InternalTLS            *tls.Config
 }
 
 func loadConfig() (appConfig, error) {
 	var fields []config.FieldError
 	httpCfg := httpserver.DefaultConfig()
 	httpCfg.Addr = config.String("HTTP_ADDR", ":8081")
+	internalHTTPCfg := httpserver.DefaultConfig()
+	internalHTTPCfg.Addr = config.String("INTERNAL_HTTP_ADDR", ":8090")
 	environment := config.String("APP_ENV", "local")
 
 	var err error
@@ -200,6 +241,23 @@ func loadConfig() (appConfig, error) {
 	}
 	if identityAuthMode == "dev-insecure" && environment != "local" {
 		fields = config.Append(fields, "IDENTITY_AUTH_MODE", fmt.Errorf("dev-insecure is allowed only for local environment"))
+	}
+	deliveryAuthMode := config.String("DELIVERY_AUTH_MODE", "mtls")
+	if deliveryAuthMode != "mtls" && deliveryAuthMode != "dev-insecure" || deliveryAuthMode == "dev-insecure" && environment != "local" {
+		fields = config.Append(fields, "DELIVERY_AUTH_MODE", fmt.Errorf("must be mtls, or dev-insecure in local"))
+	}
+	var internalTLS *tls.Config
+	if deliveryAuthMode == "mtls" {
+		serverCertFile, certErr := config.RequiredString("INTERNAL_SERVER_TLS_CERT_FILE")
+		fields = config.Append(fields, "INTERNAL_SERVER_TLS_CERT_FILE", certErr)
+		serverKeyFile, keyErr := config.RequiredString("INTERNAL_SERVER_TLS_KEY_FILE")
+		fields = config.Append(fields, "INTERNAL_SERVER_TLS_KEY_FILE", keyErr)
+		clientCAFile, caErr := config.RequiredString("INTERNAL_CLIENT_CA_FILE")
+		fields = config.Append(fields, "INTERNAL_CLIENT_CA_FILE", caErr)
+		if certErr == nil && keyErr == nil && caErr == nil {
+			internalTLS, err = httpserver.NewMutualTLSConfig(serverCertFile, serverKeyFile, []string{clientCAFile})
+			fields = config.Append(fields, "INTERNAL_TLS_CONFIG", err)
+		}
 	}
 	if identityAuthMode == "mtls" && err == nil && !strings.HasPrefix(identityBaseURL, "https://") {
 		fields = config.Append(fields, "IDENTITY_BASE_URL", fmt.Errorf("must use https when IDENTITY_AUTH_MODE=mtls"))
@@ -262,6 +320,9 @@ func loadConfig() (appConfig, error) {
 		CatalogBaseURL:         catalogBaseURL,
 		BillingBaseURL:         billingBaseURL,
 		IdentityAuthMode:       identityAuthMode,
+		DeliveryAuthMode:       deliveryAuthMode,
+		MTLSTrustDomain:        config.String("MTLS_TRUST_DOMAIN", "vpn-service"),
+		MTLSNamespace:          config.String("MTLS_NAMESPACE", environment),
 		IdentityClientCertFile: identityClientCertFile,
 		IdentityClientKeyFile:  identityClientKeyFile,
 		IdentityServerCAFile:   identityServerCAFile,
@@ -279,6 +340,8 @@ func loadConfig() (appConfig, error) {
 		WebhookRateLimit:       webhookRateLimit,
 		WebhookRateWindow:      webhookRateWindow,
 		HTTP:                   httpCfg,
+		InternalHTTP:           internalHTTPCfg,
+		InternalTLS:            internalTLS,
 	}, nil
 }
 

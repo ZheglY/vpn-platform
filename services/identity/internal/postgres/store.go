@@ -155,6 +155,41 @@ SELECT EXISTS (
 	return exists, nil
 }
 
+func (s *Store) GetNotificationTarget(ctx context.Context, userID, documentType, documentVersion string) (domain.NotificationTarget, error) {
+	var status string
+	var telegramUserID sql.NullInt64
+	var locale sql.NullString
+	var consented bool
+	err := s.pool.QueryRow(ctx, `
+SELECT u.status, ti.telegram_user_id, u.locale,
+       EXISTS (
+           SELECT 1 FROM consents c
+           WHERE c.user_id = u.id AND c.document_type = $2 AND c.document_version = $3
+       )
+FROM users u
+LEFT JOIN telegram_identities ti ON ti.user_id = u.id
+WHERE u.id = $1`, userID, documentType, documentVersion).Scan(&status, &telegramUserID, &locale, &consented)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.NotificationTarget{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.NotificationTarget{}, fmt.Errorf("get notification target: %w", err)
+	}
+	target := domain.NotificationTarget{Locale: nullStringPtr(locale)}
+	switch {
+	case status != domain.UserStatusActive:
+		target.ReasonCode = "account_unavailable"
+	case !telegramUserID.Valid || telegramUserID.Int64 <= 0:
+		target.ReasonCode = "telegram_identity_missing"
+	case !consented:
+		target.ReasonCode = "consent_missing"
+	default:
+		target.Eligible = true
+		target.TelegramChatID = &telegramUserID.Int64
+	}
+	return target, nil
+}
+
 type querier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
@@ -187,6 +222,13 @@ func nullableString(value *string) any {
 		return nil
 	}
 	return *value
+}
+
+func nullStringPtr(value sql.NullString) *string {
+	if !value.Valid {
+		return nil
+	}
+	return &value.String
 }
 
 func stringPtrFromNull(value sql.NullString) *string {

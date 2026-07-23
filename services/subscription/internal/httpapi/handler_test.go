@@ -23,6 +23,15 @@ func TestGetSubscriptionReturnsNoStoreResponse(t *testing.T) {
 	}
 }
 
+func TestDecodeStrictRejectsOversizedAdminRevokeBody(t *testing.T) {
+	var request struct {
+		ActionID string `json:"action_id"`
+	}
+	if err := decodeStrict(strings.NewReader(strings.Repeat(" ", maxAdminRevokeBodyBytes+1)), &request); err == nil {
+		t.Fatal("oversized admin revoke body accepted")
+	}
+}
+
 func TestGetSubscriptionRejectsInvalidUserID(t *testing.T) {
 	handler := New(&handlerStore{})
 	req := httptest.NewRequest(http.MethodGet, "/internal/v1/users/not-a-uuid/subscription", nil)

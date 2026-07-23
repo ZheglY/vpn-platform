@@ -87,7 +87,7 @@ UPDATE access_credentials
 SET status = 'provisioning', credential_version = $2,
     allocation_revision = 0,
     entitlement_expires_at = GREATEST(entitlement_expires_at, $3),
-    revoked_at = NULL, updated_at = $4
+    revoked_at = NULL, revocation_reason = NULL, updated_at = $4
 WHERE id = $1`, credentialID, revision, event.GraceEndsAt.UTC(), now); err != nil {
 			return fmt.Errorf("restart access provisioning: %w", err)
 		}
@@ -115,6 +115,22 @@ WHERE credential_id = $1 AND status = 'active'`, credentialID, event.GraceEndsAt
 		}
 	}
 	return commit(ctx, tx, "period event")
+}
+
+func (s *Store) ApplyGrace(ctx context.Context, meta domain.EventMeta, event domain.GraceEvent) error {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin grace event: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	apply, err := prepareLifecycle(ctx, tx, meta, event.SubscriptionID, event.UserID)
+	if err != nil {
+		return err
+	}
+	if !apply {
+		return tx.Commit(ctx)
+	}
+	return commit(ctx, tx, "grace event")
 }
 
 func (s *Store) ApplyTerminal(ctx context.Context, meta domain.EventMeta, event domain.TerminalEvent, operationID string) error {
@@ -156,7 +172,9 @@ FOR UPDATE`, event.SubscriptionID).Scan(&credentialID, &status, &revision, &allo
 	}
 	revision++
 	if _, err := tx.Exec(ctx, `
-UPDATE access_credentials SET status = 'revoking', credential_version = $2, updated_at = $3 WHERE id = $1`, credentialID, revision, now); err != nil {
+UPDATE access_credentials
+SET status = 'revoking', credential_version = $2, revocation_reason = $3, updated_at = $4
+WHERE id = $1`, credentialID, revision, event.Reason, now); err != nil {
 		return fmt.Errorf("mark credential revoking: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -260,7 +278,8 @@ WHERE credential_id = $1 AND kind = 'revoke' AND desired_revision = $2 AND statu
 		revokeRevision := event.AppliedRevision + 1
 		if _, err := tx.Exec(ctx, `
 UPDATE access_credentials
-SET status = 'revoking', credential_version = $2, allocation_revision = $3, updated_at = $4
+SET status = 'revoking', credential_version = $2, allocation_revision = $3,
+    revocation_reason = 'expired', updated_at = $4
 WHERE id = $1`, event.CredentialID, revokeRevision, event.AppliedRevision, now); err != nil {
 			return fmt.Errorf("start revoke after elapsed provisioning: %w", err)
 		}
@@ -287,7 +306,7 @@ UPDATE access_credentials SET status = $2, allocation_revision = $3, updated_at 
 		"subscription_id": subscriptionID, "credential_id": event.CredentialID, "user_id": userID,
 		"provisioning_status": event.Status, "ready_at": now, "link_issuance_required": true,
 	}
-	if err := insertOutbox(ctx, tx, meta, now, "access.ready.v1", "user:"+userID, event.CredentialID, "ready:"+event.OperationID, "access", readyData); err != nil {
+	if err := insertNotificationOutbox(ctx, tx, meta, now, "access.ready.v1", userID, event.CredentialID, "ready:"+event.OperationID, readyData); err != nil {
 		return err
 	}
 	return commit(ctx, tx, "provisioning success")
@@ -309,13 +328,13 @@ func (s *Store) ApplyOperationFailed(ctx context.Context, meta domain.EventMeta,
 		}
 		return tx.Commit(ctx)
 	}
-	var operationStatus string
+	var operationStatus, subscriptionID, userID string
 	var revision int
 	err = tx.QueryRow(ctx, `
-SELECT c.credential_version, o.status
+SELECT c.credential_version, o.status, c.subscription_id, c.user_id
 FROM access_credentials c JOIN access_operations o ON o.credential_id = c.id
 WHERE c.id = $1 AND o.id = $2 AND o.kind = $3 AND o.desired_revision = $4
-FOR UPDATE OF c, o`, event.CredentialID, event.OperationID, kind, event.FailedRevision).Scan(&revision, &operationStatus)
+FOR UPDATE OF c, o`, event.CredentialID, event.OperationID, kind, event.FailedRevision).Scan(&revision, &operationStatus, &subscriptionID, &userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ErrDurableStateConflict
 	}
@@ -332,6 +351,13 @@ FOR UPDATE OF c, o`, event.CredentialID, event.OperationID, kind, event.FailedRe
 		if kind == "provision" {
 			if _, err := tx.Exec(ctx, `UPDATE access_credentials SET status = 'failed', updated_at = $2 WHERE id = $1`, event.CredentialID, event.FailedAt.UTC()); err != nil {
 				return fmt.Errorf("fail credential provisioning: %w", err)
+			}
+			failedData := map[string]any{
+				"subscription_id": subscriptionID, "credential_id": event.CredentialID, "user_id": userID,
+				"failed_revision": event.FailedRevision, "reason_code": event.ReasonCode, "failed_at": event.FailedAt.UTC(),
+			}
+			if err := insertNotificationOutbox(ctx, tx, meta, event.FailedAt.UTC(), "access.provisioning.failed.v1", userID, event.CredentialID, "provisioning-failed:"+event.OperationID, failedData); err != nil {
+				return err
 			}
 		}
 	}
@@ -354,14 +380,16 @@ func (s *Store) ApplyRevokeSucceeded(ctx context.Context, meta domain.EventMeta,
 		}
 		return tx.Commit(ctx)
 	}
-	var operationStatus string
+	var operationStatus, subscriptionID, userID, reason string
 	var revision, credentialAllocationRevision, operationAllocationRevision int
 	err = tx.QueryRow(ctx, `
-SELECT c.credential_version, c.allocation_revision, o.status, o.allocation_revision
+SELECT c.credential_version, c.allocation_revision, o.status, o.allocation_revision,
+       c.subscription_id, c.user_id, c.revocation_reason
 FROM access_credentials c JOIN access_operations o ON o.credential_id = c.id
 WHERE c.id = $1 AND o.id = $2 AND o.kind = 'revoke' AND o.desired_revision = $3
 FOR UPDATE OF c, o`, event.CredentialID, event.OperationID, event.DesiredRevision).Scan(
-		&revision, &credentialAllocationRevision, &operationStatus, &operationAllocationRevision)
+		&revision, &credentialAllocationRevision, &operationStatus, &operationAllocationRevision,
+		&subscriptionID, &userID, &reason)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ErrDurableStateConflict
 	}
@@ -390,6 +418,13 @@ FOR UPDATE OF c, o`, event.CredentialID, event.OperationID, event.DesiredRevisio
 	}
 	if _, err := tx.Exec(ctx, `UPDATE access_operations SET status = 'succeeded', completed_at = $2 WHERE id = $1`, event.OperationID, now); err != nil {
 		return fmt.Errorf("complete revoke operation: %w", err)
+	}
+	revokedData := map[string]any{
+		"subscription_id": subscriptionID, "credential_id": event.CredentialID, "user_id": userID,
+		"desired_revision": event.DesiredRevision, "reason": reason, "revoked_at": now,
+	}
+	if err := insertNotificationOutbox(ctx, tx, meta, now, "access.revoked.v1", userID, event.CredentialID, "revoked:"+event.OperationID, revokedData); err != nil {
+		return err
 	}
 	return commit(ctx, tx, "revoke success")
 }
@@ -471,16 +506,16 @@ VALUES ($1,$2,$3,$4,$5,$6)`, seed.IdempotencyKey, subscriptionID, operation, see
 }
 
 func (s *Store) GetAccessStatus(ctx context.Context, subscriptionID string) (domain.AccessStatus, error) {
-	var credentialStatus, tokenStatus string
+	var credentialID, credentialStatus, tokenStatus string
 	var entitlementElapsed bool
 	err := s.pool.QueryRow(ctx, `
 SELECT c.status, c.entitlement_expires_at <= clock_timestamp(), COALESCE((
     SELECT CASE WHEN t.status = 'active' AND (t.expires_at <= clock_timestamp() OR c.entitlement_expires_at <= clock_timestamp()) THEN 'expired' ELSE t.status END
     FROM subscription_tokens t WHERE t.credential_id = c.id ORDER BY t.created_at DESC LIMIT 1
-), 'not_issued')
+), 'not_issued'), c.id
 FROM access_credentials c
 WHERE c.subscription_id = $1
-ORDER BY c.created_at DESC LIMIT 1`, subscriptionID).Scan(&credentialStatus, &entitlementElapsed, &tokenStatus)
+ORDER BY c.created_at DESC LIMIT 1`, subscriptionID).Scan(&credentialStatus, &entitlementElapsed, &tokenStatus, &credentialID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.AccessStatus{}, domain.ErrNotFound
 	}
@@ -503,7 +538,80 @@ ORDER BY c.created_at DESC LIMIT 1`, subscriptionID).Scan(&credentialStatus, &en
 	case credentialStatus == domain.StatusRevoked:
 		accessStatus = "revoked"
 	}
-	return domain.AccessStatus{SubscriptionID: subscriptionID, AccessStatus: accessStatus, ProvisioningStatus: credentialStatus, TokenStatus: tokenStatus}, nil
+	return domain.AccessStatus{SubscriptionID: subscriptionID, CredentialID: credentialID, AccessStatus: accessStatus, ProvisioningStatus: credentialStatus, TokenStatus: tokenStatus}, nil
+}
+
+func (s *Store) RecoverProvisioning(ctx context.Context, input domain.AdminRecoveryInput) (domain.AdminRecoveryResult, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.AdminRecoveryResult{}, fmt.Errorf("begin provisioning recovery: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockAggregate(ctx, tx, "admin-recovery:"+input.IdempotencyKey); err != nil {
+		return domain.AdminRecoveryResult{}, err
+	}
+	var storedHash, credentialID, operationID, status string
+	var desiredRevision int
+	err = tx.QueryRow(ctx, `
+SELECT request_sha256, credential_id, operation_id, desired_revision, result_status
+FROM admin_recovery_requests WHERE idempotency_key = $1`, input.IdempotencyKey).Scan(
+		&storedHash, &credentialID, &operationID, &desiredRevision, &status)
+	if err == nil {
+		if storedHash != input.RequestSHA256 || credentialID != input.CredentialID {
+			return domain.AdminRecoveryResult{}, domain.ErrIdempotencyConflict
+		}
+		return domain.AdminRecoveryResult{CredentialID: credentialID, OperationID: operationID, DesiredRevision: desiredRevision, Status: status, Replay: true}, tx.Commit(ctx)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return domain.AdminRecoveryResult{}, fmt.Errorf("read provisioning recovery replay: %w", err)
+	}
+	var currentStatus string
+	var currentRevision int
+	var entitlementExpires time.Time
+	if err := tx.QueryRow(ctx, `
+SELECT status, credential_version, entitlement_expires_at
+FROM access_credentials WHERE id = $1 FOR UPDATE`, input.CredentialID).Scan(&currentStatus, &currentRevision, &entitlementExpires); errors.Is(err, pgx.ErrNoRows) {
+		return domain.AdminRecoveryResult{}, domain.ErrNotFound
+	} else if err != nil {
+		return domain.AdminRecoveryResult{}, fmt.Errorf("lock credential for recovery: %w", err)
+	}
+	now, err := transactionTime(ctx, tx)
+	if err != nil {
+		return domain.AdminRecoveryResult{}, err
+	}
+	if currentStatus != domain.StatusFailed || !entitlementExpires.After(now) {
+		return domain.AdminRecoveryResult{}, domain.ErrRecoveryNotAllowed
+	}
+	desiredRevision = currentRevision + 1
+	if _, err := tx.Exec(ctx, `
+UPDATE access_credentials
+SET status = 'provisioning', credential_version = $2, allocation_revision = 0,
+    revocation_reason = NULL, revoked_at = NULL, updated_at = $3
+WHERE id = $1`, input.CredentialID, desiredRevision, now); err != nil {
+		return domain.AdminRecoveryResult{}, fmt.Errorf("start provisioning recovery: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM access_endpoint_snapshots WHERE credential_id = $1`, input.CredentialID); err != nil {
+		return domain.AdminRecoveryResult{}, fmt.Errorf("clear recovery endpoint snapshots: %w", err)
+	}
+	if err := insertOperation(ctx, tx, input.OperationID, input.CredentialID, "provision", desiredRevision, nil, input.ActionID, now); err != nil {
+		return domain.AdminRecoveryResult{}, err
+	}
+	meta := domain.EventMeta{EventID: input.ActionID, CorrelationID: input.CorrelationID}
+	if err := insertOperationOutbox(ctx, tx, meta, now, "access.provision.request.v1", input.OperationID, input.CredentialID, desiredRevision); err != nil {
+		return domain.AdminRecoveryResult{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+INSERT INTO admin_recovery_requests (
+    idempotency_key, request_sha256, action_id, correlation_id, credential_id,
+    operation_id, desired_revision, result_status, completed_at
+) VALUES ($1,$2,$3,$4,$5,$6,$7,'provisioning',$8)`, input.IdempotencyKey, input.RequestSHA256,
+		input.ActionID, input.CorrelationID, input.CredentialID, input.OperationID, desiredRevision, now); err != nil {
+		return domain.AdminRecoveryResult{}, fmt.Errorf("record provisioning recovery: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.AdminRecoveryResult{}, fmt.Errorf("commit provisioning recovery: %w", err)
+	}
+	return domain.AdminRecoveryResult{CredentialID: input.CredentialID, OperationID: input.OperationID, DesiredRevision: desiredRevision, Status: domain.StatusProvisioning}, nil
 }
 
 func (s *Store) GetProfileByTokenHMAC(ctx context.Context, lookup []byte) (domain.ProfileRecord, error) {
@@ -765,7 +873,7 @@ LIMIT 1`, meta.EventID, meta.SourceTopic, meta.SourcePartition, meta.SourceOffse
 }
 
 func isLifecycleEvent(eventType string) bool {
-	return eventType == "subscription.activated.v1" || eventType == "subscription.extended.v1" || eventType == "subscription.expired.v1" || eventType == "subscription.revoked.v1"
+	return eventType == "subscription.activated.v1" || eventType == "subscription.extended.v1" || eventType == "subscription.grace.started.v1" || eventType == "subscription.expired.v1" || eventType == "subscription.revoked.v1"
 }
 
 func insertOperation(ctx context.Context, tx pgx.Tx, operationID, credentialID, kind string, revision int, allocationRevision *int, causationID string, now time.Time) error {
@@ -780,6 +888,17 @@ VALUES ($1,$2,$3,$4,$5,'pending',$6,$7)`, operationID, credentialID, kind, revis
 func insertOperationOutbox(ctx context.Context, tx pgx.Tx, meta domain.EventMeta, now time.Time, topic, operationID, credentialID string, revision int) error {
 	data := map[string]any{"operation_id": operationID, "credential_id": credentialID, "desired_revision": revision}
 	return insertOutbox(ctx, tx, meta, now, topic, "credential:"+credentialID, credentialID, topic+":"+operationID, "credential", data, int64(revision))
+}
+
+func insertNotificationOutbox(ctx context.Context, tx pgx.Tx, meta domain.EventMeta, occurredAt time.Time, topic, userID, credentialID, dedupeKey string, data any) error {
+	var sequence int64
+	if err := tx.QueryRow(ctx, `
+UPDATE access_credentials
+SET notification_sequence = notification_sequence + 1
+WHERE id = $1 RETURNING notification_sequence`, credentialID).Scan(&sequence); err != nil {
+		return fmt.Errorf("advance access notification sequence: %w", err)
+	}
+	return insertOutbox(ctx, tx, meta, occurredAt, topic, "user:"+userID, credentialID, dedupeKey, "access", data, sequence)
 }
 
 func insertOutbox(ctx context.Context, tx pgx.Tx, meta domain.EventMeta, occurredAt time.Time, topic, partitionKey, aggregateID, dedupeKey, aggregateType string, data any, envelopeSequenceOverride ...int64) error {

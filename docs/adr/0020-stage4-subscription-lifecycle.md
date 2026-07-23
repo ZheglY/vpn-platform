@@ -28,6 +28,8 @@ behave deterministically at exact period and grace boundaries.
 - Billing permits only `telegram-bot`, `subscription-service`, and `admin-cli`
   identities to read an order. This is synchronous enrichment needed before the
   Kafka record can be acknowledged; it is not cross-service database access.
+  ADR 0026 supersedes the `admin-cli` allowance in Stage 7: administrative reads
+  now traverse admin-service, and owner services accept its service identity.
 - Each payment maps to exactly one immutable period. A unique
   `source_payment_id` protects against duplicate events with different event
   IDs. Reuse of an event ID with changed identity or payload hash is a durable

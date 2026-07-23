@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vpn-platform.invalid/schemas/access.revoked.v1.schema.json",
+  "type": "object",
+  "required": ["event_id", "event_type", "schema_version", "occurred_at", "producer", "correlation_id", "causation_id", "aggregate_type", "aggregate_id", "aggregate_sequence", "partition_key", "data"],
+  "additionalProperties": false,
+  "properties": {
+    "event_id": {"type": "string", "format": "uuid"},
+    "event_type": {"const": "access.revoked.v1"},
+    "schema_version": {"const": 1},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "producer": {"const": "access-service"},
+    "correlation_id": {"type": "string", "format": "uuid"},
+    "causation_id": {"type": ["string", "null"], "format": "uuid"},
+    "aggregate_type": {"const": "access"},
+    "aggregate_id": {"type": "string", "format": "uuid"},
+    "aggregate_sequence": {"type": "integer", "minimum": 1},
+    "partition_key": {"type": "string", "pattern": "^user:[0-9a-fA-F-]{36}$"},
+    "data": {
+      "type": "object",
+      "required": ["subscription_id", "credential_id", "user_id", "desired_revision", "reason", "revoked_at"],
+      "additionalProperties": false,
+      "properties": {
+        "subscription_id": {"type": "string", "format": "uuid"},
+        "credential_id": {"type": "string", "format": "uuid"},
+        "user_id": {"type": "string", "format": "uuid"},
+        "desired_revision": {"type": "integer", "minimum": 1},
+        "reason": {"enum": ["expired", "refund", "refund_gap", "admin_block", "abuse", "deleted"]},
+        "revoked_at": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}

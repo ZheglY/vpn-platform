@@ -1,6 +1,6 @@
 # Initial Threat Model
 
-Method: STRIDE-inspired model updated for Stage 4. It must be reviewed again before connecting production VPS or real payment credentials.
+Method: STRIDE-inspired model updated for Stage 7. It must be reviewed again before production certificate issuance, connecting production VPS, or using real payment credentials.
 
 ## Scope
 
@@ -33,7 +33,7 @@ Out of scope for v1:
 | Subscription bearer token | Grants access to Happ subscription document |
 | VLESS client UUIDs and REALITY private keys | Grants or compromises VPN access |
 | Node-agent mTLS certificates | Allows unauthorized provisioning |
-| Admin credentials and roles | Allows user blocking, refunds, grants, and revocation |
+| Admin private keys, principals, roles, and audit | Allows bounded support reads, notification retry, subscription revoke, and provisioning recovery |
 | Payment/order records | Financial correctness and audit |
 | Consent records | Legal/privacy evidence |
 | Kafka messages and outbox/inbox state | Eventual consistency and lifecycle correctness |
@@ -54,6 +54,7 @@ Out of scope for v1:
 | Provisioning to node-agent | unauthorized credential apply/revoke |
 | Node-agent to Xray/OS | invalid config, privilege escalation |
 | Admin CLI/internal API | RBAC bypass, un-audited sensitive actions |
+| Notification to telegram-bot | chat ID leakage, arbitrary Telegram proxying, duplicate/forged delivery |
 
 ## STRIDE Summary
 
@@ -65,6 +66,28 @@ Out of scope for v1:
 | Information disclosure | Subscription token in logs, VLESS UUID in traces, raw webhook/Telegram payloads, browsing data | Redaction, no raw payload logs, no destination/DNS history, no path logging on subscription hostname |
 | Denial of service | Oversized requests, repeated payment clicks, webhook floods, Kafka lag, node overload | Body limits, rate limits, idempotency, bounded retries, DLQ, capacity reserve |
 | Elevation of privilege | Admin RBAC bypass, node-agent shell execution, cross-service DB access | Deny-by-default RBAC, no shell command execution, least-privilege DB users, architecture checks |
+
+## Stage 7 Threat Scenarios
+
+| Threat | Mitigation and residual risk |
+|---|---|
+| Forged admin certificate or service certificate used as admin | TLS 1.3 chain verification plus exactly one environment-bound admin SPIFFE URI; valid non-admin identities receive `403`; enabled principal lookup and endpoint permission are still required. Production issuance/revocation remains Stage 8. |
+| Stolen CLI private key | Key is external to binary/repository; least-privilege role and exact principal audit constrain impact. Disable principal and revoke certificate. Hardware-backed custody is not implemented locally. |
+| Privilege escalation, role confusion, or wildcard operation | Default-deny built-in role matrix, no superadmin/wildcard, explicit permission per route, runtime cannot grant roles, no actor/role headers. |
+| Arbitrary target ID or admin mutation replay | UUID/type validation, fixed owner route, target in canonical request hash, reason and idempotency key required, accepted audit before execution, exact owner action ID on recovery, changed replay conflicts. |
+| Admin-service SSRF or arbitrary internal URL | All upstream base URLs are startup-validated fixed HTTPS configuration; requests contain only typed path identifiers; no URL field exists in admin requests. |
+| Owning-service bypass | Admin has no foreign DB credentials and cannot emit arbitrary Kafka, SQL, shell, payment, node, or Xray commands. Every mutation runs in Notification, Subscription, or Access. |
+| Audit tampering | Append-only table triggers and least-privilege runtime grants reject update/delete/truncate; accepted and completion records use PostgreSQL time and immutable snapshots. Database owner compromise remains a platform incident. |
+| Secret-bearing owner response or reason | Server and CLI recursively reject forbidden JSON keys/credential URLs; owner DTOs omit bearer/VPN/payment provider data; audit stores only bounded fields and hashes. |
+| Duplicated notification | Durable source inbox, source coordinates/hash, business unique key, cursor, job lease, and ephemeral Telegram delivery guard. A Telegram-accepted request with lost response can still visibly duplicate and is documented. |
+| Forged notification event | Exact topic/event/producer/aggregate rules, schema version, UUIDs, user partition key, source hash, JSON Schema examples, and durable conflict/DLQ behavior. Kafka ACL hardening remains Stage 8. |
+| Cross-topic reordering or readiness after revoke/expiry | Producer-owned cursors reject gaps/collisions without commit; just-in-time Subscription entitlement and Access credential checks suppress stale readiness even while Access is converging. Receive time is never an ordering authority. |
+| Telegram HTML injection or oversized output | Compiled typed templates, HTML escaping of every dynamic value, fixed parse mode, 4096-rune bound, no runtime templates or arbitrary Telegram methods. |
+| Telegram chat ID or message leakage | Target is resolved just in time and held in memory only; jobs omit chat ID/rendered text; logs, metrics, traces, audit, and DLQ use safe IDs/categories only. telegram-bot Redis guard is ephemeral. |
+| DLQ replay abuse | Notification admin API is read-only for DLQ metadata; no generic replay/publisher exists. Unchanged poison is not replayed; a corrected fact must come from its owning producer. |
+| High-cardinality metrics | Metrics are limited to service, operation/type, status class, and bounded reason; no user, target, event, chat, correlation, or URL labels. |
+| Compromised notification-service | It can request typed Telegram sends and read consent targets but cannot obtain Bot API token, subscription URL, VPN credential, or owner DB access. Fixed mTLS allowlists constrain calls. |
+| Compromised telegram-bot | It owns the Bot API token and receives transient typed messages/chat IDs, but cannot mutate Notification jobs or use arbitrary internal owner APIs. Token compromise still requires rotation and incident response. |
 
 ## High-Priority Threat Scenarios
 

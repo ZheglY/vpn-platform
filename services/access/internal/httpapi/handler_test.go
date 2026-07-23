@@ -39,6 +39,15 @@ func TestHappSubscriptionHeadersAndBody(t *testing.T) {
 	}
 }
 
+func TestDecodeStrictJSONRejectsOversizedAdminRecoveryBody(t *testing.T) {
+	var request struct {
+		ActionID string `json:"action_id"`
+	}
+	if err := decodeStrictJSON(strings.NewReader(strings.Repeat(" ", maxAdminRecoveryBodyBytes+1)), &request); err == nil {
+		t.Fatal("oversized admin recovery body accepted")
+	}
+}
+
 func TestUnavailableTokensAreIndistinguishable(t *testing.T) {
 	handler := New(&fakeService{profileErr: domain.ErrNotFound}, "VPN", "", 6, nil)
 	var baseline string
@@ -123,6 +132,9 @@ func (f *fakeService) IssueSubscriptionURL(context.Context, string, string, stri
 }
 func (f *fakeService) GetAccessStatus(context.Context, string) (domain.AccessStatus, error) {
 	return domain.AccessStatus{}, errors.New("not implemented")
+}
+func (f *fakeService) RecoverProvisioning(context.Context, domain.AdminRecoveryInput) (domain.AdminRecoveryResult, error) {
+	return domain.AdminRecoveryResult{}, errors.New("not implemented")
 }
 func (f *fakeService) GetProfile(context.Context, string) (application.Profile, error) {
 	return f.profile, f.profileErr

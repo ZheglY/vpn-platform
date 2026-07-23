@@ -251,7 +251,7 @@ func TestIntegrationReorderedProvisionAndRevokeOutcomesConvergeBySequence(t *tes
 		t.Fatal(err)
 	}
 	revokeOperationID := "61500000-0000-4000-8000-000000000009"
-	terminal := domain.TerminalEvent{SubscriptionID: subscriptionID, UserID: userID, Reason: "revoked", EffectiveAt: now}
+	terminal := domain.TerminalEvent{SubscriptionID: subscriptionID, UserID: userID, Reason: "refund", EffectiveAt: now}
 	if err := store.ApplyTerminal(ctx, integrationMeta("61500000-0000-4000-8000-000000000010", "subscription.revoked.v1", subscriptionID, 2, 2), terminal, revokeOperationID); err != nil {
 		t.Fatal(err)
 	}
@@ -359,8 +359,8 @@ func TestIntegrationZeroAllocationRevokeAndSecurityAudit(t *testing.T) {
 	credentialID := "63000000-0000-4000-8000-000000000001"
 	operationID := "63000000-0000-4000-8000-000000000002"
 	if _, err := store.pool.Exec(ctx, `
-INSERT INTO access_credentials (id,subscription_id,user_id,status,credential_version,vless_uuid_ciphertext,encryption_key_version,entitlement_expires_at,allocation_revision)
-VALUES ($1,$2,$3,'revoking',2,$4,1,$5,0)`, credentialID, "63000000-0000-4000-8000-000000000003", "63000000-0000-4000-8000-000000000004", bytes.Repeat([]byte{0x63}, 64), now.Add(time.Hour)); err != nil {
+INSERT INTO access_credentials (id,subscription_id,user_id,status,credential_version,vless_uuid_ciphertext,encryption_key_version,entitlement_expires_at,allocation_revision,revocation_reason)
+VALUES ($1,$2,$3,'revoking',2,$4,1,$5,0,'expired')`, credentialID, "63000000-0000-4000-8000-000000000003", "63000000-0000-4000-8000-000000000004", bytes.Repeat([]byte{0x63}, 64), now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.pool.Exec(ctx, `
@@ -451,6 +451,64 @@ VALUES ($1,$2,$3,'active',1,$4,1,clock_timestamp()-interval '1 second')`,
 	}
 }
 
+func TestIntegrationTerminalFailureEmitsOrderedFactAndAdminRecoveryIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	store := integrationStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	subscriptionID := "66000000-0000-4000-8000-000000000001"
+	userID := "66000000-0000-4000-8000-000000000002"
+	credentialID := "66000000-0000-4000-8000-000000000003"
+	operationID := "66000000-0000-4000-8000-000000000004"
+	period := domain.PeriodEvent{
+		SubscriptionID: subscriptionID, UserID: userID,
+		PeriodID: "66000000-0000-4000-8000-000000000005", SourceOrderID: "66000000-0000-4000-8000-000000000006", SourcePaymentID: "66000000-0000-4000-8000-000000000007",
+		PeriodStart: now, PeriodEnd: now.Add(time.Hour), GraceEndsAt: now.Add(2 * time.Hour),
+	}
+	seed := domain.CredentialSeed{CredentialID: credentialID, OperationID: operationID, Ciphertext: bytes.Repeat([]byte{0x66}, 64), KeyVersion: 1}
+	if err := store.ApplyPeriod(ctx, integrationMeta("66000000-0000-4000-8000-000000000008", "subscription.activated.v1", subscriptionID, 1, 1), period, seed); err != nil {
+		t.Fatal(err)
+	}
+	failure := domain.OperationFailed{
+		OperationID: operationID, CredentialID: credentialID, FailedRevision: 1, FailureScope: "all", Terminal: true,
+		ReasonCode: "node_capacity_exhausted", FailedAt: now.Add(time.Second),
+	}
+	if err := store.ApplyOperationFailed(ctx, integrationMeta("66000000-0000-4000-8000-000000000009", "access.provision.failed.v1", credentialID, 2, 1), failure, "provision"); err != nil {
+		t.Fatal(err)
+	}
+	var factPayload []byte
+	if err := store.pool.QueryRow(ctx, `SELECT payload FROM outbox WHERE topic='access.provisioning.failed.v1'`).Scan(&factPayload); err != nil {
+		t.Fatal(err)
+	}
+	var fact struct {
+		AggregateSequence int64 `json:"aggregate_sequence"`
+		Data              struct {
+			UserID string `json:"user_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(factPayload, &fact); err != nil || fact.AggregateSequence != 1 || fact.Data.UserID != userID {
+		t.Fatalf("failure fact=%s err=%v", factPayload, err)
+	}
+
+	input := domain.AdminRecoveryInput{
+		CredentialID: credentialID, OperationID: "66000000-0000-4000-8000-000000000010", IdempotencyKey: "recovery-integration-0001",
+		RequestSHA256: strings.Repeat("a", 64), ActionID: "66000000-0000-4000-8000-000000000011", CorrelationID: "66000000-0000-4000-8000-000000000012",
+	}
+	result, err := store.RecoverProvisioning(ctx, input)
+	if err != nil || result.Replay || result.DesiredRevision != 2 || result.Status != domain.StatusProvisioning {
+		t.Fatalf("recovery=%+v err=%v", result, err)
+	}
+	replay, err := store.RecoverProvisioning(ctx, input)
+	if err != nil || !replay.Replay || replay.OperationID != input.OperationID {
+		t.Fatalf("recovery replay=%+v err=%v", replay, err)
+	}
+	collision := input
+	collision.RequestSHA256 = strings.Repeat("b", 64)
+	if _, err := store.RecoverProvisioning(ctx, collision); !errors.Is(err, domain.ErrIdempotencyConflict) {
+		t.Fatalf("recovery collision=%v", err)
+	}
+	assertCount(t, store, "admin_recovery_requests", 1)
+}
+
 func integrationStore(t *testing.T) *Store {
 	t.Helper()
 	dsn := os.Getenv("ACCESS_TEST_DATABASE_URL")
@@ -462,7 +520,7 @@ func integrationStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	truncate := func(ctx context.Context) error {
-		_, err := store.pool.Exec(ctx, `TRUNCATE security_audit_events, outbox, consumer_dead_letters, inbox, provisioning_outcome_state, subscription_lifecycle_state, url_idempotency, subscription_tokens, access_operations, access_assignment_snapshots, access_endpoint_snapshots, access_credentials CASCADE`)
+		_, err := store.pool.Exec(ctx, `TRUNCATE admin_recovery_requests, security_audit_events, outbox, consumer_dead_letters, inbox, provisioning_outcome_state, subscription_lifecycle_state, url_idempotency, subscription_tokens, access_operations, access_assignment_snapshots, access_endpoint_snapshots, access_credentials CASCADE`)
 		return err
 	}
 	if err := truncate(context.Background()); err != nil {

@@ -7,8 +7,10 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("subscription resource not found")
-	ErrConflict = errors.New("subscription event conflicts with durable state")
+	ErrNotFound              = errors.New("subscription resource not found")
+	ErrConflict              = errors.New("subscription event conflicts with durable state")
+	ErrIdempotencyConflict   = errors.New("subscription idempotency conflict")
+	ErrAdminRevokeNotAllowed = errors.New("subscription cannot be administratively revoked")
 )
 
 const (
@@ -91,6 +93,22 @@ type Placement struct {
 	ValidUntil     time.Time `json:"valid_until"`
 }
 
+type AdminRevokeInput struct {
+	SubscriptionID string
+	IdempotencyKey string
+	RequestSHA256  string
+	ActionID       string
+	CorrelationID  string
+	ReasonCode     string
+}
+
+type AdminRevokeResult struct {
+	SubscriptionID string `json:"subscription_id"`
+	Status         string `json:"status"`
+	ReasonCode     string `json:"reason_code"`
+	Replay         bool   `json:"replay"`
+}
+
 type RefundWork struct {
 	InboxID  string
 	Meta     EventMeta
@@ -117,6 +135,7 @@ type Store interface {
 	CompleteDue(context.Context, string) error
 	GetSubscription(context.Context, string) (Subscription, error)
 	GetPlacement(context.Context, string) (Placement, error)
+	AdminRevoke(context.Context, AdminRevokeInput) (AdminRevokeResult, error)
 	RecordDeadLetter(context.Context, string, int32, int64, string, string) error
 	ClaimOutbox(context.Context, time.Duration) (OutboxMessage, bool, error)
 	CompleteOutbox(context.Context, string) error

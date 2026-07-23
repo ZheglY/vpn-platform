@@ -148,6 +148,11 @@ func (s *fakeStore) HasConsent(context.Context, string, string, string) (bool, e
 	return s.accepted, nil
 }
 
+func (s *fakeStore) GetNotificationTarget(context.Context, string, string, string) (domain.NotificationTarget, error) {
+	chatID := int64(42)
+	return domain.NotificationTarget{Eligible: true, TelegramChatID: &chatID}, nil
+}
+
 func (s *fakeStore) Ping(context.Context) error { return nil }
 
 func (s *fakeStore) Close() {}

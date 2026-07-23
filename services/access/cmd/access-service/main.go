@@ -91,7 +91,7 @@ func run(ctx context.Context) error {
 	kafkaClient, err := platformkafka.NewClient(cfg.KafkaBrokers, serviceName,
 		kgo.ConsumerGroup(cfg.ConsumerGroup),
 		kgo.ConsumeTopics(
-			"subscription.activated.v1", "subscription.extended.v1", "subscription.expired.v1", "subscription.revoked.v1",
+			"subscription.activated.v1", "subscription.extended.v1", "subscription.grace.started.v1", "subscription.expired.v1", "subscription.revoked.v1",
 			"access.provision.succeeded.v1", "access.provision.failed.v1", "access.revoke.succeeded.v1", "access.revoke.failed.v1",
 		),
 		kgo.DisableAutoCommit(), kgo.BlockRebalanceOnPoll(), kgo.RequiredAcks(kgo.AllISRAcks()),
@@ -106,15 +106,16 @@ func run(ctx context.Context) error {
 	go worker.Run(ctx)
 
 	api := httpapi.New(service, cfg.ProfileTitle, cfg.SupportURL, cfg.ProfileUpdateHours, publicLimiter)
-	issueAuth, rotateAuth, statusAuth, provisioningAuth := passthrough, passthrough, passthrough, passthrough
+	issueAuth, rotateAuth, statusAuth, provisioningAuth, recoveryAuth := passthrough, passthrough, passthrough, passthrough, passthrough
 	if cfg.InternalAuth == "mtls" {
 		policy := func(allowed ...string) func(http.Handler) http.Handler {
 			return httpauth.RequireService(httpauth.ServicePolicy{TrustDomain: cfg.MTLSTrustDomain, Namespace: cfg.MTLSNamespace, Allowed: allowed})
 		}
 		issueAuth = policy("telegram-bot")
-		rotateAuth = policy("telegram-bot", "admin-cli")
-		statusAuth = policy("telegram-bot", "admin-cli")
+		rotateAuth = policy("telegram-bot")
+		statusAuth = policy("telegram-bot", "admin-service", "notification-service")
 		provisioningAuth = policy("provisioning-service")
+		recoveryAuth = policy("admin-service")
 	}
 	mux := http.NewServeMux()
 	mux.Handle("GET /livez", httpserver.LivenessHandler(serviceName))
@@ -125,6 +126,7 @@ func run(ctx context.Context) error {
 	mux.Handle("POST /internal/v1/subscriptions/{subscription_id}/subscription-url/rotate", rotateAuth(http.HandlerFunc(api.RotateSubscriptionURL)))
 	mux.Handle("GET /internal/v1/subscriptions/{subscription_id}/access", statusAuth(http.HandlerFunc(api.GetAccessStatus)))
 	mux.Handle("GET /internal/v1/credentials/{credential_id}/provisioning-material", provisioningAuth(http.HandlerFunc(api.GetProvisioningMaterial)))
+	mux.Handle("POST /internal/v1/credentials/{credential_id}/recover", recoveryAuth(http.HandlerFunc(api.RecoverProvisioning)))
 	mux.Handle("GET /s/{token}", http.HandlerFunc(api.GetHappSubscription))
 	mux.Handle("GET /s/", http.HandlerFunc(api.GetUnavailableHappSubscription))
 	mux.Handle("GET /s", http.HandlerFunc(api.GetUnavailableHappSubscription))

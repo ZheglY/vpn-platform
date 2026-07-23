@@ -1,13 +1,14 @@
 openapi: 3.1.0
 info:
   title: VPN Subscription Platform API
-  version: 0.6.0-stage6
+  version: 0.7.0-stage7
   license:
     name: UNLICENSED
     identifier: LicenseRef-UNLICENSED
   description: >
-    Stage 6 contract. Provisioning placement and node desired-state operations
-    are executable locally. Production VPS enrollment remains out of scope.
+    Stage 7 contract. Durable Telegram notification delivery and the bounded
+    mTLS administrator API/CLI are executable locally. Production deployment
+    and credential issuance remain out of scope.
 servers:
   - url: https://api.example.invalid
     description: Public API placeholder
@@ -848,6 +849,449 @@ paths:
                 const: no-store
         default:
           $ref: '#/components/responses/Error'
+  /internal/v1/users/{user_id}/notification-target:
+    get:
+      tags: [Identity]
+      summary: Resolve a consent-eligible Telegram delivery target
+      operationId: getNotificationTarget
+      x-contract-status: implemented-stage7
+      x-allowed-service-identities: [notification-service]
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - name: document_type
+          in: query
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 64}
+        - name: document_version
+          in: query
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 64}
+      responses:
+        '200':
+          description: Eligibility result; chat ID is returned only to notification-service
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NotificationTarget'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /internal/v1/users/{user_id}/orders/{order_id}/payments/{payment_id}:
+    get:
+      tags: [Billing]
+      summary: Read support-safe payment status without confirmation URL or provider credentials
+      operationId: getPaymentStatus
+      x-contract-status: implemented-stage7
+      x-allowed-service-identities: [admin-service]
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/OrderId'
+        - $ref: '#/components/parameters/PaymentId'
+      responses:
+        '200':
+          description: Safe payment status
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PaymentStatus'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /internal/v1/notifications/{notification_id}:
+    get:
+      tags: [Admin]
+      summary: Read a support-safe notification job
+      operationId: getInternalNotification
+      x-contract-status: implemented-stage7
+      x-allowed-service-identities: [admin-service]
+      parameters:
+        - $ref: '#/components/parameters/NotificationId'
+      responses:
+        '200':
+          description: Notification metadata without rendered text or Telegram chat ID
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NotificationJob'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /internal/v1/notifications/{notification_id}/retry:
+    post:
+      tags: [Admin]
+      summary: Idempotently retry an existing retryable notification job
+      operationId: retryInternalNotification
+      x-contract-status: implemented-stage7
+      x-allowed-service-identities: [admin-service]
+      parameters:
+        - $ref: '#/components/parameters/NotificationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AdminReasonRequest'}
+      responses:
+        '202':
+          description: Retry accepted or safely replayed
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NotificationRetryResult'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        default: {$ref: '#/components/responses/Error'}
+  /internal/v1/dead-letters:
+    get:
+      tags: [Admin]
+      summary: List sanitized notification DLQ metadata
+      operationId: listNotificationDeadLetters
+      x-contract-status: implemented-stage7
+      x-allowed-service-identities: [admin-service]
+      parameters:
+        - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: Coordinates, digest, and bounded reason only
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NotificationDeadLetterList'}
+        '400': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /internal/v1/notifications/{delivery_id}/telegram:
+    post:
+      tags: [Admin]
+      summary: Deliver one typed rendered notification through Telegram Bot API
+      operationId: deliverTelegramNotification
+      x-contract-status: implemented-stage7
+      x-allowed-service-identities: [notification-service]
+      parameters:
+        - name: delivery_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TelegramDeliveryRequest'}
+      responses:
+        '200':
+          description: Delivered or completed replay
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TelegramDeliveryResult'}
+        '409':
+          description: Delivery in progress or delivery ID conflict
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TelegramDeliveryResult'}
+        '422':
+          description: Permanent validation or Telegram target failure
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TelegramDeliveryResult'}
+        '503':
+          description: Retryable Telegram or delivery guard failure
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TelegramDeliveryResult'}
+  /internal/v1/subscriptions/{subscription_id}/admin-revoke:
+    post:
+      tags: [Subscription]
+      summary: Apply an idempotent owner-controlled administrative revoke
+      operationId: adminRevokeSubscriptionOwner
+      x-contract-status: implemented-stage7
+      x-allowed-service-identities: [admin-service]
+      parameters:
+        - $ref: '#/components/parameters/SubscriptionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OwnerRevokeRequest'}
+      responses:
+        '200':
+          description: Revoked or exact replay
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SubscriptionRevokeResult'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        default: {$ref: '#/components/responses/Error'}
+  /internal/v1/credentials/{credential_id}/recover:
+    post:
+      tags: [Access]
+      summary: Start an idempotent fresh higher-revision provisioning operation
+      operationId: recoverProvisioningOwner
+      x-contract-status: implemented-stage7
+      x-allowed-service-identities: [admin-service]
+      parameters:
+        - $ref: '#/components/parameters/CredentialId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OwnerRecoveryRequest'}
+      responses:
+        '200':
+          description: Recovery started or exact replay
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AccessRecoveryResult'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        default: {$ref: '#/components/responses/Error'}
+  /internal/v1/credentials/{credential_id}/support-status:
+    get:
+      tags: [Provisioning]
+      summary: Read support-safe provisioning operation and assigned node metadata
+      operationId: getProvisioningSupportStatus
+      x-contract-status: implemented-stage7
+      x-allowed-service-identities: [admin-service]
+      parameters:
+        - $ref: '#/components/parameters/CredentialId'
+      responses:
+        '200':
+          description: Provisioning status without management URLs or VPN credentials
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProvisioningSupportStatus'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /admin/v1/users/{user_id}:
+    get:
+      tags: [Admin]
+      summary: Read a support-safe user identity
+      operationId: adminGetUser
+      security: [{AdminMTLS: []}]
+      x-permission: identity.read
+      parameters: [{$ref: '#/components/parameters/UserId'}]
+      responses:
+        '200':
+          description: User identity without Telegram credentials or update payloads
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/UserIdentity'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /admin/v1/users/{user_id}/consents/{document_type}/{document_version}:
+    get:
+      tags: [Admin]
+      summary: Read a user consent decision
+      operationId: adminGetConsent
+      security: [{AdminMTLS: []}]
+      x-permission: consent.read
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - {name: document_type, in: path, required: true, schema: {type: string, minLength: 1, maxLength: 64}}
+        - {name: document_version, in: path, required: true, schema: {type: string, minLength: 1, maxLength: 64}}
+      responses:
+        '200':
+          description: Consent status
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ConsentStatus'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /admin/v1/users/{user_id}/orders/{order_id}:
+    get:
+      tags: [Admin]
+      summary: Read a support-safe order
+      operationId: adminGetOrder
+      security: [{AdminMTLS: []}]
+      x-permission: billing.read
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Order snapshot
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Order'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /admin/v1/users/{user_id}/orders/{order_id}/payments/{payment_id}:
+    get:
+      tags: [Admin]
+      summary: Read a support-safe payment
+      operationId: adminGetPayment
+      security: [{AdminMTLS: []}]
+      x-permission: billing.read
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/OrderId'
+        - $ref: '#/components/parameters/PaymentId'
+      responses:
+        '200':
+          description: Payment without confirmation URL or provider identifiers
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PaymentStatus'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /admin/v1/users/{user_id}/subscription:
+    get:
+      tags: [Admin]
+      summary: Read a user's subscription
+      operationId: adminGetSubscription
+      security: [{AdminMTLS: []}]
+      x-permission: subscription.read
+      parameters: [{$ref: '#/components/parameters/UserId'}]
+      responses:
+        '200':
+          description: Subscription status
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Subscription'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /admin/v1/subscriptions/{subscription_id}/access:
+    get:
+      tags: [Admin]
+      summary: Read support-safe access status
+      operationId: adminGetAccess
+      security: [{AdminMTLS: []}]
+      x-permission: access.read
+      parameters: [{$ref: '#/components/parameters/SubscriptionId'}]
+      responses:
+        '200':
+          description: Access status without subscription URL or VPN credentials
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AccessStatus'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /admin/v1/notifications/{notification_id}:
+    get:
+      tags: [Admin]
+      summary: Read support-safe notification metadata
+      operationId: adminGetNotification
+      security: [{AdminMTLS: []}]
+      x-permission: notification.read
+      parameters: [{$ref: '#/components/parameters/NotificationId'}]
+      responses:
+        '200':
+          description: Notification metadata without text or Telegram chat ID
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NotificationJob'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /admin/v1/notification-dead-letters:
+    get:
+      tags: [Admin]
+      summary: List sanitized notification dead letters
+      operationId: adminListNotificationDeadLetters
+      security: [{AdminMTLS: []}]
+      x-permission: notification.dlq.read
+      parameters: [{$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200':
+          description: Dead-letter coordinates, digest, and bounded reason
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NotificationDeadLetterList'}
+        '400': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /admin/v1/credentials/{credential_id}/provisioning:
+    get:
+      tags: [Admin]
+      summary: Read support-safe provisioning state
+      operationId: adminGetProvisioning
+      security: [{AdminMTLS: []}]
+      x-permission: provisioning.read
+      parameters: [{$ref: '#/components/parameters/CredentialId'}]
+      responses:
+        '200':
+          description: Provisioning state without node management URLs or VPN credentials
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProvisioningSupportStatus'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /admin/v1/health:
+    get:
+      tags: [Admin]
+      summary: Read a bounded readiness and version summary for owning services
+      operationId: adminGetHealthSummary
+      security: [{AdminMTLS: []}]
+      x-permission: health.read
+      responses:
+        '200':
+          description: Fixed-upstream health summary; unavailable dependencies remain explicit
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AdminHealthSummary'}
+        '403': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /admin/v1/notifications/{notification_id}/retry:
+    post:
+      tags: [Admin]
+      summary: Authorize, audit, and execute notification retry
+      operationId: adminRetryNotification
+      security: [{AdminMTLS: []}]
+      x-permission: notification.retry
+      parameters:
+        - $ref: '#/components/parameters/NotificationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AdminReasonRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/AdminAction'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        default: {$ref: '#/components/responses/Error'}
+  /admin/v1/subscriptions/{subscription_id}/revoke:
+    post:
+      tags: [Admin]
+      summary: Authorize, audit, and execute subscription revoke
+      operationId: adminRevokeSubscription
+      security: [{AdminMTLS: []}]
+      x-permission: subscription.revoke
+      parameters:
+        - $ref: '#/components/parameters/SubscriptionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AdminRevokeRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/AdminAction'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        default: {$ref: '#/components/responses/Error'}
+  /admin/v1/credentials/{credential_id}/recover:
+    post:
+      tags: [Admin]
+      summary: Authorize, audit, and start higher-revision provisioning recovery
+      operationId: adminRecoverProvisioning
+      security: [{AdminMTLS: []}]
+      x-permission: access.provisioning.recover
+      parameters:
+        - $ref: '#/components/parameters/CredentialId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AdminReasonRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/AdminAction'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        default: {$ref: '#/components/responses/Error'}
+  /admin/v1/audit:
+    get:
+      tags: [Admin]
+      summary: List append-only support-safe administrator audit events
+      operationId: listAdminAudit
+      security: [{AdminMTLS: []}]
+      x-permission: audit.read
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Audit event list
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AdminAuditList'}
+        '400': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
 components:
   securitySchemes:
     ServiceMTLS:
@@ -921,6 +1365,26 @@ components:
       schema:
         type: string
         format: uuid
+    CredentialId:
+      name: credential_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    NotificationId:
+      name: notification_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    PaymentId:
+      name: payment_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema: {type: integer, minimum: 1, maximum: 200, default: 50}
   responses:
     Error:
       description: Safe error response
@@ -934,6 +1398,11 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    AdminAction:
+      description: Completed or safely replayed typed administrative action
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/AdminAction'}
   schemas:
     Error:
       type: object
@@ -1207,10 +1676,13 @@ components:
           format: date-time
     AccessStatus:
       type: object
-      required: [subscription_id, access_status, provisioning_status, token_status]
+      required: [subscription_id, credential_id, access_status, provisioning_status, token_status]
       additionalProperties: false
       properties:
         subscription_id:
+          type: string
+          format: uuid
+        credential_id:
           type: string
           format: uuid
         access_status:
@@ -1390,3 +1862,240 @@ components:
           type: string
           minLength: 3
           maxLength: 512
+    AdminRevokeRequest:
+      type: object
+      required: [reason, reason_code]
+      additionalProperties: false
+      properties:
+        reason: {type: string, minLength: 3, maxLength: 512}
+        reason_code: {type: string, enum: [admin_block, abuse, deleted]}
+    OwnerRevokeRequest:
+      type: object
+      required: [action_id, correlation_id, reason_code]
+      additionalProperties: false
+      properties:
+        action_id: {type: string, format: uuid}
+        correlation_id: {type: string, format: uuid}
+        reason_code: {type: string, enum: [admin_block, abuse, deleted]}
+    OwnerRecoveryRequest:
+      type: object
+      required: [action_id, correlation_id]
+      additionalProperties: false
+      properties:
+        action_id: {type: string, format: uuid}
+        correlation_id: {type: string, format: uuid}
+    NotificationTarget:
+      type: object
+      required: [eligible]
+      additionalProperties: false
+      properties:
+        eligible: {type: boolean}
+        reason_code: {type: string, maxLength: 64}
+        telegram_chat_id: {type: integer, format: int64, minimum: 1, writeOnly: true}
+        locale: {type: string, maxLength: 32}
+    PaymentStatus:
+      type: object
+      required: [payment_id, order_id, status, amount_minor, currency, created_at]
+      additionalProperties: false
+      properties:
+        payment_id: {type: string, format: uuid}
+        order_id: {type: string, format: uuid}
+        status: {type: string, enum: [created, verification_pending, pending, succeeded, canceled, failed]}
+        amount_minor: {type: integer, format: int64, minimum: 1}
+        currency: {type: string, pattern: '^[A-Z]{3}$'}
+        paid_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+    NotificationJob:
+      type: object
+      required: [notification_id, user_id, notification_type, template_version, status, attempts, max_attempts, next_attempt_at, correlation_id, created_at, updated_at]
+      additionalProperties: false
+      properties:
+        notification_id: {type: string, format: uuid}
+        user_id: {type: string, format: uuid}
+        subscription_id: {type: string, format: uuid}
+        credential_id: {type: string, format: uuid}
+        notification_type: {type: string, pattern: '^[a-z][a-z0-9_]{2,63}$'}
+        template_version: {type: integer, minimum: 1}
+        status: {type: string, enum: [pending, processing, retry, delivered, permanently_failed, suppressed]}
+        attempts: {type: integer, minimum: 0}
+        max_attempts: {type: integer, minimum: 1, maximum: 100}
+        next_attempt_at: {type: string, format: date-time}
+        correlation_id: {type: string, format: uuid}
+        causation_id: {type: string, format: uuid}
+        terminal_reason_code: {type: string, maxLength: 64}
+        delivered_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    NotificationRetryResult:
+      type: object
+      required: [notification, replay]
+      additionalProperties: false
+      properties:
+        notification:
+          type: object
+          required: [notification_id, notification_type, status, attempts, max_attempts]
+          additionalProperties: false
+          properties:
+            notification_id: {type: string, format: uuid}
+            notification_type: {type: string}
+            status: {type: string}
+            attempts: {type: integer, minimum: 0}
+            max_attempts: {type: integer, minimum: 1}
+        replay: {type: boolean}
+    NotificationDeadLetterList:
+      type: object
+      required: [dead_letters]
+      additionalProperties: false
+      properties:
+        dead_letters:
+          type: array
+          items: {$ref: '#/components/schemas/NotificationDeadLetter'}
+    NotificationDeadLetter:
+      type: object
+      required: [source_topic, source_partition, source_offset, payload_sha256, reason_code, state, created_at, updated_at]
+      additionalProperties: false
+      properties:
+        source_topic: {type: string, maxLength: 249}
+        source_partition: {type: integer, minimum: 0}
+        source_offset: {type: integer, format: int64, minimum: 0}
+        payload_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        event_type: {type: string, maxLength: 128}
+        reason_code: {type: string, maxLength: 64}
+        state: {type: string, enum: [available, replay_requested, replayed]}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    TelegramDeliveryRequest:
+      type: object
+      required: [telegram_chat_id, notification_type, template_version, text]
+      additionalProperties: false
+      properties:
+        telegram_chat_id: {type: integer, format: int64, minimum: 1, writeOnly: true}
+        notification_type: {type: string, pattern: '^[a-z][a-z0-9_]{2,63}$'}
+        template_version: {type: integer, const: 1}
+        text: {type: string, minLength: 1, maxLength: 4096, writeOnly: true}
+    TelegramDeliveryResult:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status: {type: string, enum: [delivered, replay, retryable, permanent]}
+        reason_code: {type: string, maxLength: 64}
+        retry_after_seconds: {type: integer, minimum: 0}
+    SubscriptionRevokeResult:
+      type: object
+      required: [subscription_id, status, reason_code, replay]
+      additionalProperties: false
+      properties:
+        subscription_id: {type: string, format: uuid}
+        status: {const: revoked}
+        reason_code: {type: string, enum: [admin_block, abuse, deleted]}
+        replay: {type: boolean}
+    AccessRecoveryResult:
+      type: object
+      required: [credential_id, operation_id, desired_revision, status, replay]
+      additionalProperties: false
+      properties:
+        credential_id: {type: string, format: uuid}
+        operation_id: {type: string, format: uuid}
+        desired_revision: {type: integer, minimum: 2}
+        status: {const: provisioning}
+        replay: {type: boolean}
+    ProvisioningSupportStatus:
+      type: object
+      required: [credential_id, operation_id, kind, desired_revision, state, attempts, max_attempts, created_at, allocations]
+      additionalProperties: false
+      properties:
+        credential_id: {type: string, format: uuid}
+        operation_id: {type: string, format: uuid}
+        kind: {type: string, enum: [provision, revoke]}
+        desired_revision: {type: integer, minimum: 1}
+        state: {type: string, enum: [pending, processing, retry, succeeded, failed]}
+        attempts: {type: integer, minimum: 0}
+        max_attempts: {type: integer, minimum: 1}
+        last_error_code: {type: string, maxLength: 64}
+        created_at: {type: string, format: date-time}
+        completed_at: {type: string, format: date-time}
+        allocations:
+          type: array
+          items:
+            type: object
+            required: [node_id, node_label, region, node_status, role, desired_revision, desired_state, allocation_revision, state]
+            additionalProperties: false
+            properties:
+              node_id: {type: string, format: uuid}
+              node_label: {type: string, maxLength: 64}
+              region: {type: string, maxLength: 64}
+              node_status: {type: string, enum: [active, draining, offline]}
+              role: {type: string, enum: [primary, failover]}
+              desired_revision: {type: integer, minimum: 1}
+              desired_state: {type: string, enum: [present, absent]}
+              allocation_revision: {type: integer, minimum: 1}
+              state: {type: string, enum: [pending, active, failed, revoked]}
+              last_error_code: {type: string, maxLength: 64}
+    AdminAction:
+      type: object
+      required: [action_id, action, target_type, target_id, status, correlation_id, created_at, replay]
+      additionalProperties: false
+      properties:
+        action_id: {type: string, format: uuid}
+        action: {type: string, enum: [notification.retry, subscription.revoke, access.provisioning.recover]}
+        target_type: {type: string, enum: [notification, subscription, credential]}
+        target_id: {type: string, format: uuid}
+        status: {type: string, enum: [pending, succeeded, failed]}
+        result:
+          oneOf:
+            - $ref: '#/components/schemas/NotificationRetryResult'
+            - $ref: '#/components/schemas/SubscriptionRevokeResult'
+            - $ref: '#/components/schemas/AccessRecoveryResult'
+        error_code: {type: string, maxLength: 64}
+        correlation_id: {type: string, format: uuid}
+        created_at: {type: string, format: date-time}
+        completed_at: {type: string, format: date-time}
+        replay: {type: boolean}
+    AdminAuditList:
+      type: object
+      required: [events]
+      additionalProperties: false
+      properties:
+        events:
+          type: array
+          items: {$ref: '#/components/schemas/AdminAuditEvent'}
+    AdminHealthSummary:
+      type: object
+      required: [services]
+      additionalProperties: false
+      properties:
+        services:
+          type: array
+          items:
+            type: object
+            required: [service, status]
+            additionalProperties: false
+            properties:
+              service:
+                type: string
+                enum: [access-service, billing-service, identity-service, notification-service, provisioning-service, subscription-service]
+              status: {type: string, enum: [ready, unavailable]}
+              version: {type: string, maxLength: 128}
+    AdminAuditEvent:
+      type: object
+      required: [audit_event_id, action_id, actor_principal, verified_spiffe_identity, roles, permissions, action, permission, target_type, target_id, reason, outcome, request_id, correlation_id, occurred_at]
+      additionalProperties: false
+      properties:
+        audit_event_id: {type: string, format: uuid}
+        action_id: {type: string, format: uuid}
+        actor_principal: {type: string, maxLength: 64}
+        verified_spiffe_identity: {type: string, pattern: '^spiffe://'}
+        roles: {type: array, items: {type: string, enum: [support_readonly, operations, security, finance_readonly]}}
+        permissions: {type: array, items: {type: string, maxLength: 64}}
+        action: {type: string}
+        permission: {type: string}
+        target_type: {type: string}
+        target_id: {type: string, format: uuid}
+        reason: {type: string, minLength: 3, maxLength: 512}
+        outcome: {type: string, enum: [accepted, succeeded, failed]}
+        error_code: {type: string, maxLength: 64}
+        request_id: {type: string, maxLength: 128}
+        correlation_id: {type: string, format: uuid}
+        occurred_at: {type: string, format: date-time}
+        completed_at: {type: string, format: date-time}

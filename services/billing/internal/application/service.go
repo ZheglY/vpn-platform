@@ -53,6 +53,21 @@ func (s *Service) GetOrder(ctx context.Context, userID, orderID string) (domain.
 	return s.store.GetOrder(ctx, userID, orderID)
 }
 
+func (s *Service) GetPaymentStatus(ctx context.Context, userID, orderID, paymentID string) (domain.PaymentStatus, error) {
+	payment, err := s.store.GetPayment(ctx, paymentID)
+	if err != nil {
+		return domain.PaymentStatus{}, err
+	}
+	if payment.UserID != userID || payment.OrderID != orderID {
+		return domain.PaymentStatus{}, domain.ErrNotFound
+	}
+	return domain.PaymentStatus{
+		PaymentID: payment.PaymentID, OrderID: payment.OrderID, Status: payment.Status,
+		AmountMinor: payment.AmountMinor, Currency: payment.Currency, PaidAt: payment.PaidAt,
+		CreatedAt: payment.CreatedAt,
+	}, nil
+}
+
 func (s *Service) CreatePayment(ctx context.Context, userID, orderID, idempotencyKey string) (domain.Payment, bool, error) {
 	requestHash := hashParts(userID, orderID)
 	replayed, found, err := s.store.FindPaymentReplay(ctx, userID, idempotencyKey, requestHash)

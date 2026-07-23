@@ -139,6 +139,33 @@ type AgentStatus struct {
 	XrayVersion    string `json:"xray_version"`
 }
 
+type SupportAllocation struct {
+	NodeID             string  `json:"node_id"`
+	NodeLabel          string  `json:"node_label"`
+	Region             string  `json:"region"`
+	NodeStatus         string  `json:"node_status"`
+	Role               string  `json:"role"`
+	DesiredRevision    int     `json:"desired_revision"`
+	DesiredState       string  `json:"desired_state"`
+	AllocationRevision int     `json:"allocation_revision"`
+	State              string  `json:"state"`
+	LastErrorCode      *string `json:"last_error_code,omitempty"`
+}
+
+type SupportSnapshot struct {
+	CredentialID    string              `json:"credential_id"`
+	OperationID     string              `json:"operation_id"`
+	Kind            string              `json:"kind"`
+	DesiredRevision int                 `json:"desired_revision"`
+	State           string              `json:"state"`
+	Attempts        int                 `json:"attempts"`
+	MaxAttempts     int                 `json:"max_attempts"`
+	LastErrorCode   *string             `json:"last_error_code,omitempty"`
+	CreatedAt       time.Time           `json:"created_at"`
+	CompletedAt     *time.Time          `json:"completed_at,omitempty"`
+	Allocations     []SupportAllocation `json:"allocations"`
+}
+
 type CredentialActualState struct {
 	CredentialID    string `json:"credential_id"`
 	DesiredRevision int    `json:"desired_revision"`
@@ -191,6 +218,7 @@ type Store interface {
 	RetryOutbox(context.Context, string, time.Duration) error
 	SeedNodes(context.Context, []NodeSeed) error
 	ListNodes(context.Context) ([]Node, error)
+	GetSupportSnapshot(context.Context, string) (SupportSnapshot, error)
 	RecordNodeHealth(context.Context, AgentStatus, time.Duration) error
 	MarkNodeOffline(context.Context, string) error
 	ClaimReconciliationCandidates(context.Context, int, time.Duration) ([]ReconciliationCandidate, error)

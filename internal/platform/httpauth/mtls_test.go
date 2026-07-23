@@ -119,6 +119,21 @@ func TestSPIFFEID(t *testing.T) {
 	}
 }
 
+func TestAdminIdentityFromTLSRequiresOneVerifiedAdminURI(t *testing.T) {
+	identity, ok := AdminIdentityFromTLS(verifiedTLSState("spiffe://vpn-service/ns/local/admin/alice"), "vpn-service", "local")
+	if !ok || identity.Principal != "alice" || identity.SPIFFEID != "spiffe://vpn-service/ns/local/admin/alice" {
+		t.Fatalf("identity=%+v ok=%v", identity, ok)
+	}
+	if _, ok := AdminIdentityFromTLS(verifiedTLSState("spiffe://vpn-service/ns/local/sa/admin-cli"), "vpn-service", "local"); ok {
+		t.Fatal("service identity accepted as administrator")
+	}
+	state := verifiedTLSState("spiffe://vpn-service/ns/local/admin/alice")
+	state.VerifiedChains[0][0].URIs = append(state.VerifiedChains[0][0].URIs, certificateWithURI("spiffe://vpn-service/ns/local/admin/bob").URIs[0])
+	if _, ok := AdminIdentityFromTLS(state, "vpn-service", "local"); ok {
+		t.Fatal("certificate with multiple administrator identities accepted")
+	}
+}
+
 func protectedNoopHandler() http.Handler {
 	return httpserver.Chain(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)

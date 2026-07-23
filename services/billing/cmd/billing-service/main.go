@@ -99,7 +99,7 @@ func run(ctx context.Context) error {
 	readAuth := commerceAuth
 	if cfg.InternalAuth == "mtls" {
 		commerceAuth = httpauth.RequireService(httpauth.ServicePolicy{TrustDomain: cfg.MTLSTrustDomain, Namespace: cfg.MTLSNamespace, Allowed: []string{"telegram-bot"}})
-		readAuth = httpauth.RequireService(httpauth.ServicePolicy{TrustDomain: cfg.MTLSTrustDomain, Namespace: cfg.MTLSNamespace, Allowed: []string{"telegram-bot", "subscription-service", "admin-cli"}})
+		readAuth = httpauth.RequireService(httpauth.ServicePolicy{TrustDomain: cfg.MTLSTrustDomain, Namespace: cfg.MTLSNamespace, Allowed: []string{"telegram-bot", "subscription-service", "admin-service"}})
 	}
 	mux := http.NewServeMux()
 	mux.Handle("GET /livez", httpserver.LivenessHandler(serviceName))
@@ -108,6 +108,7 @@ func run(ctx context.Context) error {
 	mux.Handle("GET /metrics", observability.Handler(observability.NewRegistry()))
 	mux.Handle("POST /internal/v1/users/{user_id}/orders", commerceAuth(http.HandlerFunc(api.CreateOrder)))
 	mux.Handle("GET /internal/v1/users/{user_id}/orders/{order_id}", readAuth(http.HandlerFunc(api.GetOrder)))
+	mux.Handle("GET /internal/v1/users/{user_id}/orders/{order_id}/payments/{payment_id}", readAuth(http.HandlerFunc(api.GetPaymentStatus)))
 	mux.Handle("POST /internal/v1/users/{user_id}/orders/{order_id}/payments", commerceAuth(http.HandlerFunc(api.CreatePayment)))
 	mux.HandleFunc("POST /webhooks/yookassa", api.YooKassaWebhook)
 	handler := httpserver.Chain(mux, httpserver.RequestID, httpserver.LimitBody(cfg.MaxBodyBytes), httpserver.Recover(logger), httpserver.LogRequests(logger))
