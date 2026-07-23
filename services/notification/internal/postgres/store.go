@@ -35,6 +35,10 @@ func (s *Store) RecordEvent(ctx context.Context, meta domain.EventMeta, intent d
 		return false, fmt.Errorf("begin notification event: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `
+SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, intent.DeliveryStreamKey); err != nil {
+		return false, fmt.Errorf("lock notification delivery stream: %w", err)
+	}
 
 	var existingHash string
 	err = tx.QueryRow(ctx, `
@@ -103,19 +107,49 @@ INSERT INTO notification_inbox (
 	status, reason := domain.StatusPending, any(nil)
 	if intent.SuppressedReason != "" {
 		status, reason = domain.StatusSuppressed, intent.SuppressedReason
+	} else {
+		var superseded bool
+		if err := tx.QueryRow(ctx, `
+SELECT EXISTS (
+    SELECT 1 FROM notification_jobs
+    WHERE delivery_stream_key = $1
+      AND delivery_sequence > $2
+      AND supersedes_predecessors
+)`, intent.DeliveryStreamKey, intent.DeliverySequence).Scan(&superseded); err != nil {
+			return false, fmt.Errorf("check notification stream superseder: %w", err)
+		}
+		if superseded {
+			status, reason = domain.StatusSuppressed, "superseded_by_terminal_state"
+		}
 	}
 	result, err := tx.Exec(ctx, `
 INSERT INTO notification_jobs (
     notification_id, user_id, subscription_id, credential_id, notification_type,
     template_version, source_event_id, business_dedupe_key, status, max_attempts,
-    terminal_reason_code, correlation_id, causation_id, variables
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+    terminal_reason_code, correlation_id, causation_id, variables,
+    source_producer, source_aggregate_type, source_aggregate_id, source_aggregate_sequence,
+    delivery_stream_key, delivery_sequence, supersedes_predecessors
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
 ON CONFLICT (business_dedupe_key) DO NOTHING`,
 		intent.NotificationID, intent.UserID, intent.SubscriptionID, intent.CredentialID, intent.NotificationType,
 		intent.TemplateVersion, meta.EventID, intent.BusinessDedupeKey, status, intent.MaxAttempts,
-		reason, meta.CorrelationID, meta.CausationID, variables)
+		reason, meta.CorrelationID, meta.CausationID, variables,
+		meta.Producer, meta.AggregateType, meta.AggregateID, sequence,
+		intent.DeliveryStreamKey, intent.DeliverySequence, intent.SupersedesOlder)
 	if err != nil {
 		return false, fmt.Errorf("insert notification job: %w", err)
+	}
+	if intent.SupersedesOlder {
+		if _, err := tx.Exec(ctx, `
+UPDATE notification_jobs
+SET status = 'suppressed', terminal_reason_code = 'superseded_by_terminal_state',
+    lease_until = NULL, claim_id = NULL, updated_at = clock_timestamp()
+WHERE delivery_stream_key = $1
+  AND delivery_sequence < $2
+  AND status IN ('pending', 'retry')`,
+			intent.DeliveryStreamKey, intent.DeliverySequence); err != nil {
+			return false, fmt.Errorf("suppress notification stream predecessors: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("commit notification event: %w", err)
@@ -183,13 +217,19 @@ func (s *Store) ClaimJob(ctx context.Context, lease time.Duration) (domain.Job, 
 	row := s.pool.QueryRow(ctx, `
 WITH candidate AS (
     SELECT notification_id
-    FROM notification_jobs
+    FROM notification_jobs candidate_job
     WHERE (
-        status IN ('pending','retry') AND next_attempt_at <= clock_timestamp()
-    ) OR (
-        status = 'processing' AND lease_until <= clock_timestamp()
+        (status IN ('pending','retry') AND next_attempt_at <= clock_timestamp())
+        OR (status = 'processing' AND lease_until <= clock_timestamp())
     )
-    ORDER BY next_attempt_at, created_at
+    AND NOT EXISTS (
+        SELECT 1
+        FROM notification_jobs predecessor
+        WHERE predecessor.delivery_stream_key = candidate_job.delivery_stream_key
+          AND predecessor.delivery_sequence < candidate_job.delivery_sequence
+          AND predecessor.status IN ('pending', 'retry', 'processing')
+    )
+    ORDER BY next_attempt_at, delivery_stream_key, delivery_sequence, created_at
     FOR UPDATE SKIP LOCKED
     LIMIT 1
 ), claimed AS (
@@ -203,6 +243,8 @@ WITH candidate AS (
 )
 SELECT notification_id, user_id, subscription_id, credential_id, notification_type,
        template_version, status, attempts, max_attempts, next_attempt_at, claim_id,
+       source_producer, source_aggregate_type, source_aggregate_id, COALESCE(source_aggregate_sequence, 0),
+       delivery_stream_key, delivery_sequence, supersedes_predecessors,
        correlation_id, causation_id, variables, terminal_reason_code, delivered_at,
        created_at, updated_at
 FROM claimed`, claimID, lease.String())
@@ -233,7 +275,40 @@ func (s *Store) SuppressJob(ctx context.Context, notificationID, claimID, reason
 }
 
 func (s *Store) finishClaim(ctx context.Context, notificationID, claimID, status, reason string, delay time.Duration) error {
-	result, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin finish notification claim: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var streamKey string
+	var deliverySequence int64
+	err = tx.QueryRow(ctx, `
+SELECT delivery_stream_key, delivery_sequence
+FROM notification_jobs
+WHERE notification_id = $1 AND status = 'processing' AND claim_id = $2
+FOR UPDATE`, notificationID, claimID).Scan(&streamKey, &deliverySequence)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrEventConflict
+	}
+	if err != nil {
+		return fmt.Errorf("lock notification claim: %w", err)
+	}
+	if status == domain.StatusRetry || status == domain.StatusPermanentlyFailed {
+		var superseded bool
+		if err := tx.QueryRow(ctx, `
+SELECT EXISTS (
+    SELECT 1 FROM notification_jobs
+    WHERE delivery_stream_key = $1
+      AND delivery_sequence > $2
+      AND supersedes_predecessors
+)`, streamKey, deliverySequence).Scan(&superseded); err != nil {
+			return fmt.Errorf("check notification claim superseder: %w", err)
+		}
+		if superseded {
+			status, reason, delay = domain.StatusSuppressed, "superseded_by_terminal_state", 0
+		}
+	}
+	result, err := tx.Exec(ctx, `
 UPDATE notification_jobs
 SET status = $3,
     next_attempt_at = CASE WHEN $3 = 'retry' THEN clock_timestamp() + $5::interval ELSE next_attempt_at END,
@@ -247,6 +322,9 @@ WHERE notification_id = $1 AND status = 'processing' AND claim_id = $2`, notific
 	if result.RowsAffected() != 1 {
 		return domain.ErrEventConflict
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit notification claim: %w", err)
+	}
 	return nil
 }
 
@@ -254,6 +332,8 @@ func (s *Store) GetJob(ctx context.Context, notificationID string) (domain.Job, 
 	job, err := scanJob(s.pool.QueryRow(ctx, `
 SELECT notification_id, user_id, subscription_id, credential_id, notification_type,
        template_version, status, attempts, max_attempts, next_attempt_at, COALESCE(claim_id, '00000000-0000-0000-0000-000000000000'::uuid),
+       source_producer, source_aggregate_type, source_aggregate_id, COALESCE(source_aggregate_sequence, 0),
+       delivery_stream_key, delivery_sequence, supersedes_predecessors,
        correlation_id, causation_id, variables, terminal_reason_code, delivered_at,
        created_at, updated_at
 FROM notification_jobs WHERE notification_id = $1`, notificationID))
@@ -284,8 +364,11 @@ func (s *Store) RequestRetry(ctx context.Context, notificationID, idempotencyKey
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return domain.Job{}, false, fmt.Errorf("lookup notification retry: %w", err)
 	}
-	var status string
-	err = tx.QueryRow(ctx, `SELECT status FROM notification_jobs WHERE notification_id = $1 FOR UPDATE`, notificationID).Scan(&status)
+	var status, streamKey string
+	var deliverySequence int64
+	err = tx.QueryRow(ctx, `
+SELECT status, delivery_stream_key, delivery_sequence
+FROM notification_jobs WHERE notification_id = $1 FOR UPDATE`, notificationID).Scan(&status, &streamKey, &deliverySequence)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Job{}, false, domain.ErrNotFound
 	}
@@ -293,6 +376,17 @@ func (s *Store) RequestRetry(ctx context.Context, notificationID, idempotencyKey
 		return domain.Job{}, false, fmt.Errorf("lock notification job: %w", err)
 	}
 	if status != domain.StatusPermanentlyFailed && status != domain.StatusRetry {
+		return domain.Job{}, false, domain.ErrRetryNotAllowed
+	}
+	var successorExists bool
+	if err := tx.QueryRow(ctx, `
+SELECT EXISTS (
+    SELECT 1 FROM notification_jobs
+    WHERE delivery_stream_key = $1 AND delivery_sequence > $2
+)`, streamKey, deliverySequence).Scan(&successorExists); err != nil {
+		return domain.Job{}, false, fmt.Errorf("check notification retry ordering: %w", err)
+	}
+	if successorExists {
 		return domain.Job{}, false, domain.ErrRetryNotAllowed
 	}
 	_, err = tx.Exec(ctx, `
@@ -325,7 +419,9 @@ func scanJob(row rowScanner) (domain.Job, error) {
 	var variables []byte
 	err := row.Scan(&job.NotificationID, &job.UserID, &job.SubscriptionID, &job.CredentialID,
 		&job.NotificationType, &job.TemplateVersion, &job.Status, &job.Attempts, &job.MaxAttempts,
-		&job.NextAttemptAt, &job.ClaimID, &job.CorrelationID, &job.CausationID, &variables,
+		&job.NextAttemptAt, &job.ClaimID, &job.SourceProducer, &job.SourceAggregate, &job.SourceAggregateID, &job.SourceSequence,
+		&job.DeliveryStream, &job.DeliverySequence, &job.SupersedesOlder,
+		&job.CorrelationID, &job.CausationID, &variables,
 		&job.TerminalReason, &job.DeliveredAt, &job.CreatedAt, &job.UpdatedAt)
 	if err != nil {
 		return domain.Job{}, err
@@ -343,6 +439,8 @@ func getJobQuery(ctx context.Context, query interface {
 SELECT notification_id, user_id, subscription_id, credential_id, notification_type,
        template_version, status, attempts, max_attempts, next_attempt_at,
        COALESCE(claim_id, '00000000-0000-0000-0000-000000000000'::uuid),
+       source_producer, source_aggregate_type, source_aggregate_id, COALESCE(source_aggregate_sequence, 0),
+       delivery_stream_key, delivery_sequence, supersedes_predecessors,
        correlation_id, causation_id, variables, terminal_reason_code, delivered_at,
        created_at, updated_at
 FROM notification_jobs WHERE notification_id = $1`, notificationID))

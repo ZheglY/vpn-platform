@@ -69,7 +69,46 @@ func TestRecoverAccessRejectsSemanticOwnerMismatch(t *testing.T) {
 	}
 	_, err = client.RecoverAccess(context.Background(), "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000010", "00000000-0000-4000-8000-000000000011")
 	var ownerErr *domain.OwnerError
-	if !errors.As(err, &ownerErr) || ownerErr.Code != "owner_response_invalid" {
+	if !errors.As(err, &ownerErr) || ownerErr.Code != "owner_response_invalid" || ownerErr.Definitive {
 		t.Fatalf("RecoverAccess() error = %T %v, want owner_response_invalid", err, err)
+	}
+}
+
+func TestMutationOwnerOutcomeClassification(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name           string
+		status         int
+		body           string
+		wantCode       string
+		wantDefinitive bool
+	}{
+		{name: "definitive conflict", status: http.StatusConflict, body: `{}`, wantCode: "owner_conflict", wantDefinitive: true},
+		{name: "unknown server failure", status: http.StatusServiceUnavailable, body: `{}`, wantCode: "owner_unavailable"},
+		{name: "unknown invalid success", status: http.StatusOK, body: `{"subscription_id":`, wantCode: "owner_response_invalid"},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(test.status)
+				_, _ = w.Write([]byte(test.body))
+			}))
+			defer server.Close()
+			client, err := New(Config{
+				IdentityBaseURL: server.URL, BillingBaseURL: server.URL, SubscriptionBaseURL: server.URL,
+				AccessBaseURL: server.URL, ProvisioningBaseURL: server.URL, NotificationBaseURL: server.URL,
+			}, server.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.RevokeSubscription(context.Background(), "00000000-0000-4000-8000-000000000002",
+				"00000000-0000-4000-8000-000000000010", "00000000-0000-4000-8000-000000000011", "admin_block")
+			var ownerErr *domain.OwnerError
+			if !errors.As(err, &ownerErr) || ownerErr.Code != test.wantCode || ownerErr.Definitive != test.wantDefinitive {
+				t.Fatalf("error=%T %v definitive=%v", err, err, ownerErr != nil && ownerErr.Definitive)
+			}
+		})
 	}
 }

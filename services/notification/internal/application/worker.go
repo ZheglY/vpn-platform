@@ -61,12 +61,12 @@ func (w *Worker) workOnce(ctx context.Context) error {
 		}
 		return w.store.SuppressJob(ctx, job.NotificationID, job.ClaimID, reason)
 	}
-	if isEntitlementSensitive(job.NotificationType) && job.SubscriptionID != nil {
-		entitled, err := w.subscription.IsEntitled(ctx, job.UserID, *job.SubscriptionID)
+	if isSubscriptionStateSensitive(job.NotificationType) && job.SubscriptionID != nil {
+		state, err := w.subscription.GetState(ctx, job.UserID, *job.SubscriptionID)
 		if err != nil {
 			return w.retryOrFail(ctx, job, &domain.DeliveryError{Code: "subscription_state_unavailable", Retryable: true})
 		}
-		if !entitled {
+		if !subscriptionNotificationCurrent(job, state) {
 			return w.store.SuppressJob(ctx, job.NotificationID, job.ClaimID, "stale_subscription_state")
 		}
 	}
@@ -90,8 +90,33 @@ func (w *Worker) workOnce(ctx context.Context) error {
 	return w.store.CompleteJob(ctx, job.NotificationID, job.ClaimID)
 }
 
-func isEntitlementSensitive(notificationType string) bool {
-	return notificationType == "access_ready" || notificationType == "access_degraded" || notificationType == "provisioning_failed"
+func isSubscriptionStateSensitive(notificationType string) bool {
+	switch notificationType {
+	case "subscription_extended", "subscription_grace", "subscription_expired", "subscription_revoked",
+		"access_ready", "access_degraded", "provisioning_failed":
+		return true
+	default:
+		return false
+	}
+}
+
+func subscriptionNotificationCurrent(job domain.Job, state domain.SubscriptionState) bool {
+	switch job.NotificationType {
+	case "subscription_extended":
+		expected, err := time.Parse(time.RFC3339Nano, job.Variables["period_end"])
+		return err == nil && state.Status == "active" && state.CurrentPeriodEnd != nil && state.CurrentPeriodEnd.Equal(expected)
+	case "subscription_grace":
+		expected, err := time.Parse(time.RFC3339Nano, job.Variables["grace_ends_at"])
+		return err == nil && state.Status == "grace" && state.GraceEndsAt != nil && state.GraceEndsAt.Equal(expected)
+	case "subscription_expired":
+		return state.Status == "expired"
+	case "subscription_revoked":
+		return state.Status == "revoked"
+	case "access_ready", "access_degraded", "provisioning_failed":
+		return state.Status == "active" || state.Status == "grace"
+	default:
+		return true
+	}
 }
 
 func (w *Worker) retryOrFail(ctx context.Context, job domain.Job, err error) error {

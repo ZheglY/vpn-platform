@@ -68,21 +68,27 @@ func (s *Service) intent(meta domain.EventMeta, data json.RawMessage) (domain.In
 		}
 		base.UserID, base.NotificationType = event.UserID, "payment_confirmed"
 		base.BusinessDedupeKey = "payment_confirmed:" + event.PaymentID
-		base.Variables = map[string]string{"amount_minor": strconv.FormatInt(event.AmountMinor, 10), "currency": event.Currency}
+		base.DeliveryStreamKey, base.DeliverySequence = "payment:"+event.PaymentID, 1
+		base.Variables = map[string]string{
+			"amount_minor": strconv.FormatInt(event.AmountMinor, 10),
+			"currency":     event.Currency,
+		}
 	case "billing.refund.succeeded.v1":
 		var event refundSucceeded
-		if err := strictDecode(data, &event); err != nil || event.RefundID != meta.AggregateID || event.UserID == "" || event.RefundScope != "full" || event.RefundedAt.IsZero() {
+		if err := strictDecode(data, &event); err != nil || event.RefundID != meta.AggregateID || event.PaymentID == "" || event.UserID == "" || event.RefundScope != "full" || event.RefundedAt.IsZero() {
 			return domain.Intent{}, contract("invalid_event_data", err)
 		}
 		base.UserID, base.NotificationType = event.UserID, "refund_confirmed"
 		base.BusinessDedupeKey = "refund_confirmed:" + event.RefundID
+		base.DeliveryStreamKey, base.DeliverySequence, base.SupersedesOlder = "payment:"+event.PaymentID, 2, true
 	case "subscription.activated.v1", "subscription.extended.v1":
 		var event periodEvent
-		if err := strictDecode(data, &event); err != nil || event.SubscriptionID != meta.AggregateID || event.UserID == "" || event.PeriodID == "" || event.PeriodEnd.IsZero() {
+		if err := strictDecode(data, &event); err != nil || meta.AggregateSequence < 1 || event.SubscriptionID != meta.AggregateID || event.UserID == "" || event.PeriodID == "" || event.PeriodEnd.IsZero() {
 			return domain.Intent{}, contract("invalid_event_data", err)
 		}
 		base.UserID, base.SubscriptionID = event.UserID, &event.SubscriptionID
-		base.Variables = map[string]string{"period_end": event.PeriodEnd.UTC().Format(time.RFC3339)}
+		base.DeliveryStreamKey, base.DeliverySequence = "subscription:"+event.SubscriptionID, meta.AggregateSequence
+		base.Variables = map[string]string{"period_end": event.PeriodEnd.UTC().Format(time.RFC3339Nano)}
 		if meta.EventType == "subscription.activated.v1" {
 			base.NotificationType = "subscription_activated"
 			base.BusinessDedupeKey = "activation:" + event.PeriodID
@@ -93,18 +99,20 @@ func (s *Service) intent(meta domain.EventMeta, data json.RawMessage) (domain.In
 		}
 	case "subscription.grace.started.v1":
 		var event graceStarted
-		if err := strictDecode(data, &event); err != nil || event.SubscriptionID != meta.AggregateID || event.UserID == "" || event.GraceEndsAt.IsZero() || !event.GraceEndsAt.After(event.PeriodEnd) {
+		if err := strictDecode(data, &event); err != nil || meta.AggregateSequence < 1 || event.SubscriptionID != meta.AggregateID || event.UserID == "" || event.GraceEndsAt.IsZero() || !event.GraceEndsAt.After(event.PeriodEnd) {
 			return domain.Intent{}, contract("invalid_event_data", err)
 		}
 		base.UserID, base.SubscriptionID, base.NotificationType = event.UserID, &event.SubscriptionID, "subscription_grace"
 		base.BusinessDedupeKey = fmt.Sprintf("grace:%s:%d", event.SubscriptionID, meta.AggregateSequence)
-		base.Variables = map[string]string{"grace_ends_at": event.GraceEndsAt.UTC().Format(time.RFC3339)}
+		base.DeliveryStreamKey, base.DeliverySequence = "subscription:"+event.SubscriptionID, meta.AggregateSequence
+		base.Variables = map[string]string{"grace_ends_at": event.GraceEndsAt.UTC().Format(time.RFC3339Nano)}
 	case "subscription.expired.v1", "subscription.revoked.v1":
 		var event terminalEvent
-		if err := strictDecode(data, &event); err != nil || event.SubscriptionID != meta.AggregateID || event.UserID == "" || event.EffectiveAt.IsZero() {
+		if err := strictDecode(data, &event); err != nil || meta.AggregateSequence < 1 || event.SubscriptionID != meta.AggregateID || event.UserID == "" || event.EffectiveAt.IsZero() {
 			return domain.Intent{}, contract("invalid_event_data", err)
 		}
 		base.UserID, base.SubscriptionID = event.UserID, &event.SubscriptionID
+		base.DeliveryStreamKey, base.DeliverySequence, base.SupersedesOlder = "subscription:"+event.SubscriptionID, meta.AggregateSequence, true
 		base.NotificationType = "subscription_expired"
 		if meta.EventType == "subscription.revoked.v1" {
 			base.NotificationType = "subscription_revoked"
@@ -113,10 +121,11 @@ func (s *Service) intent(meta domain.EventMeta, data json.RawMessage) (domain.In
 		base.Variables = map[string]string{"reason": event.Reason}
 	case "access.ready.v1":
 		var event accessReady
-		if err := strictDecode(data, &event); err != nil || event.CredentialID != meta.AggregateID || event.UserID == "" || event.SubscriptionID == "" || event.ReadyAt.IsZero() || !event.LinkIssuanceRequired || (event.ProvisioningStatus != "active" && event.ProvisioningStatus != "degraded") {
+		if err := strictDecode(data, &event); err != nil || meta.AggregateSequence < 1 || event.CredentialID != meta.AggregateID || event.UserID == "" || event.SubscriptionID == "" || event.ReadyAt.IsZero() || !event.LinkIssuanceRequired || (event.ProvisioningStatus != "active" && event.ProvisioningStatus != "degraded") {
 			return domain.Intent{}, contract("invalid_event_data", err)
 		}
 		base.UserID, base.SubscriptionID, base.CredentialID = event.UserID, &event.SubscriptionID, &event.CredentialID
+		base.DeliveryStreamKey, base.DeliverySequence = "access:"+event.CredentialID, meta.AggregateSequence
 		base.NotificationType = "access_ready"
 		if event.ProvisioningStatus == "degraded" {
 			base.NotificationType = "access_degraded"
@@ -124,18 +133,20 @@ func (s *Service) intent(meta domain.EventMeta, data json.RawMessage) (domain.In
 		base.BusinessDedupeKey = fmt.Sprintf("access_ready:%s:%d", event.CredentialID, meta.AggregateSequence)
 	case "access.provisioning.failed.v1":
 		var event provisioningFailed
-		if err := strictDecode(data, &event); err != nil || event.CredentialID != meta.AggregateID || event.UserID == "" || event.SubscriptionID == "" || event.FailedRevision < 1 || event.FailedAt.IsZero() {
+		if err := strictDecode(data, &event); err != nil || meta.AggregateSequence < 1 || event.CredentialID != meta.AggregateID || event.UserID == "" || event.SubscriptionID == "" || event.FailedRevision < 1 || event.FailedAt.IsZero() {
 			return domain.Intent{}, contract("invalid_event_data", err)
 		}
 		base.UserID, base.SubscriptionID, base.CredentialID = event.UserID, &event.SubscriptionID, &event.CredentialID
+		base.DeliveryStreamKey, base.DeliverySequence = "access:"+event.CredentialID, meta.AggregateSequence
 		base.NotificationType = "provisioning_failed"
 		base.BusinessDedupeKey = fmt.Sprintf("provisioning_failed:%s:%d", event.CredentialID, event.FailedRevision)
 	case "access.revoked.v1":
 		var event accessRevoked
-		if err := strictDecode(data, &event); err != nil || event.CredentialID != meta.AggregateID || event.UserID == "" || event.SubscriptionID == "" || event.DesiredRevision < 1 || event.RevokedAt.IsZero() {
+		if err := strictDecode(data, &event); err != nil || meta.AggregateSequence < 1 || event.CredentialID != meta.AggregateID || event.UserID == "" || event.SubscriptionID == "" || event.DesiredRevision < 1 || event.RevokedAt.IsZero() {
 			return domain.Intent{}, contract("invalid_event_data", err)
 		}
 		base.UserID, base.SubscriptionID, base.CredentialID = event.UserID, &event.SubscriptionID, &event.CredentialID
+		base.DeliveryStreamKey, base.DeliverySequence, base.SupersedesOlder = "access:"+event.CredentialID, meta.AggregateSequence, true
 		base.NotificationType = "access_physically_revoked"
 		base.BusinessDedupeKey = fmt.Sprintf("access_revoked:%s:%d", event.CredentialID, event.DesiredRevision)
 		base.SuppressedReason = "covered_by_entitlement_terminal"
@@ -144,6 +155,9 @@ func (s *Service) intent(meta domain.EventMeta, data json.RawMessage) (domain.In
 	}
 	if meta.PartitionKey != "user:"+base.UserID {
 		return domain.Intent{}, contract("event_partition_mismatch", nil)
+	}
+	if base.DeliveryStreamKey == "" || base.DeliverySequence < 1 {
+		return domain.Intent{}, contract("invalid_delivery_order", nil)
 	}
 	return base, nil
 }

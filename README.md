@@ -16,8 +16,8 @@ Current milestone: Stage 7 durable notifications and administrator operations, a
 - `provisioning-service` with a separate database, cross-topic command and outcome ordering, transactional generation-fenced node placement, exact capacity reserve, durable operations/outbox, sanitized DLQ, health polling, and leased desired-vs-actual reconciliation.
 - Two local mTLS node-agents that persist revision tombstones, validate and atomically apply pinned Xray-core configuration, manage a fixed child process, and complete candidate or last-known-good recovery despite request cancellation.
 - `telegram-bot` with Telegram webhook dedupe, consent, `/plans`, and `/buy` sandbox purchase flow.
-- `notification-service` with a separate database, ordered Kafka inbox, business deduplication, typed escaped templates, durable leases/retries, current-state suppression, and typed mTLS delivery through telegram-bot.
-- `admin-service` and Go `admin-cli` with administrator mTLS identities, default-deny RBAC, fixed owner APIs, idempotent typed mutations, safe reads, and append-only audit.
+- `notification-service` with a separate database, ordered Kafka inbox, causal delivery-stream barriers, business deduplication, typed escaped templates, durable leases/retries, current-state suppression, and typed mTLS delivery through telegram-bot.
+- `admin-service` and Go `admin-cli` with administrator mTLS identities, default-deny RBAC, fenced recoverable owner attempts, idempotent typed mutations, safe reads, and append-only audit.
 - Local Compose stack with isolated service databases, Kafka, Redis, fake external APIs, and an optional two-node VLESS + REALITY data plane.
 - Goose migration runner tool.
 - OpenAPI/AsyncAPI contract linting.
@@ -69,7 +69,7 @@ Catalog, billing, subscription, and access listen on `https://localhost:8083`, `
 
 `make vpn-smoke` generates local-only keys on D and runs the full Stage 6 acceptance path: Access command outbox, Kafka, Provisioning, authenticated material and placement reads, two node-agents with the integrity-checked Xray-core `26.3.27` security rebuild, sequenced outcome consumption, one-time Happ profile issuance, real VLESS + REALITY traffic, refund-driven revoke, and proof that traffic no longer passes afterward.
 
-`make stage7-smoke` runs that full VPN path and additionally proves one notification job per business fact, Telegram `429`/permanent error handling, admin CLI mTLS and RBAC, action replay/conflict behavior, safe audit, service restart recovery, and suppression of stale access-ready delivery after revoke.
+`make stage7-smoke` runs that full VPN path and additionally proves one notification job per business fact, Telegram `429`/permanent error handling, causal suppression from extension retry to revoke, admin CLI mTLS and RBAC, unknown owner-outcome replay, safe audit, service restart recovery, and suppression of stale access-ready delivery after revoke.
 
 The local admin API is bound to `127.0.0.1:8092` and still requires a generated administrator certificate. The repository seed contains development identities only. See `docs/runbooks/admin-operations.md`; do not use these certificates or seed files outside local Compose.
 

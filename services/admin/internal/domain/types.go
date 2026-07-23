@@ -13,6 +13,7 @@ var (
 	ErrNotFound            = errors.New("admin resource not found")
 	ErrIdempotencyConflict = errors.New("admin idempotency conflict")
 	ErrActionStateConflict = errors.New("admin action state conflict")
+	ErrActionInProgress    = errors.New("admin action is already in progress")
 )
 
 const (
@@ -55,6 +56,9 @@ type Action struct {
 	CreatedAt     time.Time       `json:"created_at"`
 	CompletedAt   *time.Time      `json:"completed_at,omitempty"`
 	Replay        bool            `json:"replay"`
+	Attempts      int             `json:"-"`
+	ClaimID       string          `json:"-"`
+	LeaseUntil    *time.Time      `json:"-"`
 }
 
 type AuditEvent struct {
@@ -81,13 +85,16 @@ type Store interface {
 	Ping(context.Context) error
 	GetPrincipal(context.Context, string, string) (Principal, error)
 	BeginAction(context.Context, ActionInput) (Action, bool, error)
-	CompleteAction(context.Context, string, json.RawMessage, string) (Action, error)
+	StartActionAttempt(context.Context, string, string, time.Duration) (Action, bool, error)
+	CompleteAction(context.Context, string, string, string, json.RawMessage, string) (Action, error)
+	MarkActionOutcomeUnknown(context.Context, string, string, string, string) (Action, error)
 	ListAudit(context.Context, int) ([]AuditEvent, error)
 	Close()
 }
 
 type OwnerError struct {
-	Code string
+	Code       string
+	Definitive bool
 }
 
 func (e *OwnerError) Error() string { return e.Code }

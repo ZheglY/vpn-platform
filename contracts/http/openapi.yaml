@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: VPN Subscription Platform API
-  version: 0.7.0-stage7
+  version: 0.7.1-stage7
   license:
     name: UNLICENSED
     identifier: LicenseRef-UNLICENSED
@@ -1235,7 +1235,8 @@ paths:
             schema: {$ref: '#/components/schemas/AdminReasonRequest'}
       responses:
         '200': {$ref: '#/components/responses/AdminAction'}
-        '409': {$ref: '#/components/responses/Conflict'}
+        '409': {$ref: '#/components/responses/AdminActionConflict'}
+        '502': {$ref: '#/components/responses/AdminActionFailure'}
         default: {$ref: '#/components/responses/Error'}
   /admin/v1/subscriptions/{subscription_id}/revoke:
     post:
@@ -1254,7 +1255,8 @@ paths:
             schema: {$ref: '#/components/schemas/AdminRevokeRequest'}
       responses:
         '200': {$ref: '#/components/responses/AdminAction'}
-        '409': {$ref: '#/components/responses/Conflict'}
+        '409': {$ref: '#/components/responses/AdminActionConflict'}
+        '502': {$ref: '#/components/responses/AdminActionFailure'}
         default: {$ref: '#/components/responses/Error'}
   /admin/v1/credentials/{credential_id}/recover:
     post:
@@ -1273,7 +1275,8 @@ paths:
             schema: {$ref: '#/components/schemas/AdminReasonRequest'}
       responses:
         '200': {$ref: '#/components/responses/AdminAction'}
-        '409': {$ref: '#/components/responses/Conflict'}
+        '409': {$ref: '#/components/responses/AdminActionConflict'}
+        '502': {$ref: '#/components/responses/AdminActionFailure'}
         default: {$ref: '#/components/responses/Error'}
   /admin/v1/audit:
     get:
@@ -1399,10 +1402,23 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     AdminAction:
-      description: Completed or safely replayed typed administrative action
+      description: Typed administrative action, including recoverable processing or unknown outcome state
       content:
         application/json:
           schema: {$ref: '#/components/schemas/AdminAction'}
+    AdminActionConflict:
+      description: Idempotency conflict or an existing action attempt with an active lease
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: '#/components/schemas/Error'
+              - $ref: '#/components/schemas/AdminActionProblem'
+    AdminActionFailure:
+      description: Definitive owner rejection or an indeterminate owner outcome that remains recoverable
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/AdminActionProblem'}
   schemas:
     Error:
       type: object
@@ -2041,7 +2057,7 @@ components:
         action: {type: string, enum: [notification.retry, subscription.revoke, access.provisioning.recover]}
         target_type: {type: string, enum: [notification, subscription, credential]}
         target_id: {type: string, format: uuid}
-        status: {type: string, enum: [pending, succeeded, failed]}
+        status: {type: string, enum: [pending, processing, outcome_unknown, succeeded, failed]}
         result:
           oneOf:
             - $ref: '#/components/schemas/NotificationRetryResult'
@@ -2052,6 +2068,15 @@ components:
         created_at: {type: string, format: date-time}
         completed_at: {type: string, format: date-time}
         replay: {type: boolean}
+    AdminActionProblem:
+      type: object
+      required: [action, error_code]
+      additionalProperties: false
+      properties:
+        action: {$ref: '#/components/schemas/AdminAction'}
+        error_code:
+          type: string
+          enum: [action_in_progress, owner_outcome_unknown, owner_operation_rejected, owner_operation_failed]
     AdminAuditList:
       type: object
       required: [events]
@@ -2093,7 +2118,7 @@ components:
         target_type: {type: string}
         target_id: {type: string, format: uuid}
         reason: {type: string, minLength: 3, maxLength: 512}
-        outcome: {type: string, enum: [accepted, succeeded, failed]}
+        outcome: {type: string, enum: [accepted, attempted, retrying, outcome_unknown, succeeded, failed]}
         error_code: {type: string, maxLength: 64}
         request_id: {type: string, maxLength: 128}
         correlation_id: {type: string, format: uuid}

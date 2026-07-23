@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -67,8 +69,55 @@ func TestDecodeMutationRejectsSecretReason(t *testing.T) {
 	}
 }
 
+func TestExecuteReportsRecoverableOwnerOutcome(t *testing.T) {
+	service := &authService{
+		action: domain.Action{
+			ActionID:      "11111111-1111-4111-8111-111111111111",
+			Action:        "subscription.revoke",
+			TargetType:    "subscription",
+			TargetID:      "22222222-2222-4222-8222-222222222222",
+			Status:        "outcome_unknown",
+			CorrelationID: "33333333-3333-4333-8333-333333333333",
+		},
+		executeErr: errors.New("response lost"),
+	}
+	handler := New(service, nil, "vpn-service", "local")
+	request := httptest.NewRequest(http.MethodPost, "/", nil)
+	request.Header.Set("Idempotency-Key", "stage7-handler-test")
+	recorder := httptest.NewRecorder()
+
+	handler.execute(
+		recorder,
+		request,
+		domain.Principal{Permissions: []string{"subscription.revoke"}},
+		"subscription.revoke",
+		"subscription.revoke",
+		"subscription",
+		service.action.TargetID,
+		"support request",
+		"support",
+		nil,
+	)
+
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Action    domain.Action `json:"action"`
+		ErrorCode string        `json:"error_code"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.ErrorCode != "owner_outcome_unknown" || body.Action.Status != "outcome_unknown" {
+		t.Fatalf("body=%+v", body)
+	}
+}
+
 type authService struct {
-	deny bool
+	deny       bool
+	action     domain.Action
+	executeErr error
 }
 
 func (s *authService) Authenticate(context.Context, string, string) (domain.Principal, error) {
@@ -81,7 +130,7 @@ func (s *authService) Authorize(domain.Principal, string) error {
 	return nil
 }
 func (s *authService) Execute(context.Context, application.ExecuteInput, application.OwnerCall) (domain.Action, error) {
-	return domain.Action{}, nil
+	return s.action, s.executeErr
 }
 func (s *authService) ListAudit(context.Context, domain.Principal, int) ([]domain.AuditEvent, error) {
 	return nil, nil

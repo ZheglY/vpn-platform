@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ZheglY/vpn-platform/internal/platform/requestid"
+	"github.com/ZheglY/vpn-platform/services/notification/internal/domain"
 	"github.com/ZheglY/vpn-platform/services/notification/internal/httpdecode"
 )
 
@@ -28,23 +29,23 @@ func NewClient(baseURL string, client *http.Client) (*Client, error) {
 	return &Client{baseURL: parsed, http: client}, nil
 }
 
-func (c *Client) IsEntitled(ctx context.Context, userID, subscriptionID string) (bool, error) {
+func (c *Client) GetState(ctx context.Context, userID, subscriptionID string) (domain.SubscriptionState, error) {
 	endpoint := c.baseURL.ResolveReference(&url.URL{Path: "internal/v1/users/" + url.PathEscape(userID) + "/subscription"})
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
-		return false, fmt.Errorf("create subscription status request: %w", err)
+		return domain.SubscriptionState{}, fmt.Errorf("create subscription status request: %w", err)
 	}
 	req.Header.Set(requestid.Header, requestid.New())
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return false, fmt.Errorf("subscription status unavailable: %w", err)
+		return domain.SubscriptionState{}, fmt.Errorf("subscription status unavailable: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
-		return false, nil
+		return domain.SubscriptionState{Status: "missing"}, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("subscription status %d", resp.StatusCode)
+		return domain.SubscriptionState{}, fmt.Errorf("subscription status %d", resp.StatusCode)
 	}
 	var payload struct {
 		SubscriptionID     string     `json:"subscription_id"`
@@ -55,17 +56,20 @@ func (c *Client) IsEntitled(ctx context.Context, userID, subscriptionID string) 
 		GraceEndsAt        *time.Time `json:"grace_ends_at"`
 	}
 	if err := httpdecode.Strict(resp.Body, 16<<10, &payload); err != nil {
-		return false, fmt.Errorf("decode subscription status: %w", err)
+		return domain.SubscriptionState{}, fmt.Errorf("decode subscription status: %w", err)
 	}
 	if payload.UserID != userID || payload.SubscriptionID != subscriptionID {
-		return false, fmt.Errorf("subscription status invariant failed")
+		return domain.SubscriptionState{}, fmt.Errorf("subscription status invariant failed")
 	}
 	switch payload.Status {
 	case "active", "grace":
-		return true, nil
 	case "pending", "expired", "revoked":
-		return false, nil
 	default:
-		return false, fmt.Errorf("subscription status invariant failed")
+		return domain.SubscriptionState{}, fmt.Errorf("subscription status invariant failed")
 	}
+	return domain.SubscriptionState{
+		Status:           payload.Status,
+		CurrentPeriodEnd: payload.CurrentPeriodEnd,
+		GraceEndsAt:      payload.GraceEndsAt,
+	}, nil
 }

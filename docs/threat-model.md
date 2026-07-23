@@ -376,6 +376,31 @@ Mitigation:
 - Each allocation is independently rescheduled after success or failure; one error does not block the remainder of the batch.
 - Expired claims become eligible after process failure, and integration tests use more allocations than one batch.
 
+### T24 - Retried Telegram notification overtakes a terminal fact
+
+Risk: an extension or payment-confirmed job receives `429`, a later revoke/refund message is delivered, and the old retry then tells the user that service is active.
+
+Mitigation:
+
+- Every job stores source aggregate metadata plus a causal delivery stream and positive delivery sequence.
+- Event insertion serializes the delivery stream with a PostgreSQL transaction advisory lock, so concurrent Kafka topics cannot race around a terminal barrier.
+- Claims wait for earlier nonterminal jobs in the same stream. A terminal fact suppresses older pending/retry jobs; a processing predecessor either finishes before the terminal message or becomes suppressed when its failed attempt completes.
+- Permanently failed predecessors are terminal and cannot block revocation forever. Manual retry is rejected after a successor exists.
+- Extension, grace, expiry, and revoke jobs verify the exact current Subscription state before sending.
+- Full refund is the terminal payment-stream fact; it suppresses payment confirmation whether the payment fact was already retrying or arrives after the refund.
+
+### T25 - Admin timeout records a false terminal failure
+
+Risk: an owner commits revoke/recovery, its response is lost, and admin-service records `failed`, preventing the same key from recovering the real result.
+
+Mitigation:
+
+- Owner attempts use a durable claim ID, lease, attempt counter, and stable `admin-<action_id>` idempotency key.
+- Only bounded `4xx` owner rejections are definitive. Timeout, reset, `5xx`, invalid/lost `2xx`, and semantic response failure become nonterminal `outcome_unknown`.
+- Exact admin replay retains action ID and correlation ID, obtains a new fenced attempt, and calls the owner with the same owner key.
+- The owner returns its idempotent replay, so admin-service can confirm `succeeded` without a second business mutation.
+- Append-only audit records accepted, attempted, retrying, unknown, and confirmed outcomes instead of rewriting history or claiming a false failure.
+
 ## Initial Security Requirements
 
 - TLS everywhere.

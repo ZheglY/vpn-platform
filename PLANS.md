@@ -287,7 +287,7 @@ Verification completed for the Stage 6 acceptance-review remediation on 2026-07-
 
 Depends on lifecycle events. Adds durable Telegram notifications, admin CLI/internal API, RBAC, and audit.
 
-Status: awaiting product-owner acceptance on `codex/stage7-notifications-admin`; Stage 8 has not started.
+Status: acceptance-review remediation complete on `codex/stage7-notifications-admin`; awaiting product-owner re-acceptance. Stage 8 has not started.
 
 Implementation plan:
 
@@ -301,6 +301,7 @@ Implementation plan:
 8. Expose only typed notification retry, subscription revoke, and higher-revision Access recovery mutations. Keep all secrets and unapproved financial/node/role operations inaccessible.
 9. Update OpenAPI, AsyncAPI/JSON Schema/examples, Compose, Dockerfiles, CI, threat model, runbooks, README, and Definition of Done together with implementation.
 10. Prove duplicate/gap/collision handling, Telegram retry/permanent outcomes, multiple workers, RBAC, owner idempotency, audit immutability, mTLS denial, secret absence, restart recovery, and the complete Stage 7 Compose flow without regressing Stage 6 VPN smoke.
+11. Remediate commit `8d651fc` acceptance findings with per-stream notification delivery barriers/current-state suppression and recoverable fenced admin owner outcomes. Required regressions are extension `429` followed by revoke and owner commit followed by a lost response plus same-key replay.
 
 Acceptance criteria are the Stage 7 Definition of Done and the product-owner request attached on 2026-07-19. On completion this status becomes `awaiting product-owner acceptance`; Stage 8 remains blocked.
 
@@ -312,6 +313,9 @@ Verification completed on 2026-07-23:
 - All 11 service/CLI images build, and Trivy reports zero HIGH/CRITICAL findings across all 24 OS and Go-binary targets.
 - Compose configuration and the complete `make stage7-smoke` flow pass after final security review, including notification retry/permanent outcomes, RBAC denial, action replay/collision, audit, restart recovery, real VLESS + REALITY traffic, revoke, and post-revoke stale-delivery suppression.
 - Final review found and fixed bounded-body enforcement for the admin facade and all Stage 7 owner delivery/mutation endpoints. No cross-service internal imports or SQL access, sensitive log/audit/DLQ fields, floating-point money, or unapproved admin operations remain in the reviewed diff.
+- Acceptance remediation adds an atomic FIFO delivery barrier with terminal preemption and exact Subscription state validation. PostgreSQL regression coverage proves `extension -> Telegram 429 -> revoked -> extension retry` leaves the extension suppressed, while the refund barrier suppresses a delayed payment confirmation.
+- Administrator attempts now use a claim lease and distinguish definitive owner rejection from recoverable `outcome_unknown`. The required dropped-response integration test proves same-action replay succeeds with the original action/correlation/owner key and exactly one owner mutation.
+- `make compose-smoke`, `make vpn-smoke`, and the complete `make stage7-smoke` pass on the remediation diff. The full `make verify` substantive suite passes; its clean-tree `diff-check` is rerun on the remediation commit before push.
 
 ### Stage 8 - Observability, hardening, and deployment
 

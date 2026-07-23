@@ -12,7 +12,7 @@ import (
 
 func TestWorkerHonorsRetryAfter(t *testing.T) {
 	store := &workerStore{job: testJob()}
-	worker := NewWorker(store, eligibleIdentity{}, entitledSubscription(true), readyAccess(true), failingTelegram{err: &domain.DeliveryError{Code: "telegram_rate_limited", Retryable: true, RetryAfter: 17 * time.Second}}, zap.NewNop(), time.Millisecond, time.Second, time.Minute)
+	worker := NewWorker(store, eligibleIdentity{}, subscriptionState("active"), readyAccess(true), failingTelegram{err: &domain.DeliveryError{Code: "telegram_rate_limited", Retryable: true, RetryAfter: 17 * time.Second}}, zap.NewNop(), time.Millisecond, time.Second, time.Minute)
 	if err := worker.workOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +24,7 @@ func TestWorkerHonorsRetryAfter(t *testing.T) {
 func TestWorkerSuppressesStaleAccessReady(t *testing.T) {
 	store := &workerStore{job: testJob()}
 	telegram := &countingTelegram{}
-	worker := NewWorker(store, eligibleIdentity{}, entitledSubscription(true), readyAccess(false), telegram, zap.NewNop(), time.Millisecond, time.Second, time.Minute)
+	worker := NewWorker(store, eligibleIdentity{}, subscriptionState("active"), readyAccess(false), telegram, zap.NewNop(), time.Millisecond, time.Second, time.Minute)
 	if err := worker.workOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -36,11 +36,63 @@ func TestWorkerSuppressesStaleAccessReady(t *testing.T) {
 func TestWorkerSuppressesAccessAfterSubscriptionTerminalState(t *testing.T) {
 	store := &workerStore{job: testJob()}
 	telegram := &countingTelegram{}
-	worker := NewWorker(store, eligibleIdentity{}, entitledSubscription(false), readyAccess(true), telegram, zap.NewNop(), time.Millisecond, time.Second, time.Minute)
+	worker := NewWorker(store, eligibleIdentity{}, subscriptionState("revoked"), readyAccess(true), telegram, zap.NewNop(), time.Millisecond, time.Second, time.Minute)
 	if err := worker.workOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if store.suppressedCode != "stale_subscription_state" || telegram.calls != 0 {
+		t.Fatalf("suppressed=%q telegram_calls=%d", store.suppressedCode, telegram.calls)
+	}
+}
+
+func TestWorkerSuppressesExtensionAfterSubscriptionRevoked(t *testing.T) {
+	job := testJob()
+	job.NotificationType = "subscription_extended"
+	job.CredentialID = nil
+	job.Variables = map[string]string{"period_end": "2026-08-18T12:00:00Z"}
+	store := &workerStore{job: job}
+	telegram := &countingTelegram{}
+	worker := NewWorker(store, eligibleIdentity{}, subscriptionState("revoked"), readyAccess(true), telegram, zap.NewNop(), time.Millisecond, time.Second, time.Minute)
+	if err := worker.workOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if store.suppressedCode != "stale_subscription_state" || telegram.calls != 0 {
+		t.Fatalf("suppressed=%q telegram_calls=%d", store.suppressedCode, telegram.calls)
+	}
+}
+
+func TestWorkerSuppressesGraceAfterSubscriptionRenewal(t *testing.T) {
+	job := testJob()
+	job.NotificationType = "subscription_grace"
+	job.CredentialID = nil
+	job.Variables = map[string]string{"grace_ends_at": "2026-08-19T12:00:00Z"}
+	store := &workerStore{job: job}
+	telegram := &countingTelegram{}
+	periodEnd := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
+	state := fixedSubscriptionState{state: domain.SubscriptionState{Status: "active", CurrentPeriodEnd: &periodEnd}}
+	worker := NewWorker(store, eligibleIdentity{}, state, readyAccess(true), telegram, zap.NewNop(), time.Millisecond, time.Second, time.Minute)
+	if err := worker.workOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if store.suppressedCode != "stale_subscription_state" || telegram.calls != 0 {
+		t.Fatalf("suppressed=%q telegram_calls=%d", store.suppressedCode, telegram.calls)
+	}
+}
+
+func TestWorkerDeliversCurrentExtension(t *testing.T) {
+	job := testJob()
+	job.NotificationType = "subscription_extended"
+	job.CredentialID = nil
+	job.Variables = map[string]string{"period_end": "2026-08-18T12:00:00Z"}
+	store := &workerStore{job: job}
+	telegram := &countingTelegram{}
+	periodEnd := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	state := fixedSubscriptionState{state: domain.SubscriptionState{Status: "active", CurrentPeriodEnd: &periodEnd}}
+	worker := NewWorker(store, eligibleIdentity{}, state, readyAccess(true), telegram, zap.NewNop(), time.Millisecond, time.Second, time.Minute)
+	if err := worker.workOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if store.suppressedCode != "" || telegram.calls != 1 {
 		t.Fatalf("suppressed=%q telegram_calls=%d", store.suppressedCode, telegram.calls)
 	}
 }
@@ -82,10 +134,18 @@ func (r readyAccess) IsCurrentReady(context.Context, string, string) (bool, erro
 	return bool(r), nil
 }
 
-type entitledSubscription bool
+type subscriptionState string
 
-func (e entitledSubscription) IsEntitled(context.Context, string, string) (bool, error) {
-	return bool(e), nil
+func (s subscriptionState) GetState(context.Context, string, string) (domain.SubscriptionState, error) {
+	return domain.SubscriptionState{Status: string(s)}, nil
+}
+
+type fixedSubscriptionState struct {
+	state domain.SubscriptionState
+}
+
+func (s fixedSubscriptionState) GetState(context.Context, string, string) (domain.SubscriptionState, error) {
+	return s.state, nil
 }
 
 type failingTelegram struct {

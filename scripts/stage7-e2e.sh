@@ -70,10 +70,10 @@ assert_admin_http_failure() {
   rm -f "$stderr_file"
 }
 
-extension_event() {
-  local synthetic_subscription_id="$1" event_id="$2" period_id="$3" now
+payment_event() {
+  local payment_id="$1" event_id="$2" now
   now="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-  printf '%s' '{"event_id":"'"${event_id}"'","event_type":"subscription.extended.v1","schema_version":1,"occurred_at":"'"${now}"'","producer":"subscription-service","correlation_id":"77000000-0000-4000-8000-000000000099","causation_id":null,"aggregate_type":"subscription","aggregate_id":"'"${synthetic_subscription_id}"'","aggregate_sequence":1,"partition_key":"user:'"${user_id}"'","data":{"subscription_id":"'"${synthetic_subscription_id}"'","user_id":"'"${user_id}"'","period_id":"'"${period_id}"'","source_order_id":"77000000-0000-4000-8000-000000000090","source_payment_id":"77000000-0000-4000-8000-000000000091","period_start":"'"${now}"'","period_end":"2027-08-18T12:00:00Z","grace_ends_at":"2027-08-19T12:00:00Z"}}'
+  printf '%s' '{"event_id":"'"${event_id}"'","event_type":"billing.payment.succeeded.v1","schema_version":1,"occurred_at":"'"${now}"'","producer":"billing-service","correlation_id":"77000000-0000-4000-8000-000000000099","causation_id":null,"aggregate_type":"payment","aggregate_id":"'"${payment_id}"'","partition_key":"user:'"${user_id}"'","data":{"payment_id":"'"${payment_id}"'","order_id":"77000000-0000-4000-8000-000000000090","user_id":"'"${user_id}"'","plan_id":"basic-monthly","amount_minor":49900,"currency":"RUB","paid_at":"'"${now}"'"}}'
 }
 
 if [[ "$phase" == "BeforeRevoke" ]]; then
@@ -90,16 +90,16 @@ if [[ "$phase" == "BeforeRevoke" ]]; then
   [[ "$(curl -fsS http://127.0.0.1:8082/messages | sed -n 's/.*"count":\([0-9]*\).*/\1/p')" == "$messages_before" ]]
 
   telegram_behavior rate_limited 1 2
-  publish_event subscription.extended.v1 "user:${user_id}" "$(extension_event 77000000-0000-4000-8000-000000000022 77000000-0000-4000-8000-000000000002 77000000-0000-4000-8000-000000000012)"
-  wait_sql notification_service "SELECT status FROM notification_jobs WHERE business_dedupe_key='extension:77000000-0000-4000-8000-000000000012'" retry
-  retry_delay="$(scalar_sql notification_service "SELECT extract(epoch FROM (next_attempt_at-updated_at)) FROM notification_jobs WHERE business_dedupe_key='extension:77000000-0000-4000-8000-000000000012'")"
+  publish_event billing.payment.succeeded.v1 "user:${user_id}" "$(payment_event 77000000-0000-4000-8000-000000000022 77000000-0000-4000-8000-000000000002)"
+  wait_sql notification_service "SELECT status FROM notification_jobs WHERE business_dedupe_key='payment_confirmed:77000000-0000-4000-8000-000000000022'" retry
+  retry_delay="$(scalar_sql notification_service "SELECT extract(epoch FROM (next_attempt_at-updated_at)) FROM notification_jobs WHERE business_dedupe_key='payment_confirmed:77000000-0000-4000-8000-000000000022'")"
   awk "BEGIN { exit !(${retry_delay} >= 1.5) }"
-  wait_sql notification_service "SELECT status || ':' || attempts FROM notification_jobs WHERE business_dedupe_key='extension:77000000-0000-4000-8000-000000000012'" delivered:2
+  wait_sql notification_service "SELECT status || ':' || attempts FROM notification_jobs WHERE business_dedupe_key='payment_confirmed:77000000-0000-4000-8000-000000000022'" delivered:2
 
   telegram_behavior blocked 1 0
-  publish_event subscription.extended.v1 "user:${user_id}" "$(extension_event 77000000-0000-4000-8000-000000000023 77000000-0000-4000-8000-000000000003 77000000-0000-4000-8000-000000000013)"
-  wait_sql notification_service "SELECT status || ':' || terminal_reason_code FROM notification_jobs WHERE business_dedupe_key='extension:77000000-0000-4000-8000-000000000013'" permanently_failed:telegram_bot_blocked
-  failed_id="$(scalar_sql notification_service "SELECT notification_id FROM notification_jobs WHERE business_dedupe_key='extension:77000000-0000-4000-8000-000000000013'")"
+  publish_event billing.payment.succeeded.v1 "user:${user_id}" "$(payment_event 77000000-0000-4000-8000-000000000023 77000000-0000-4000-8000-000000000003)"
+  wait_sql notification_service "SELECT status || ':' || terminal_reason_code FROM notification_jobs WHERE business_dedupe_key='payment_confirmed:77000000-0000-4000-8000-000000000023'" permanently_failed:telegram_bot_blocked
+  failed_id="$(scalar_sql notification_service "SELECT notification_id FROM notification_jobs WHERE business_dedupe_key='payment_confirmed:77000000-0000-4000-8000-000000000023'")"
 
   admin_cli admin-support-local get-user --user-id "$user_id" >/tmp/vpn-stage7-user.json
   grep -q "\"user_id\":\"${user_id}\"" /tmp/vpn-stage7-user.json
@@ -123,8 +123,8 @@ if [[ "$phase" == "BeforeRevoke" ]]; then
   if grep -Eqi 'subscription_url|vless_client_uuid|vless://|telegram_chat_id|private_key' /tmp/vpn-stage7-audit.json; then exit 1; fi
 
   telegram_behavior server_error 10 0
-  publish_event subscription.extended.v1 "user:${user_id}" "$(extension_event 77000000-0000-4000-8000-000000000024 77000000-0000-4000-8000-000000000004 77000000-0000-4000-8000-000000000014)"
-  wait_sql notification_service "SELECT status FROM notification_jobs WHERE business_dedupe_key='extension:77000000-0000-4000-8000-000000000014'" retry
+  publish_event billing.payment.succeeded.v1 "user:${user_id}" "$(payment_event 77000000-0000-4000-8000-000000000024 77000000-0000-4000-8000-000000000004)"
+  wait_sql notification_service "SELECT status FROM notification_jobs WHERE business_dedupe_key='payment_confirmed:77000000-0000-4000-8000-000000000024'" retry
   action_count="$(scalar_sql admin_service 'SELECT count(*) FROM admin_action_requests')"
   docker compose restart notification-service admin-service >/dev/null
   for _ in $(seq 1 60); do
@@ -135,7 +135,7 @@ if [[ "$phase" == "BeforeRevoke" ]]; then
   done
   [[ "$notification_health" == healthy && "$admin_health" == healthy ]]
   telegram_behavior success 0 0
-  wait_sql notification_service "SELECT status FROM notification_jobs WHERE business_dedupe_key='extension:77000000-0000-4000-8000-000000000014'" delivered
+  wait_sql notification_service "SELECT status FROM notification_jobs WHERE business_dedupe_key='payment_confirmed:77000000-0000-4000-8000-000000000024'" delivered
   [[ "$(scalar_sql admin_service 'SELECT count(*) FROM admin_action_requests')" == "$action_count" ]]
   rm -f /tmp/vpn-stage7-{user,action,replay,health,provisioning,audit}.json
   echo 'Stage 7 pre-revoke notification and admin E2E checks passed.'

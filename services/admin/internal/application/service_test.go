@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/ZheglY/vpn-platform/services/admin/internal/domain"
 )
@@ -28,8 +29,8 @@ func TestExecuteRejectsSecretBearingOwnerResult(t *testing.T) {
 	_, err := service.Execute(context.Background(), executeInput(), func(context.Context, string, string) (any, error) {
 		return map[string]any{"subscription_url": "https://example.invalid/s/secret"}, nil
 	})
-	if err == nil || store.completedCode != "unsafe_owner_response" {
-		t.Fatalf("err=%v completed_code=%q", err, store.completedCode)
+	if err == nil || store.unknownCode != "unsafe_owner_response" {
+		t.Fatalf("err=%v unknown_code=%q", err, store.unknownCode)
 	}
 }
 
@@ -48,14 +49,25 @@ func TestValidateSafePayloadRejectsNestedCredentialMaterial(t *testing.T) {
 	}
 }
 
-func TestExecutePersistsBoundedOwnerFailure(t *testing.T) {
+func TestExecuteKeepsUnknownOwnerFailureRecoverable(t *testing.T) {
 	store := &actionStore{action: domain.Action{ActionID: "11111111-1111-4111-8111-111111111111", CorrelationID: "22222222-2222-4222-8222-222222222222", Status: "pending"}}
 	service := New(store)
 	_, err := service.Execute(context.Background(), executeInput(), func(context.Context, string, string) (any, error) {
 		return nil, errors.New("contains upstream body and secret")
 	})
-	if err == nil || store.completedCode != "owner_unavailable" {
-		t.Fatalf("err=%v completed_code=%q", err, store.completedCode)
+	if err == nil || store.unknownCode != "owner_unavailable" || store.action.Status != "outcome_unknown" {
+		t.Fatalf("err=%v unknown_code=%q status=%q", err, store.unknownCode, store.action.Status)
+	}
+}
+
+func TestExecutePersistsDefinitiveOwnerRejection(t *testing.T) {
+	store := &actionStore{action: domain.Action{ActionID: "11111111-1111-4111-8111-111111111111", CorrelationID: "22222222-2222-4222-8222-222222222222", Status: "pending"}}
+	service := New(store)
+	_, err := service.Execute(context.Background(), executeInput(), func(context.Context, string, string) (any, error) {
+		return nil, &domain.OwnerError{Code: "owner_conflict", Definitive: true}
+	})
+	if err == nil || store.completedCode != "owner_conflict" || store.action.Status != "failed" {
+		t.Fatalf("err=%v completed_code=%q status=%q", err, store.completedCode, store.action.Status)
 	}
 }
 
@@ -64,20 +76,31 @@ type actionStore struct {
 	action        domain.Action
 	replay        bool
 	completedCode string
+	unknownCode   string
 }
 
 func (s *actionStore) BeginAction(context.Context, domain.ActionInput) (domain.Action, bool, error) {
 	return s.action, s.replay, nil
 }
-func (s *actionStore) CompleteAction(_ context.Context, _ string, result json.RawMessage, code string) (domain.Action, error) {
+func (s *actionStore) StartActionAttempt(context.Context, string, string, time.Duration) (domain.Action, bool, error) {
+	s.action.Status = "processing"
+	s.action.ClaimID = "44444444-4444-4444-8444-444444444444"
+	s.action.Attempts++
+	return s.action, true, nil
+}
+func (s *actionStore) CompleteAction(_ context.Context, _, _, _ string, result json.RawMessage, code string) (domain.Action, error) {
 	s.completedCode = code
-	action := s.action
 	if code == "" {
-		action.Status, action.Result = "succeeded", result
+		s.action.Status, s.action.Result = "succeeded", result
 	} else {
-		action.Status = "failed"
+		s.action.Status = "failed"
 	}
-	return action, nil
+	return s.action, nil
+}
+func (s *actionStore) MarkActionOutcomeUnknown(_ context.Context, _, _, _, code string) (domain.Action, error) {
+	s.unknownCode = code
+	s.action.Status = "outcome_unknown"
+	return s.action, nil
 }
 
 func executeInput() ExecuteInput {

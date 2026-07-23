@@ -68,13 +68,15 @@ Access accepts recovery only for a terminal failed credential with unexpired ent
 ## Action Failure and Crash Recovery
 
 1. Query audit/action status by safe IDs. An `accepted` event proves authorization and durable intent happened before owner execution.
-2. A pending action after restart is retried with the same owner action ID/idempotency key. The owner decides exact replay; never create a second key merely because the first response was lost.
-3. A failed action stores only a bounded error code. Diagnose through the owner service's safe status/read path and its runbook, not through response bodies or database access.
-4. Keep the original human reason stable. Reusing the key with changed input must return conflict.
+2. `processing` means one fenced owner attempt has an unexpired lease. Wait for that bounded lease instead of creating another key.
+3. `outcome_unknown` means the owner may already have committed but the response was lost, invalid, or a non-definitive `5xx`. Retry the exact same admin request and idempotency key. Admin-service reuses the original action ID, correlation ID, and owner key; the owner replay confirms the result without another mutation.
+4. Only a definitive owner rejection is terminal `failed`. Do not interpret timeout, reset, malformed/lost `2xx`, or `5xx` as proof that the business mutation failed.
+5. Audit should show `accepted`, `attempted`, optional `outcome_unknown`, `retrying`, then `succeeded` or definitive `failed`. Never edit the earlier event to make the history look simpler.
+6. Keep the original human reason stable. Reusing the key with changed input must return conflict.
 
 ## Audit Integrity
 
-Each accepted action and final outcome records verified SPIFFE identity, principal, role/permission snapshot, action, target, human reason, safe idempotency hash, request/correlation IDs, bounded result, and PostgreSQL time. Runtime `admin_app` can insert audit through the service transaction but cannot update, delete, or truncate history; triggers also reject mutation.
+Each accepted action, attempted/retry transition, unknown outcome, and final result records verified SPIFFE identity, principal, role/permission snapshot, action, target, human reason, safe idempotency hash, request/correlation IDs, bounded error, and PostgreSQL time. Runtime `admin_app` can insert audit through the service transaction but cannot update, delete, or truncate history; triggers also reject mutation.
 
 Do not store secrets in the human reason. Requests containing `vless://`, subscription paths, credential/ciphertext markers, or secret-bearing fields are rejected. Preserve audit rows for investigation; do not grant the runtime role migration ownership.
 
@@ -92,4 +94,4 @@ make compose-smoke
 make stage7-smoke
 ```
 
-The Stage 7 smoke proves read-only denial, operations allow, replay/conflict, non-admin SPIFFE `403`, safe output/audit, and durability across admin-service restart.
+The Stage 7 smoke proves read-only denial, operations allow, replay/conflict, non-admin SPIFFE `403`, safe output/audit, durability across admin-service restart, and PostgreSQL integration recovery after a committed owner mutation loses its response.

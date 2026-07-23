@@ -45,6 +45,8 @@ Accepted on 2026-07-12 for Stage 0 and future MVP planning.
 | PD-039 | Stage 7 RBAC has support-readonly, operations, security, and finance-readonly roles with explicit permissions and no superadmin wildcard. | Accepted | Security and finance remain read-only in Stage 7. |
 | PD-040 | Telegram notification delivery is durable at-least-once with business dedupe; an ambiguous post-send timeout can still duplicate a message. | Accepted | ADR 0025 documents mitigation and runbook requirements. |
 | PD-041 | Stage 7 admin mutations are limited to notification retry, subscription revoke, and fresh higher-revision provisioning recovery through the owning services. | Accepted | No payment success/refund, bearer URL retrieval, generic Kafka/SQL/shell, or node/role mutation. |
+| PD-042 | Notification delivery is FIFO inside an explicit causal stream, while terminal subscription/refund facts preempt older retry work. | Accepted | Permanently failed predecessors do not block; stale predecessor retry is rejected; ADR 0025. |
+| PD-043 | Ambiguous administrator owner outcomes are recoverable `outcome_unknown`, not terminal failure. | Accepted | Same action/correlation/owner idempotency identity is retried under a fenced lease; ADR 0026. |
 
 ## Decisions Requiring Later Approval
 

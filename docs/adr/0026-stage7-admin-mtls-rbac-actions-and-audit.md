@@ -27,8 +27,9 @@ Operators need support-safe reads and a few recoverable mutations. A web admin, 
 
 4. Principals and grants are bootstrapped by a validated seed file through a separate one-shot command using migration/bootstrap credentials. Runtime admin-service cannot grant roles. Repository fixtures contain local development SPIFFE IDs only.
 5. Admin-service owns action requests, idempotency, role snapshots, and append-only audit. An action key is bound to verified principal, operation, target, canonical request hash, and reason. Exact replay returns the same support-safe action result; changed input conflicts.
-6. Every mutation records an accepted audit event before owner execution and a completion event afterward. Admin-service calls a fixed configured owner URL over mTLS with a typed endpoint and a derived stable owner idempotency key. A crash after owner success is recovered by retrying that same key; the owner remains the only service allowed to mutate its aggregate.
-7. Stage 7 mutation allowlist is limited to:
+6. Every mutation records an accepted audit event before owner execution. Each owner attempt is fenced by a durable claim ID and lease and records `attempted` or `retrying`; only the active claim can record its result. Admin-service calls a fixed configured owner URL over mTLS with a typed endpoint and the stable key `admin-<action_id>`.
+7. Owner `400/401/403/404/409` responses are definitive rejections and may complete the action as `failed`. A timeout, connection reset, `5xx`, unreadable/oversized/invalid `2xx`, semantic mismatch, or unsafe successful response has an indeterminate business outcome and becomes recoverable `outcome_unknown`, never terminal failure. Exact admin replay claims another attempt and calls the owner with the original action ID, correlation ID, and owner idempotency key. Owner replay then confirms the terminal result without a second business mutation. A process crash leaves `processing`; only an expired lease permits recovery.
+8. Stage 7 mutation allowlist is limited to:
 
 | Action | Owner | Mechanism |
 |---|---|---|
@@ -36,15 +37,16 @@ Operators need support-safe reads and a few recoverable mutations. A web admin, 
 | revoke a subscription with a bounded reason | subscription-service | synchronous typed HTTP, lifecycle event through owner outbox |
 | recover terminal provisioning with a fresh higher revision | access-service | synchronous typed HTTP, normal Access command outbox |
 
-8. URL rotation, suspension, node drain/resume, broad reconciliation, generic DLQ replay, catalog mutation, refunds, manual payment success, order amount changes, role mutation, and manual grants are not exposed in Stage 7. URL rotation in particular is deferred until an accepted user-delivery handoff can guarantee the administrator never receives the bearer URL.
-9. Read APIs aggregate only allowlisted DTOs from fixed validated service base URLs. Requests cannot supply an upstream URL. Admin-service never reads another service database and never returns subscription URLs, token hashes, VLESS UUIDs, REALITY private material, ciphertext, Telegram chat IDs, raw webhook/Kafka payloads, or internal response bodies.
-10. Audit rows contain actor SPIFFE identity, role/permission snapshot, action, target, reason, safe idempotency hash, request/correlation IDs, outcome, bounded error code, and database timestamps. A database trigger rejects update/delete. The runtime database role receives only `SELECT` and `INSERT` on audit and cannot bypass the trigger; migration/bootstrap uses a separate owner role.
+9. URL rotation, suspension, node drain/resume, broad reconciliation, generic DLQ replay, catalog mutation, refunds, manual payment success, order amount changes, role mutation, and manual grants are not exposed in Stage 7. URL rotation in particular is deferred until an accepted user-delivery handoff can guarantee the administrator never receives the bearer URL.
+10. Read APIs aggregate only allowlisted DTOs from fixed validated service base URLs. Requests cannot supply an upstream URL. Admin-service never reads another service database and never returns subscription URLs, token hashes, VLESS UUIDs, REALITY private material, ciphertext, Telegram chat IDs, raw webhook/Kafka payloads, or internal response bodies.
+11. Audit rows contain actor SPIFFE identity, role/permission snapshot, action, target, reason, safe idempotency hash, request/correlation IDs, `accepted/attempted/retrying/outcome_unknown/succeeded/failed`, bounded error code, and database timestamps. `outcome_unknown` is explicitly nonterminal and does not claim that the owner failed. A database trigger rejects update/delete. The runtime database role receives only `SELECT` and `INSERT` on audit and cannot bypass the trigger; migration/bootstrap uses a separate owner role.
 
 ## Consequences
 
 - Stealing a CLI key grants only the permissions assigned to that exact SPIFFE principal; revoking/disabling the principal denies future requests.
 - Security and finance roles intentionally remain read-only until an independently approved mutation policy exists.
 - Provisioning recovery never resets Stage 6 rows. Access creates the next desired revision and Provisioning creates a fenced generation through the existing ordered command.
+- Support may see a temporary `outcome_unknown` or `processing` action and must retry the same admin idempotency key. Creating a new key would lose the recovery binding and is prohibited.
 - The sandbox seed mechanism is not a production certificate issuance system. Hardware-backed issuance, SSO, rotation, revocation distribution, and break-glass procedure remain Stage 8/9 work.
 
 ## Rejected alternatives

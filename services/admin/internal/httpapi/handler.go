@@ -233,8 +233,19 @@ func (h *Handler) execute(w http.ResponseWriter, r *http.Request, principal doma
 		httperror.Write(w, r, http.StatusConflict, "idempotency_conflict", "idempotency key conflicts with another request")
 		return
 	}
+	if errors.Is(err, domain.ErrActionInProgress) {
+		writeJSON(w, http.StatusConflict, map[string]any{"action": result, "error_code": "action_in_progress"})
+		return
+	}
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"action": result, "error_code": "owner_operation_failed"})
+		errorCode := "owner_operation_failed"
+		switch result.Status {
+		case "outcome_unknown":
+			errorCode = "owner_outcome_unknown"
+		case "failed":
+			errorCode = "owner_operation_rejected"
+		}
+		writeJSON(w, http.StatusBadGateway, map[string]any{"action": result, "error_code": errorCode})
 		return
 	}
 	writeJSON(w, http.StatusOK, result)

@@ -225,7 +225,7 @@ func (c *Client) RetryNotification(ctx context.Context, notificationID, actionID
 	err := c.mutate(ctx, c.notification+"/internal/v1/notifications/"+url.PathEscape(notificationID)+"/retry", actionID,
 		map[string]string{"reason": reason}, &result)
 	if err == nil && (result.Notification.NotificationID != notificationID || !notificationStatus(result.Notification.Status) || result.Notification.Attempts < 0 || result.Notification.MaxAttempts < 1 || result.Notification.Attempts > result.Notification.MaxAttempts) {
-		err = &domain.OwnerError{Code: "owner_response_invalid"}
+		err = ownerUnknown("owner_response_invalid")
 	}
 	return result, err
 }
@@ -235,7 +235,7 @@ func (c *Client) RevokeSubscription(ctx context.Context, subscriptionID, actionI
 	err := c.mutate(ctx, c.subscription+"/internal/v1/subscriptions/"+url.PathEscape(subscriptionID)+"/admin-revoke", actionID,
 		map[string]string{"action_id": actionID, "correlation_id": correlationID, "reason_code": reasonCode}, &result)
 	if err == nil && (result.SubscriptionID != subscriptionID || result.Status != "revoked" || result.ReasonCode != reasonCode) {
-		err = &domain.OwnerError{Code: "owner_response_invalid"}
+		err = ownerUnknown("owner_response_invalid")
 	}
 	return result, err
 }
@@ -245,7 +245,7 @@ func (c *Client) RecoverAccess(ctx context.Context, credentialID, actionID, corr
 	err := c.mutate(ctx, c.access+"/internal/v1/credentials/"+url.PathEscape(credentialID)+"/recover", actionID,
 		map[string]string{"action_id": actionID, "correlation_id": correlationID}, &result)
 	if err == nil && (result.CredentialID != credentialID || !uuidPattern.MatchString(result.OperationID) || result.DesiredRevision < 2 || result.Status != "provisioning") {
-		err = &domain.OwnerError{Code: "owner_response_invalid"}
+		err = ownerUnknown("owner_response_invalid")
 	}
 	return result, err
 }
@@ -368,7 +368,7 @@ func (c *Client) get(ctx context.Context, target string, output any) (json.RawMe
 	}
 	payload, err := json.Marshal(output)
 	if err != nil {
-		return nil, &domain.OwnerError{Code: "owner_response_invalid"}
+		return nil, ownerUnknown("owner_response_invalid")
 	}
 	return payload, nil
 }
@@ -376,13 +376,13 @@ func (c *Client) get(ctx context.Context, target string, output any) (json.RawMe
 func (c *Client) do(request *http.Request, output any) error {
 	response, err := c.http.Do(request)
 	if err != nil {
-		return &domain.OwnerError{Code: "owner_unavailable"}
+		return ownerUnknown("owner_unavailable")
 	}
 	defer func() { _ = response.Body.Close() }()
 	reader := io.LimitReader(response.Body, maxResponseBytes+1)
 	payload, err := io.ReadAll(reader)
 	if err != nil || len(payload) > maxResponseBytes {
-		return &domain.OwnerError{Code: "owner_response_invalid"}
+		return ownerUnknown("owner_response_invalid")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return ownerStatusError(response.StatusCode)
@@ -390,10 +390,10 @@ func (c *Client) do(request *http.Request, output any) error {
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(output); err != nil {
-		return &domain.OwnerError{Code: "owner_response_invalid"}
+		return ownerUnknown("owner_response_invalid")
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return &domain.OwnerError{Code: "owner_response_invalid"}
+		return ownerUnknown("owner_response_invalid")
 	}
 	return nil
 }
@@ -401,14 +401,22 @@ func (c *Client) do(request *http.Request, output any) error {
 func ownerStatusError(status int) error {
 	switch status {
 	case http.StatusNotFound:
-		return &domain.OwnerError{Code: "owner_not_found"}
+		return ownerRejected("owner_not_found")
 	case http.StatusConflict:
-		return &domain.OwnerError{Code: "owner_conflict"}
+		return ownerRejected("owner_conflict")
 	case http.StatusBadRequest:
-		return &domain.OwnerError{Code: "owner_request_rejected"}
+		return ownerRejected("owner_request_rejected")
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return &domain.OwnerError{Code: "owner_authorization_failed"}
+		return ownerRejected("owner_authorization_failed")
 	default:
-		return &domain.OwnerError{Code: "owner_unavailable"}
+		return ownerUnknown("owner_unavailable")
 	}
+}
+
+func ownerRejected(code string) error {
+	return &domain.OwnerError{Code: code, Definitive: true}
+}
+
+func ownerUnknown(code string) error {
+	return &domain.OwnerError{Code: code}
 }

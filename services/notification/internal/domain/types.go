@@ -48,30 +48,40 @@ type Intent struct {
 	NotificationType  string
 	TemplateVersion   int
 	BusinessDedupeKey string
+	DeliveryStreamKey string
+	DeliverySequence  int64
+	SupersedesOlder   bool
 	Variables         map[string]string
 	SuppressedReason  string
 	MaxAttempts       int
 }
 
 type Job struct {
-	NotificationID   string            `json:"notification_id"`
-	UserID           string            `json:"user_id"`
-	SubscriptionID   *string           `json:"subscription_id,omitempty"`
-	CredentialID     *string           `json:"credential_id,omitempty"`
-	NotificationType string            `json:"notification_type"`
-	TemplateVersion  int               `json:"template_version"`
-	Status           string            `json:"status"`
-	Attempts         int               `json:"attempts"`
-	MaxAttempts      int               `json:"max_attempts"`
-	NextAttemptAt    time.Time         `json:"next_attempt_at"`
-	ClaimID          string            `json:"-"`
-	CorrelationID    string            `json:"correlation_id"`
-	CausationID      *string           `json:"causation_id,omitempty"`
-	Variables        map[string]string `json:"-"`
-	TerminalReason   *string           `json:"terminal_reason_code,omitempty"`
-	DeliveredAt      *time.Time        `json:"delivered_at,omitempty"`
-	CreatedAt        time.Time         `json:"created_at"`
-	UpdatedAt        time.Time         `json:"updated_at"`
+	NotificationID    string            `json:"notification_id"`
+	UserID            string            `json:"user_id"`
+	SubscriptionID    *string           `json:"subscription_id,omitempty"`
+	CredentialID      *string           `json:"credential_id,omitempty"`
+	NotificationType  string            `json:"notification_type"`
+	TemplateVersion   int               `json:"template_version"`
+	Status            string            `json:"status"`
+	Attempts          int               `json:"attempts"`
+	MaxAttempts       int               `json:"max_attempts"`
+	NextAttemptAt     time.Time         `json:"next_attempt_at"`
+	ClaimID           string            `json:"-"`
+	SourceProducer    string            `json:"-"`
+	SourceAggregate   string            `json:"-"`
+	SourceAggregateID string            `json:"-"`
+	SourceSequence    int64             `json:"-"`
+	DeliveryStream    string            `json:"-"`
+	DeliverySequence  int64             `json:"-"`
+	SupersedesOlder   bool              `json:"-"`
+	CorrelationID     string            `json:"correlation_id"`
+	CausationID       *string           `json:"causation_id,omitempty"`
+	Variables         map[string]string `json:"-"`
+	TerminalReason    *string           `json:"terminal_reason_code,omitempty"`
+	DeliveredAt       *time.Time        `json:"delivered_at,omitempty"`
+	CreatedAt         time.Time         `json:"created_at"`
+	UpdatedAt         time.Time         `json:"updated_at"`
 }
 
 type TelegramTarget struct {
@@ -79,6 +89,12 @@ type TelegramTarget struct {
 	ReasonCode     string
 	TelegramChatID int64
 	Locale         string
+}
+
+type SubscriptionState struct {
+	Status           string
+	CurrentPeriodEnd *time.Time
+	GraceEndsAt      *time.Time
 }
 
 type DeliveryResult struct {
@@ -129,7 +145,7 @@ type AccessClient interface {
 }
 
 type SubscriptionClient interface {
-	IsEntitled(context.Context, string, string) (bool, error)
+	GetState(context.Context, string, string) (SubscriptionState, error)
 }
 
 type TelegramClient interface {

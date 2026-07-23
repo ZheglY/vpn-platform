@@ -15,6 +15,8 @@ import (
 	"github.com/ZheglY/vpn-platform/services/admin/internal/rbac"
 )
 
+const actionAttemptLease = time.Minute
+
 type Service struct{ store domain.Store }
 
 func New(store domain.Store) *Service { return &Service{store: store} }
@@ -68,13 +70,31 @@ func (s *Service) Execute(ctx context.Context, input ExecuteInput, call OwnerCal
 		return domain.Action{}, err
 	}
 	if replay && action.Status != "pending" {
-		return action, nil
+		if action.Status == "succeeded" || action.Status == "failed" {
+			return action, nil
+		}
+	}
+	action, claimed, err := s.store.StartActionAttempt(ctx, action.ActionID, input.RequestID, actionAttemptLease)
+	if err != nil {
+		return domain.Action{}, err
+	}
+	if !claimed {
+		if action.Status == "succeeded" || action.Status == "failed" {
+			return action, nil
+		}
+		return action, domain.ErrActionInProgress
 	}
 	result, ownerErr := call(ctx, action.ActionID, action.CorrelationID)
 	if ownerErr != nil {
 		code := ownerErrorCode(ownerErr)
 		completeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		completed, completeErr := s.store.CompleteAction(completeCtx, action.ActionID, nil, code)
+		var completed domain.Action
+		var completeErr error
+		if ownerErrorDefinitive(ownerErr) {
+			completed, completeErr = s.store.CompleteAction(completeCtx, action.ActionID, action.ClaimID, input.RequestID, nil, code)
+		} else {
+			completed, completeErr = s.store.MarkActionOutcomeUnknown(completeCtx, action.ActionID, action.ClaimID, input.RequestID, code)
+		}
 		cancel()
 		if completeErr != nil {
 			return domain.Action{}, completeErr
@@ -83,20 +103,24 @@ func (s *Service) Execute(ctx context.Context, input ExecuteInput, call OwnerCal
 	}
 	payload, err := json.Marshal(result)
 	if err != nil {
-		return domain.Action{}, fmt.Errorf("encode owner result: %w", err)
+		return s.markUnknown(ctx, action, input.RequestID, "owner_response_invalid", fmt.Errorf("encode owner result: %w", err))
 	}
 	if err := validateSafeResult(payload); err != nil {
-		completeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		completed, completeErr := s.store.CompleteAction(completeCtx, action.ActionID, nil, "unsafe_owner_response")
-		cancel()
-		if completeErr != nil {
-			return domain.Action{}, completeErr
-		}
-		return completed, &domain.OwnerError{Code: "unsafe_owner_response"}
+		return s.markUnknown(ctx, action, input.RequestID, "unsafe_owner_response", &domain.OwnerError{Code: "unsafe_owner_response"})
 	}
 	completeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	return s.store.CompleteAction(completeCtx, action.ActionID, payload, "")
+	return s.store.CompleteAction(completeCtx, action.ActionID, action.ClaimID, input.RequestID, payload, "")
+}
+
+func (s *Service) markUnknown(ctx context.Context, action domain.Action, requestID, code string, cause error) (domain.Action, error) {
+	completeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	unknown, err := s.store.MarkActionOutcomeUnknown(completeCtx, action.ActionID, action.ClaimID, requestID, code)
+	if err != nil {
+		return domain.Action{}, err
+	}
+	return unknown, cause
 }
 
 func (s *Service) ListAudit(ctx context.Context, principal domain.Principal, limit int) ([]domain.AuditEvent, error) {
@@ -112,6 +136,11 @@ func ownerErrorCode(err error) string {
 		return ownerErr.Code
 	}
 	return "owner_unavailable"
+}
+
+func ownerErrorDefinitive(err error) bool {
+	var ownerErr *domain.OwnerError
+	return errors.As(err, &ownerErr) && ownerErr.Definitive
 }
 
 func validErrorCode(value string) bool {

@@ -107,7 +107,77 @@ INSERT INTO admin_action_requests (
 	return action, false, nil
 }
 
-func (s *Store) CompleteAction(ctx context.Context, actionID string, result json.RawMessage, errorCode string) (domain.Action, error) {
+func (s *Store) StartActionAttempt(ctx context.Context, actionID, requestID string, lease time.Duration) (domain.Action, bool, error) {
+	claimID, err := cryptoutil.RandomUUID()
+	if err != nil {
+		return domain.Action{}, false, fmt.Errorf("generate admin action claim: %w", err)
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.Action{}, false, fmt.Errorf("begin admin action attempt: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	action, _, _, err := readActionByIDForUpdate(ctx, tx, actionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Action{}, false, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.Action{}, false, fmt.Errorf("lock admin action attempt: %w", err)
+	}
+	if action.Status == "succeeded" || action.Status == "failed" {
+		action.Replay = true
+		return action, false, tx.Commit(ctx)
+	}
+	if action.Status == "processing" {
+		var leaseActive bool
+		if err := tx.QueryRow(ctx, `
+SELECT lease_until > clock_timestamp()
+FROM admin_action_requests WHERE action_id = $1`, actionID).Scan(&leaseActive); err != nil {
+			return domain.Action{}, false, fmt.Errorf("check admin action lease: %w", err)
+		}
+		if leaseActive {
+			action.Replay = true
+			return action, false, tx.Commit(ctx)
+		}
+	}
+	outcome := "attempted"
+	if action.Attempts > 0 {
+		outcome = "retrying"
+	}
+	tag, err := tx.Exec(ctx, `
+UPDATE admin_action_requests
+SET status = 'processing', attempts = attempts + 1, claim_id = $2,
+    lease_until = clock_timestamp() + $3::interval, last_attempt_at = clock_timestamp(),
+    error_code = NULL
+WHERE action_id = $1
+  AND (status IN ('pending', 'outcome_unknown')
+       OR (status = 'processing' AND lease_until <= clock_timestamp()))`,
+		actionID, claimID, lease.String())
+	if err != nil {
+		return domain.Action{}, false, fmt.Errorf("claim admin action attempt: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return domain.Action{}, false, domain.ErrActionStateConflict
+	}
+	input, err := actionInputForAudit(ctx, tx, actionID)
+	if err != nil {
+		return domain.Action{}, false, err
+	}
+	input.RequestID = requestID
+	if err := insertAudit(ctx, tx, input, outcome, "", nil); err != nil {
+		return domain.Action{}, false, err
+	}
+	action, _, _, err = readActionByID(ctx, tx, actionID)
+	if err != nil {
+		return domain.Action{}, false, fmt.Errorf("read claimed admin action: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Action{}, false, fmt.Errorf("commit admin action attempt: %w", err)
+	}
+	return action, true, nil
+}
+
+func (s *Store) CompleteAction(ctx context.Context, actionID, claimID, requestID string, result json.RawMessage, errorCode string) (domain.Action, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return domain.Action{}, fmt.Errorf("begin complete admin action: %w", err)
@@ -120,9 +190,12 @@ func (s *Store) CompleteAction(ctx context.Context, actionID string, result json
 	if err != nil {
 		return domain.Action{}, fmt.Errorf("lock admin action: %w", err)
 	}
-	if action.Status != "pending" {
+	if action.Status == "succeeded" || action.Status == "failed" {
 		action.Replay = true
 		return action, tx.Commit(ctx)
+	}
+	if action.Status != "processing" || action.ClaimID != claimID {
+		return domain.Action{}, domain.ErrActionStateConflict
 	}
 	status, outcome := "succeeded", "succeeded"
 	var resultValue any = string(result)
@@ -131,8 +204,10 @@ func (s *Store) CompleteAction(ctx context.Context, actionID string, result json
 	}
 	tag, err := tx.Exec(ctx, `
 UPDATE admin_action_requests
-SET status = $2, result = $3, error_code = NULLIF($4,''), completed_at = clock_timestamp()
-WHERE action_id = $1 AND status = 'pending'`, actionID, status, resultValue, errorCode)
+SET status = $2, result = $3, error_code = NULLIF($4,''), completed_at = clock_timestamp(),
+    claim_id = NULL, lease_until = NULL
+WHERE action_id = $1 AND status = 'processing' AND claim_id = $5`,
+		actionID, status, resultValue, errorCode, claimID)
 	if err != nil {
 		return domain.Action{}, fmt.Errorf("complete admin action: %w", err)
 	}
@@ -143,6 +218,7 @@ WHERE action_id = $1 AND status = 'pending'`, actionID, status, resultValue, err
 	if err != nil {
 		return domain.Action{}, err
 	}
+	input.RequestID = requestID
 	completedAt := time.Now().UTC()
 	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&completedAt); err != nil {
 		return domain.Action{}, fmt.Errorf("read admin completion time: %w", err)
@@ -156,6 +232,55 @@ WHERE action_id = $1 AND status = 'pending'`, actionID, status, resultValue, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.Action{}, fmt.Errorf("commit completed admin action: %w", err)
+	}
+	return action, nil
+}
+
+func (s *Store) MarkActionOutcomeUnknown(ctx context.Context, actionID, claimID, requestID, errorCode string) (domain.Action, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.Action{}, fmt.Errorf("begin unknown admin outcome: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	action, _, _, err := readActionByIDForUpdate(ctx, tx, actionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Action{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.Action{}, fmt.Errorf("lock unknown admin outcome: %w", err)
+	}
+	if action.Status == "succeeded" || action.Status == "failed" {
+		action.Replay = true
+		return action, tx.Commit(ctx)
+	}
+	if action.Status != "processing" || action.ClaimID != claimID {
+		return domain.Action{}, domain.ErrActionStateConflict
+	}
+	tag, err := tx.Exec(ctx, `
+UPDATE admin_action_requests
+SET status = 'outcome_unknown', error_code = $3, claim_id = NULL, lease_until = NULL
+WHERE action_id = $1 AND status = 'processing' AND claim_id = $2`,
+		actionID, claimID, errorCode)
+	if err != nil {
+		return domain.Action{}, fmt.Errorf("mark unknown admin outcome: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return domain.Action{}, domain.ErrActionStateConflict
+	}
+	input, err := actionInputForAudit(ctx, tx, actionID)
+	if err != nil {
+		return domain.Action{}, err
+	}
+	input.RequestID = requestID
+	if err := insertAudit(ctx, tx, input, "outcome_unknown", errorCode, nil); err != nil {
+		return domain.Action{}, err
+	}
+	action, _, _, err = readActionByID(ctx, tx, actionID)
+	if err != nil {
+		return domain.Action{}, fmt.Errorf("read unknown admin outcome: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Action{}, fmt.Errorf("commit unknown admin outcome: %w", err)
 	}
 	return action, nil
 }
@@ -193,7 +318,9 @@ type querier interface {
 func readActionByIdempotency(ctx context.Context, query querier, actor, action, keyHash string) (domain.Action, string, string, error) {
 	return scanAction(query.QueryRow(ctx, `
 SELECT action_id, action, target_type, target_id, status, result, error_code,
-       correlation_id, created_at, completed_at, request_sha256, reason
+       correlation_id, created_at, completed_at, attempts,
+       COALESCE(claim_id, '00000000-0000-0000-0000-000000000000'::uuid),
+       lease_until, request_sha256, reason
 FROM admin_action_requests
 WHERE actor_spiffe_id = $1 AND action = $2 AND idempotency_key_sha256 = $3`, actor, action, keyHash))
 }
@@ -201,14 +328,18 @@ WHERE actor_spiffe_id = $1 AND action = $2 AND idempotency_key_sha256 = $3`, act
 func readActionByID(ctx context.Context, query querier, actionID string) (domain.Action, string, string, error) {
 	return scanAction(query.QueryRow(ctx, `
 SELECT action_id, action, target_type, target_id, status, result, error_code,
-       correlation_id, created_at, completed_at, request_sha256, reason
+       correlation_id, created_at, completed_at, attempts,
+       COALESCE(claim_id, '00000000-0000-0000-0000-000000000000'::uuid),
+       lease_until, request_sha256, reason
 FROM admin_action_requests WHERE action_id = $1`, actionID))
 }
 
 func readActionByIDForUpdate(ctx context.Context, query querier, actionID string) (domain.Action, string, string, error) {
 	return scanAction(query.QueryRow(ctx, `
 SELECT action_id, action, target_type, target_id, status, result, error_code,
-       correlation_id, created_at, completed_at, request_sha256, reason
+       correlation_id, created_at, completed_at, attempts,
+       COALESCE(claim_id, '00000000-0000-0000-0000-000000000000'::uuid),
+       lease_until, request_sha256, reason
 FROM admin_action_requests WHERE action_id = $1 FOR UPDATE`, actionID))
 }
 
@@ -217,7 +348,8 @@ func scanAction(row pgx.Row) (domain.Action, string, string, error) {
 	var result []byte
 	var requestHash, reason string
 	err := row.Scan(&action.ActionID, &action.Action, &action.TargetType, &action.TargetID, &action.Status,
-		&result, &action.ErrorCode, &action.CorrelationID, &action.CreatedAt, &action.CompletedAt, &requestHash, &reason)
+		&result, &action.ErrorCode, &action.CorrelationID, &action.CreatedAt, &action.CompletedAt,
+		&action.Attempts, &action.ClaimID, &action.LeaseUntil, &requestHash, &reason)
 	if len(result) > 0 {
 		action.Result = json.RawMessage(result)
 	}

@@ -7,6 +7,8 @@ This runbook covers Stage 7 notification-service and its typed telegram-bot deli
 - Kafka processing and notification jobs are durable at-least-once.
 - A source inbox and business key prevent another business job for exact replay or an equivalent fact.
 - A PostgreSQL lease prevents concurrent workers from claiming one job. An expired lease is recoverable.
+- Jobs retain source sequence plus an explicit delivery stream/sequence. Only the earliest nonterminal job in a stream can be claimed.
+- A terminal subscription/refund fact suppresses older pending/retry work. A processing predecessor finishes first; if that attempt needs retry, it is suppressed so the terminal message can proceed. A permanently failed predecessor does not block the stream.
 - telegram-bot has an ephemeral Redis guard for the stable delivery ID.
 - Telegram may accept `sendMessage` while the HTTP result is lost. A later retry can duplicate the visible message; neither service claims exactly-once delivery.
 - Attempts are bounded. Retry delay uses capped backoff, except a bounded Telegram `Retry-After` takes precedence.
@@ -23,7 +25,7 @@ Allowed incident evidence is limited to notification ID, source event ID, busine
 2. Compare pending/retry counts and oldest due time. A growing due backlog with `telegram_temporary` indicates an outbound problem; `identity_unavailable` or `access_state_unavailable` identifies an owner dependency.
 3. Restore the dependency and let due jobs resume. Do not bulk-update `next_attempt_at`, attempts, leases, or statuses.
 4. If several replicas are running, confirm leases advance and one notification ID is not simultaneously processing. Stop deployment changes if lease ownership is inconsistent.
-5. Escalate before the bounded attempt ceiling is reached. A permanently failed job can only be retried through the typed admin action after the cause is fixed.
+5. Escalate before the bounded attempt ceiling is reached. A permanently failed job can only be retried through the typed admin action after the cause is fixed and only when no later job exists in the same delivery stream.
 
 ## Telegram 429
 
@@ -64,7 +66,8 @@ Notification DLQ stores only topic, partition, offset, SHA-256, validated event 
 1. Check lag by topic/partition and the producer cursor for `(producer, aggregate_type, aggregate_id)`.
 2. A later sequence remains deferred and uncommitted until the missing predecessor arrives. Do not send it, DLQ it as poison, or advance the cursor manually.
 3. Restore the producer outbox/Kafka path for the lower sequence. A reused sequence with changed content is a durable conflict and requires engineering review.
-4. Access-related messages are checked against current Subscription entitlement immediately before send. Ready/degraded messages also check current Access state. A terminal Subscription suppresses with `stale_subscription_state`; an incompatible credential state suppresses with `stale_access_state`.
+4. Extension, grace, expiry, revoke, and Access-related messages are checked against current Subscription state immediately before send. Extension/grace deadlines must still match; ready/degraded messages also check current Access state. An incompatible owner state suppresses with `stale_subscription_state` or `stale_access_state`.
+5. `superseded_by_terminal_state` means a later subscription terminal or full-refund fact won the delivery stream. Do not retry that predecessor. Payment confirmation is suppressed whether the refund arrived before the payment fact or while the payment job was waiting to retry.
 
 ## Local Verification
 
@@ -73,4 +76,4 @@ make compose-smoke
 make stage7-smoke
 ```
 
-The Stage 7 smoke uses only generated local certificates, fake Telegram behavior, and local Xray. It proves `429`, permanent error, duplicate-event, restart, admin retry, and post-revoke stale suppression paths.
+The Stage 7 smoke uses only generated local certificates, fake Telegram behavior, and local Xray. It proves `429`, permanent error, duplicate-event, restart, admin retry, post-revoke stale suppression, and PostgreSQL extension-retry-to-revoke ordering paths.

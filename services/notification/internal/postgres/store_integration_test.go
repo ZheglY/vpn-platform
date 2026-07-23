@@ -131,6 +131,76 @@ func TestIntegrationNotificationDLQAndAdminRetryCollisions(t *testing.T) {
 	}
 }
 
+func TestIntegrationTerminalNotificationSuppressesRateLimitedPredecessor(t *testing.T) {
+	store := notificationIntegrationStore(t)
+	ctx := context.Background()
+	aggregateID := "20000000-0000-4000-8000-000000000021"
+	streamKey := "subscription:" + aggregateID
+	extension := integrationIntent("30000000-0000-4000-8000-000000000021", "extension:terminal-order")
+	extension.DeliveryStreamKey, extension.DeliverySequence = streamKey, 1
+	if _, err := store.RecordEvent(ctx,
+		integrationNotificationMeta("10000000-0000-4000-8000-000000000021", aggregateID, 21, 1),
+		extension); err != nil {
+		t.Fatal(err)
+	}
+	claimed, ok, err := store.ClaimJob(ctx, time.Minute)
+	if err != nil || !ok || claimed.NotificationID != extension.NotificationID {
+		t.Fatalf("claim extension=%+v ok=%v err=%v", claimed, ok, err)
+	}
+	// This is the durable worker transition after Telegram returns 429.
+	if err := store.RetryJob(ctx, claimed.NotificationID, claimed.ClaimID, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+
+	terminalMeta := integrationNotificationMeta("10000000-0000-4000-8000-000000000022", aggregateID, 22, 2)
+	terminalMeta.EventType, terminalMeta.SourceTopic = "subscription.revoked.v1", "subscription.revoked.v1"
+	terminal := integrationIntent("30000000-0000-4000-8000-000000000022", "terminal:terminal-order")
+	terminal.NotificationType = "subscription_revoked"
+	terminal.DeliveryStreamKey, terminal.DeliverySequence, terminal.SupersedesOlder = streamKey, 2, true
+	if _, err := store.RecordEvent(ctx, terminalMeta, terminal); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := store.GetJob(ctx, extension.NotificationID)
+	if err != nil || stale.Status != domain.StatusSuppressed || stale.TerminalReason == nil || *stale.TerminalReason != "superseded_by_terminal_state" {
+		t.Fatalf("stale extension=%+v err=%v", stale, err)
+	}
+	next, ok, err := store.ClaimJob(ctx, time.Minute)
+	if err != nil || !ok || next.NotificationID != terminal.NotificationID {
+		t.Fatalf("claim terminal=%+v ok=%v err=%v", next, ok, err)
+	}
+	if _, _, err := store.RequestRetry(ctx, extension.NotificationID, "retry-key-terminal-order", "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"); !errors.Is(err, domain.ErrRetryNotAllowed) {
+		t.Fatalf("stale predecessor retry = %v", err)
+	}
+}
+
+func TestIntegrationRefundBarrierSuppressesDelayedPaymentConfirmation(t *testing.T) {
+	store := notificationIntegrationStore(t)
+	ctx := context.Background()
+	paymentID := "20000000-0000-4000-8000-000000000031"
+	streamKey := "payment:" + paymentID
+	refundMeta := integrationNotificationMeta("10000000-0000-4000-8000-000000000031", "20000000-0000-4000-8000-000000000032", 31, 0)
+	refundMeta.EventType, refundMeta.AggregateType, refundMeta.SourceTopic = "billing.refund.succeeded.v1", "refund", "billing.refund.succeeded.v1"
+	refund := integrationIntent("30000000-0000-4000-8000-000000000031", "refund:payment-order")
+	refund.NotificationType = "refund_confirmed"
+	refund.DeliveryStreamKey, refund.DeliverySequence, refund.SupersedesOlder = streamKey, 2, true
+	if _, err := store.RecordEvent(ctx, refundMeta, refund); err != nil {
+		t.Fatal(err)
+	}
+
+	paymentMeta := integrationNotificationMeta("10000000-0000-4000-8000-000000000032", paymentID, 32, 0)
+	paymentMeta.EventType, paymentMeta.AggregateType, paymentMeta.SourceTopic = "billing.payment.succeeded.v1", "payment", "billing.payment.succeeded.v1"
+	payment := integrationIntent("30000000-0000-4000-8000-000000000032", "payment:delayed")
+	payment.NotificationType = "payment_confirmed"
+	payment.DeliveryStreamKey, payment.DeliverySequence = streamKey, 1
+	if _, err := store.RecordEvent(ctx, paymentMeta, payment); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := store.GetJob(ctx, payment.NotificationID)
+	if err != nil || stale.Status != domain.StatusSuppressed || stale.TerminalReason == nil || *stale.TerminalReason != "superseded_by_terminal_state" {
+		t.Fatalf("delayed payment=%+v err=%v", stale, err)
+	}
+}
+
 func notificationIntegrationStore(t *testing.T) *Store {
 	t.Helper()
 	dsn := os.Getenv("NOTIFICATION_TEST_DATABASE_URL")
@@ -171,6 +241,7 @@ func integrationIntent(notificationID, dedupe string) domain.Intent {
 	return domain.Intent{
 		NotificationID: notificationID, UserID: "40000000-0000-4000-8000-000000000001",
 		NotificationType: "subscription_extended", TemplateVersion: 1, BusinessDedupeKey: dedupe,
+		DeliveryStreamKey: "delivery:" + dedupe, DeliverySequence: 1,
 		Variables: map[string]string{"period_end": "2026-08-18T12:00:00Z"}, MaxAttempts: 3,
 	}
 }

@@ -77,19 +77,18 @@ function Assert-AdminHTTPFailure([string]$certificate, [int]$expectedStatus, [st
     }
 }
 
-function New-ExtensionEvent([string]$syntheticSubscriptionID, [string]$eventID, [string]$periodID) {
+function New-PaymentEvent([string]$paymentID, [string]$eventID) {
     $now = (Get-Date).ToUniversalTime()
     return @{
-        event_id = $eventID; event_type = "subscription.extended.v1"; schema_version = 1
-        occurred_at = $now.ToString("o"); producer = "subscription-service"
+        event_id = $eventID; event_type = "billing.payment.succeeded.v1"; schema_version = 1
+        occurred_at = $now.ToString("o"); producer = "billing-service"
         correlation_id = "77000000-0000-4000-8000-000000000099"; causation_id = $null
-        aggregate_type = "subscription"; aggregate_id = $syntheticSubscriptionID; aggregate_sequence = 1
+        aggregate_type = "payment"; aggregate_id = $paymentID
         partition_key = "user:$UserID"
         data = @{
-            subscription_id = $syntheticSubscriptionID; user_id = $UserID; period_id = $periodID
-            source_order_id = "77000000-0000-4000-8000-000000000090"
-            source_payment_id = "77000000-0000-4000-8000-000000000091"
-            period_start = $now.ToString("o"); period_end = $now.AddDays(30).ToString("o"); grace_ends_at = $now.AddDays(31).ToString("o")
+            payment_id = $paymentID; order_id = "77000000-0000-4000-8000-000000000090"
+            user_id = $UserID; plan_id = "basic-monthly"; amount_minor = 49900
+            currency = "RUB"; paid_at = $now.ToString("o")
         }
     } | ConvertTo-Json -Compress -Depth 6
 }
@@ -108,16 +107,16 @@ if ($Phase -eq "BeforeRevoke") {
     if ((Invoke-RestMethod -Uri "http://127.0.0.1:8082/messages" -TimeoutSec 10).count -ne $messagesBeforeDuplicate) { throw "duplicate payment event produced another Telegram message" }
 
     Set-TelegramBehavior "rate_limited" 1 2
-    Publish-Event "subscription.extended.v1" "user:$UserID" (New-ExtensionEvent "77000000-0000-4000-8000-000000000022" "77000000-0000-4000-8000-000000000002" "77000000-0000-4000-8000-000000000012")
-    Wait-SQL "notification_service" "SELECT status FROM notification_jobs WHERE business_dedupe_key='extension:77000000-0000-4000-8000-000000000012'" "retry"
-    $retryDelay = [double](Invoke-ScalarSQL "notification_service" "SELECT extract(epoch FROM (next_attempt_at-updated_at)) FROM notification_jobs WHERE business_dedupe_key='extension:77000000-0000-4000-8000-000000000012'")
+    Publish-Event "billing.payment.succeeded.v1" "user:$UserID" (New-PaymentEvent "77000000-0000-4000-8000-000000000022" "77000000-0000-4000-8000-000000000002")
+    Wait-SQL "notification_service" "SELECT status FROM notification_jobs WHERE business_dedupe_key='payment_confirmed:77000000-0000-4000-8000-000000000022'" "retry"
+    $retryDelay = [double](Invoke-ScalarSQL "notification_service" "SELECT extract(epoch FROM (next_attempt_at-updated_at)) FROM notification_jobs WHERE business_dedupe_key='payment_confirmed:77000000-0000-4000-8000-000000000022'")
     if ($retryDelay -lt 1.5) { throw "Telegram Retry-After was not respected" }
-    Wait-SQL "notification_service" "SELECT status || ':' || attempts FROM notification_jobs WHERE business_dedupe_key='extension:77000000-0000-4000-8000-000000000012'" "delivered:2"
+    Wait-SQL "notification_service" "SELECT status || ':' || attempts FROM notification_jobs WHERE business_dedupe_key='payment_confirmed:77000000-0000-4000-8000-000000000022'" "delivered:2"
 
     Set-TelegramBehavior "blocked" 1
-    Publish-Event "subscription.extended.v1" "user:$UserID" (New-ExtensionEvent "77000000-0000-4000-8000-000000000023" "77000000-0000-4000-8000-000000000003" "77000000-0000-4000-8000-000000000013")
-    Wait-SQL "notification_service" "SELECT status || ':' || terminal_reason_code FROM notification_jobs WHERE business_dedupe_key='extension:77000000-0000-4000-8000-000000000013'" "permanently_failed:telegram_bot_blocked"
-    $failedNotificationID = Invoke-ScalarSQL "notification_service" "SELECT notification_id FROM notification_jobs WHERE business_dedupe_key='extension:77000000-0000-4000-8000-000000000013'"
+    Publish-Event "billing.payment.succeeded.v1" "user:$UserID" (New-PaymentEvent "77000000-0000-4000-8000-000000000023" "77000000-0000-4000-8000-000000000003")
+    Wait-SQL "notification_service" "SELECT status || ':' || terminal_reason_code FROM notification_jobs WHERE business_dedupe_key='payment_confirmed:77000000-0000-4000-8000-000000000023'" "permanently_failed:telegram_bot_blocked"
+    $failedNotificationID = Invoke-ScalarSQL "notification_service" "SELECT notification_id FROM notification_jobs WHERE business_dedupe_key='payment_confirmed:77000000-0000-4000-8000-000000000023'"
 
     $supportUser = Invoke-Admin "admin-support-local" "get-user" @("--user-id", $UserID)
     if ($supportUser.user_id -ne $UserID) { throw "read-only admin could not read user status" }
@@ -144,8 +143,8 @@ if ($Phase -eq "BeforeRevoke") {
     if ($audit.events.Count -lt 2 -or $auditJSON -notmatch 'operations-local' -or $auditJSON -match 'subscription_url|vless_client_uuid|vless://|telegram_chat_id|private_key') { throw "admin audit is incomplete or unsafe" }
 
     Set-TelegramBehavior "server_error" 10
-    Publish-Event "subscription.extended.v1" "user:$UserID" (New-ExtensionEvent "77000000-0000-4000-8000-000000000024" "77000000-0000-4000-8000-000000000004" "77000000-0000-4000-8000-000000000014")
-    Wait-SQL "notification_service" "SELECT status FROM notification_jobs WHERE business_dedupe_key='extension:77000000-0000-4000-8000-000000000014'" "retry"
+    Publish-Event "billing.payment.succeeded.v1" "user:$UserID" (New-PaymentEvent "77000000-0000-4000-8000-000000000024" "77000000-0000-4000-8000-000000000004")
+    Wait-SQL "notification_service" "SELECT status FROM notification_jobs WHERE business_dedupe_key='payment_confirmed:77000000-0000-4000-8000-000000000024'" "retry"
     $actionCount = Invoke-ScalarSQL "admin_service" "SELECT count(*) FROM admin_action_requests"
     docker compose restart notification-service admin-service | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Stage 7 service restart failed" }
@@ -157,7 +156,7 @@ if ($Phase -eq "BeforeRevoke") {
     }
     if ($notificationHealth -ne "healthy" -or $adminHealth -ne "healthy") { throw "Stage 7 services did not recover after restart" }
     Set-TelegramBehavior "success" 0
-    Wait-SQL "notification_service" "SELECT status FROM notification_jobs WHERE business_dedupe_key='extension:77000000-0000-4000-8000-000000000014'" "delivered"
+    Wait-SQL "notification_service" "SELECT status FROM notification_jobs WHERE business_dedupe_key='payment_confirmed:77000000-0000-4000-8000-000000000024'" "delivered"
     if ((Invoke-ScalarSQL "admin_service" "SELECT count(*) FROM admin_action_requests") -ne $actionCount) { throw "admin durable actions changed across restart" }
 
     Write-Host "Stage 7 pre-revoke notification and admin E2E checks passed."
