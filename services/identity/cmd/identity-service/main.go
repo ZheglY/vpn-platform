@@ -19,6 +19,7 @@ import (
 	"github.com/ZheglY/vpn-platform/internal/platform/httpserver"
 	"github.com/ZheglY/vpn-platform/internal/platform/logging"
 	"github.com/ZheglY/vpn-platform/internal/platform/observability"
+	platformpostgres "github.com/ZheglY/vpn-platform/internal/platform/postgres"
 	"github.com/ZheglY/vpn-platform/internal/platform/version"
 	"github.com/ZheglY/vpn-platform/services/identity/internal/httpapi"
 	identitypostgres "github.com/ZheglY/vpn-platform/services/identity/internal/postgres"
@@ -65,7 +66,7 @@ func run(ctx context.Context) error {
 
 	registry := observability.NewRegistry()
 	httpMetrics := observability.NewHTTPMetrics(registry, serviceName)
-	store, err := identitypostgres.Open(ctx, appCfg.DatabaseURL)
+	store, err := identitypostgres.Open(ctx, appCfg.DatabaseURL, platformpostgres.WithMetrics(registry, serviceName))
 	if err != nil {
 		return err
 	}

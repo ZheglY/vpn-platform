@@ -54,7 +54,7 @@ try {
     }
     docker run --rm --entrypoint /bin/promtool `
         -v "$repo\deploy\observability\prometheus:/etc/prometheus:ro" `
-        $prometheusImage test rules /etc/prometheus/tests/platform.test.yml /etc/prometheus/tests/vpn-targets.test.yml
+        $prometheusImage test rules /etc/prometheus/tests/platform.test.yml /etc/prometheus/tests/operations.test.yml /etc/prometheus/tests/vpn-targets.test.yml
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     node -e "JSON.parse(require('fs').readFileSync('deploy/observability/grafana/dashboards/platform-overview.json','utf8'))"

@@ -18,8 +18,8 @@ import (
 
 type Store struct{ pool *pgxpool.Pool }
 
-func Open(ctx context.Context, databaseURL string) (*Store, error) {
-	pool, err := platformpostgres.OpenPool(ctx, databaseURL)
+func Open(ctx context.Context, databaseURL string, options ...platformpostgres.Option) (*Store, error) {
+	pool, err := platformpostgres.OpenPool(ctx, databaseURL, options...)
 	if err != nil {
 		return nil, err
 	}

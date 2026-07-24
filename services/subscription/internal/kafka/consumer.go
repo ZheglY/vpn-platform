@@ -25,6 +25,7 @@ type Consumer struct {
 	store      domain.Store
 	logger     *zap.Logger
 	retryDelay time.Duration
+	metrics    platformkafka.Observer
 }
 
 type consumerClient interface {
@@ -34,8 +35,8 @@ type consumerClient interface {
 	SetOffsets(map[string]map[int32]kgo.EpochOffset)
 }
 
-func NewConsumer(client consumerClient, service *application.Service, store domain.Store, logger *zap.Logger, retryDelay time.Duration) *Consumer {
-	return &Consumer{client: client, service: service, store: store, logger: logger, retryDelay: retryDelay}
+func NewConsumer(client consumerClient, service *application.Service, store domain.Store, logger *zap.Logger, retryDelay time.Duration, observers ...platformkafka.Observer) *Consumer {
+	return &Consumer{client: client, service: service, store: store, logger: logger, retryDelay: retryDelay, metrics: platformkafka.ObserverOrNoop(observers...)}
 }
 
 func (c *Consumer) Run(ctx context.Context) {
@@ -63,16 +64,24 @@ func (c *Consumer) pollOnce(ctx context.Context) (keepRunning bool) {
 			c.rewind(records[index:])
 			return false
 		}
+		startedAt := time.Now()
+		outcome := "success"
 		err := c.process(ctx, record)
 		if err != nil {
 			if code, poison := application.ContractErrorCode(err); poison {
 				sum := sha256.Sum256(record.Value)
 				if deadErr := c.store.RecordDeadLetter(ctx, record.Topic, record.Partition, record.Offset, hex.EncodeToString(sum[:]), code); deadErr != nil {
+					c.metrics.ObserveHandler(record.Topic, "retry", startedAt, record.Timestamp)
+					c.metrics.ObserveRetry(record.Topic, "consumer")
 					c.rewind(records[index:])
 					c.logRetry(ctx, deadErr)
 					return ctx.Err() == nil
 				}
+				c.metrics.ObserveDLQ(record.Topic)
+				outcome = "dead_letter"
 			} else {
+				c.metrics.ObserveHandler(record.Topic, "retry", startedAt, record.Timestamp)
+				c.metrics.ObserveRetry(record.Topic, "consumer")
 				c.rewind(records[index:])
 				c.logRetry(ctx, err)
 				return ctx.Err() == nil
@@ -82,10 +91,13 @@ func (c *Consumer) pollOnce(ctx context.Context) (keepRunning bool) {
 		err = c.client.CommitRecords(commitCtx, record)
 		cancel()
 		if err != nil {
+			c.metrics.ObserveHandler(record.Topic, "commit_error", startedAt, record.Timestamp)
+			c.metrics.ObserveRetry(record.Topic, "commit")
 			c.rewind(records[index:])
 			c.logRetry(ctx, err)
 			return ctx.Err() == nil
 		}
+		c.metrics.ObserveHandler(record.Topic, outcome, startedAt, record.Timestamp)
 	}
 	return ctx.Err() == nil
 }

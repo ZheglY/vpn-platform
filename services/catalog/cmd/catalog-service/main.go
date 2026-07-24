@@ -20,6 +20,7 @@ import (
 	"github.com/ZheglY/vpn-platform/internal/platform/httpserver"
 	"github.com/ZheglY/vpn-platform/internal/platform/logging"
 	"github.com/ZheglY/vpn-platform/internal/platform/observability"
+	platformpostgres "github.com/ZheglY/vpn-platform/internal/platform/postgres"
 	"github.com/ZheglY/vpn-platform/internal/platform/version"
 	"github.com/ZheglY/vpn-platform/services/catalog/internal/domain"
 	"github.com/ZheglY/vpn-platform/services/catalog/internal/httpapi"
@@ -49,12 +50,12 @@ func run(ctx context.Context, seedOnly bool) error {
 	if err != nil {
 		return err
 	}
-	store, err := catalogpostgres.Open(ctx, cfg.DatabaseURL)
-	if err != nil {
-		return err
-	}
-	defer store.Close()
 	if seedOnly {
+		store, err := catalogpostgres.Open(ctx, cfg.DatabaseURL)
+		if err != nil {
+			return err
+		}
+		defer store.Close()
 		return store.SeedPlan(ctx, cfg.SeedPlan, "telegram")
 	}
 	logger, err := logging.New(logging.Config{Environment: cfg.Environment, Level: cfg.LogLevel})
@@ -62,13 +63,18 @@ func run(ctx context.Context, seedOnly bool) error {
 		return err
 	}
 	defer func() { _ = logger.Sync() }()
+	registry := observability.NewRegistry()
+	store, err := catalogpostgres.Open(ctx, cfg.DatabaseURL, platformpostgres.WithMetrics(registry, serviceName))
+	if err != nil {
+		return err
+	}
+	defer store.Close()
 	api := httpapi.New(store)
 	internalAuth := func(next http.Handler) http.Handler { return next }
 	if cfg.InternalAuth == "mtls" {
 		internalAuth = httpauth.RequireService(httpauth.ServicePolicy{TrustDomain: cfg.MTLSTrustDomain, Namespace: cfg.MTLSNamespace, Allowed: []string{"billing-service"}})
 	}
 	mux := http.NewServeMux()
-	registry := observability.NewRegistry()
 	httpMetrics := observability.NewHTTPMetrics(registry, serviceName)
 	mux.Handle("GET /livez", httpserver.LivenessHandler(serviceName))
 	mux.Handle("GET /readyz", httpserver.ReadinessHandler(serviceName, map[string]httpserver.Check{"postgres": store.Ping}))

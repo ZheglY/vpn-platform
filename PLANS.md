@@ -321,7 +321,7 @@ Verification completed on 2026-07-23:
 
 Depends on working services. Adds dashboards, alerts, runbooks, backup/restore drill, node hardening, secret rotation, privacy retention jobs, SBOM, and signing.
 
-Status: in progress on `codex/stage8-observability-hardening`. The first bounded slice implements the privacy-safe HTTP RED baseline and local Prometheus/Grafana profile. Stage 8 is not complete and Stage 9 remains blocked.
+Status: in progress on `codex/stage8-observability-hardening`. The first bounded slice implements the privacy-safe HTTP RED baseline and local Prometheus/Grafana profile. The second slice implements bounded PostgreSQL, Kafka, durable-workflow, owner-domain, node-capacity, and Xray metrics. Stage 8 is not complete and Stage 9 remains blocked.
 
 Implementation plan:
 
@@ -344,6 +344,14 @@ First-slice acceptance:
 - Integrity-pinned Prometheus and Grafana security rebuilds run with reduced container privileges, loopback-only host ports, 15-day local metric retention, immutable provisioning, no HIGH/CRITICAL scan finding, and no committed administrator password.
 - Prometheus 8/11-target configurations and absence/down rules, Grafana dashboard JSON, Linux credential staging/readability, Compose configuration, unit/race/lint checks, `make verify`, `make observability-smoke`, and the 11-target Stage 7 smoke pass.
 - ADR 0027, architecture, threat model, runbook, external sources, README, and Definition of Done agree with behavior and list the remaining Stage 8 work.
+
+Second-slice acceptance:
+
+- All database-backed service runtimes expose pgx pool and bounded query-class metrics without SQL, arguments, identifiers, DSNs, or error text.
+- Kafka publishers, consumers, retries, DLQs, and outbox workers expose only explicitly allowlisted topics and bounded outcomes/stages; record age is capped and no partition, offset, key, payload, or header enters a label.
+- Owner-local collectors expose explicit durable backlog and domain-state series with one-second query bounds, exact label allowlists, zero values, and fail-closed snapshot health.
+- Billing reconciliation, Subscription lifecycle scheduling, Access state, Provisioning operation/capacity/heartbeat, Notification delivery, and node-agent Xray metrics are present and privacy-safe.
+- Operational dashboard panels, alerts, representative `promtool` tests, 8/11-target smoke assertions, ADR 0028, architecture, threat model, runbook, risk register, external sources, README, and Definition of Done match the implementation.
 
 ### Stage 9 - Production readiness review
 

@@ -82,6 +82,12 @@ scalar_sql() {
   docker compose exec -T postgres psql --username="${POSTGRES_USER}" --dbname "$database" -tAc "$sql" | tr -d '[:space:]'
 }
 
+prometheus_scalar() {
+  local query="$1"
+  curl -fsS --get --data-urlencode "query=${query}" http://127.0.0.1:9090/api/v1/query |
+    node -e 'let b="";process.stdin.on("data",d=>b+=d).on("end",()=>{const r=JSON.parse(b).data.result;process.stdout.write(r.length?r[0].value[1]:"0")})'
+}
+
 yookassa_webhook_status() {
   local body="$1"
   curl -sS -o /tmp/vpn-service-yookassa-response.json -w "%{http_code}" \
@@ -175,6 +181,37 @@ if [[ "$observability" == "1" ]]; then
   done
   if [[ "$healthy_targets" != "$expected_targets" ]]; then
     echo "Prometheus has ${healthy_targets} healthy VPN targets, expected ${expected_targets}" >&2
+    exit 1
+  fi
+  expected_pools=7
+  expected_message_snapshots=4
+  expected_domain_snapshots=3
+  if [[ "$full_vpn" == "1" ]]; then
+    expected_pools=8
+    expected_message_snapshots=5
+    expected_domain_snapshots=4
+  fi
+  for _ in $(seq 1 30); do
+    pool_count="$(prometheus_scalar 'count(vpn_platform_postgres_pool_connections{state="max"})')"
+    message_snapshots="$(prometheus_scalar 'sum(vpn_platform_message_snapshot_success == 1)')"
+    domain_snapshots="$(prometheus_scalar 'sum(vpn_platform_domain_snapshot_success == 1)')"
+    billing_snapshots="$(prometheus_scalar 'sum(vpn_billing_metrics_snapshot_success == 1)')"
+    subscription_snapshots="$(prometheus_scalar 'sum(vpn_subscription_metrics_snapshot_success == 1)')"
+    provisioning_snapshots=0
+    healthy_xray=0
+    if [[ "$full_vpn" == "1" ]]; then
+      provisioning_snapshots="$(prometheus_scalar 'sum(vpn_provisioning_metrics_snapshot_success == 1)')"
+      healthy_xray="$(prometheus_scalar 'sum(vpn_node_xray_healthy == 1)')"
+    fi
+    if [[ "$pool_count" == "$expected_pools" && "$message_snapshots" == "$expected_message_snapshots" && "$domain_snapshots" == "$expected_domain_snapshots" && "$billing_snapshots" == "1" && "$subscription_snapshots" == "1" ]] &&
+      [[ "$full_vpn" != "1" || ( "$provisioning_snapshots" == "1" && "$healthy_xray" == "2" ) ]]; then
+      break
+    fi
+    sleep 2
+  done
+  if [[ "$pool_count" != "$expected_pools" || "$message_snapshots" != "$expected_message_snapshots" || "$domain_snapshots" != "$expected_domain_snapshots" || "$billing_snapshots" != "1" || "$subscription_snapshots" != "1" ]] ||
+    [[ "$full_vpn" == "1" && ( "$provisioning_snapshots" != "1" || "$healthy_xray" != "2" ) ]]; then
+    echo "Operational metrics incomplete: pools=${pool_count}/${expected_pools} message_snapshots=${message_snapshots}/${expected_message_snapshots} domain_snapshots=${domain_snapshots}/${expected_domain_snapshots} billing=${billing_snapshots} subscription=${subscription_snapshots} provisioning=${provisioning_snapshots} xray=${healthy_xray}" >&2
     exit 1
   fi
   curl -fsS http://127.0.0.1:3000/api/health |
@@ -554,4 +591,14 @@ if [[ "$full_vpn" != "1" ]]; then
     echo "provisioning material read was not audited exactly once" >&2
     exit 1
   fi
+fi
+
+if [[ "$observability" == "1" ]]; then
+  series_metadata="$(curl -fsS --get --data-urlencode 'match[]={__name__=~"vpn_.*"}' http://127.0.0.1:9090/api/v1/series)"
+  for forbidden_metric_value in "$subscription_user_id" "$subscription_id" "$access_credential_id" "$issued_token" "$vpn_credential_uuid"; do
+    if [[ -n "$forbidden_metric_value" ]] && grep -Fq "$forbidden_metric_value" <<<"$series_metadata"; then
+      echo "Prometheus series metadata leaked a runtime identifier or VPN secret" >&2
+      exit 1
+    fi
+  done
 fi

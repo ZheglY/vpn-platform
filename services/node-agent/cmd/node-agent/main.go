@@ -23,6 +23,7 @@ import (
 	"github.com/ZheglY/vpn-platform/internal/platform/version"
 	"github.com/ZheglY/vpn-platform/services/node-agent/internal/application"
 	"github.com/ZheglY/vpn-platform/services/node-agent/internal/httpapi"
+	nodemetrics "github.com/ZheglY/vpn-platform/services/node-agent/internal/metrics"
 	"github.com/ZheglY/vpn-platform/services/node-agent/internal/state"
 	"github.com/ZheglY/vpn-platform/services/node-agent/internal/xray"
 )
@@ -63,15 +64,20 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	registry := observability.NewRegistry()
+	nodeMetrics, err := nodemetrics.New(registry, serviceName)
+	if err != nil {
+		return err
+	}
 	manager, err := xray.NewManager(xray.ManagerConfig{
 		BinaryPath: cfg.xrayBinary, ConfigDirectory: cfg.xrayConfigDirectory,
 		ValidateTimeout: cfg.validateTimeout, ReloadTimeout: cfg.reloadTimeout, StartupGrace: cfg.startupGrace,
 		Render: xray.RenderConfig{ListenAddress: cfg.vpnListenAddress, ListenPort: cfg.vpnListenPort, RealityTarget: cfg.realityTarget, ServerNames: cfg.realityServerNames, RealityPrivateKey: privateKey, ShortIDs: cfg.realityShortIDs},
-	})
+	}, nodeMetrics)
 	if err != nil {
 		return err
 	}
-	service, err := application.NewService(ctx, cfg.nodeID, buildVersion, stateStore, manager)
+	service, err := application.NewService(ctx, cfg.nodeID, buildVersion, stateStore, manager, nodeMetrics)
 	if err != nil {
 		return err
 	}
@@ -89,7 +95,6 @@ func run(ctx context.Context) error {
 	}
 	managementAuth := policy("provisioning-service")
 	healthAuth := policy(cfg.healthCallerIdentity)
-	registry := observability.NewRegistry()
 	httpMetrics := observability.NewHTTPMetrics(registry, serviceName)
 	mux := http.NewServeMux()
 	mux.Handle("GET /livez", healthAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })))

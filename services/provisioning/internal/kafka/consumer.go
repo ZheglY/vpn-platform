@@ -51,10 +51,11 @@ type Consumer struct {
 	logger     *zap.Logger
 	retryDelay time.Duration
 	deferred   map[topicPartition]*kgo.Record
+	metrics    platformkafka.Observer
 }
 
-func NewConsumer(client consumerClient, processor Processor, store deadLetterStore, logger *zap.Logger, retryDelay time.Duration) *Consumer {
-	return &Consumer{client: client, processor: processor, store: store, logger: logger, retryDelay: retryDelay, deferred: make(map[topicPartition]*kgo.Record)}
+func NewConsumer(client consumerClient, processor Processor, store deadLetterStore, logger *zap.Logger, retryDelay time.Duration, observers ...platformkafka.Observer) *Consumer {
+	return &Consumer{client: client, processor: processor, store: store, logger: logger, retryDelay: retryDelay, deferred: make(map[topicPartition]*kgo.Record), metrics: platformkafka.ObserverOrNoop(observers...)}
 }
 
 func (c *Consumer) Run(ctx context.Context) {
@@ -82,29 +83,42 @@ func (c *Consumer) pollOnce(ctx context.Context) bool {
 			c.rewind(records[index:])
 			return false
 		}
+		startedAt := time.Now()
+		outcome := "success"
 		err := c.process(ctx, record)
 		if errors.Is(err, domain.ErrSequenceGap) {
+			c.metrics.ObserveHandler(record.Topic, "deferred", startedAt, record.Timestamp)
+			c.metrics.ObserveRetry(record.Topic, "consumer")
 			c.deferGap(record)
 			continue
 		}
 		if err != nil {
 			code, poison := application.ContractErrorCode(err)
 			if !poison {
+				c.metrics.ObserveHandler(record.Topic, "retry", startedAt, record.Timestamp)
+				c.metrics.ObserveRetry(record.Topic, "consumer")
 				c.rewind(records[index:])
 				c.waitRetry(ctx, err)
 				return ctx.Err() == nil
 			}
 			sum := sha256.Sum256(record.Value)
 			if err := c.store.RecordDeadLetter(ctx, record.Topic, record.Partition, record.Offset, hex.EncodeToString(sum[:]), code); err != nil {
+				c.metrics.ObserveHandler(record.Topic, "retry", startedAt, record.Timestamp)
+				c.metrics.ObserveRetry(record.Topic, "consumer")
 				c.rewind(records[index:])
 				c.waitRetry(ctx, err)
 				return ctx.Err() == nil
 			}
+			c.metrics.ObserveDLQ(record.Topic)
+			outcome = "dead_letter"
 		}
 		if !c.commit(ctx, record) {
+			c.metrics.ObserveHandler(record.Topic, "commit_error", startedAt, record.Timestamp)
+			c.metrics.ObserveRetry(record.Topic, "commit")
 			c.rewind(records[index:])
 			return ctx.Err() == nil
 		}
+		c.metrics.ObserveHandler(record.Topic, outcome, startedAt, record.Timestamp)
 		c.retryDeferred(ctx)
 	}
 	if len(records) == 0 && len(c.deferred) > 0 {
@@ -179,23 +193,36 @@ func (c *Consumer) retryDeferred(ctx context.Context) {
 	for {
 		progressed := false
 		for key, record := range c.deferred {
+			startedAt := time.Now()
+			outcome := "success"
 			err := c.process(ctx, record)
 			if errors.Is(err, domain.ErrSequenceGap) {
+				c.metrics.ObserveHandler(record.Topic, "deferred", startedAt, record.Timestamp)
+				c.metrics.ObserveRetry(record.Topic, "consumer")
 				continue
 			}
 			if err != nil {
 				code, poison := application.ContractErrorCode(err)
 				if !poison {
+					c.metrics.ObserveHandler(record.Topic, "retry", startedAt, record.Timestamp)
+					c.metrics.ObserveRetry(record.Topic, "consumer")
 					continue
 				}
 				sum := sha256.Sum256(record.Value)
 				if err := c.store.RecordDeadLetter(ctx, record.Topic, record.Partition, record.Offset, hex.EncodeToString(sum[:]), code); err != nil {
+					c.metrics.ObserveHandler(record.Topic, "retry", startedAt, record.Timestamp)
+					c.metrics.ObserveRetry(record.Topic, "consumer")
 					continue
 				}
+				c.metrics.ObserveDLQ(record.Topic)
+				outcome = "dead_letter"
 			}
 			if !c.commit(ctx, record) {
+				c.metrics.ObserveHandler(record.Topic, "commit_error", startedAt, record.Timestamp)
+				c.metrics.ObserveRetry(record.Topic, "commit")
 				continue
 			}
+			c.metrics.ObserveHandler(record.Topic, outcome, startedAt, record.Timestamp)
 			delete(c.deferred, key)
 			c.client.ResumeFetchPartitions(map[string][]int32{record.Topic: {record.Partition}})
 			progressed = true

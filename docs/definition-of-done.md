@@ -113,5 +113,6 @@ This Definition of Done applies to every implementation task after Stage 0. Stag
 - Runtime private keys are staged into least-privilege named volumes with owner-only modes and are read under each actual container UID on native Linux before service startup; no runtime service depends on host bind-mount ownership translation.
 - Expected scrape inventory is explicit for every active profile, and tests cover both an existing failed target and a target whose `up` series is absent.
 - Dashboard and alert configuration is reproducible from Git, validates before startup, links alerts to runbooks, and has owner, severity, retention, and rollback behavior.
+- PostgreSQL, Kafka, durable backlog, owner-domain, scheduler, node-capacity, and Xray metrics use finite reviewed labels, expose snapshot failure, and have unit, `promtool`, and 8/11-target smoke coverage.
 - Retention, backup/restore, node hardening, secret rotation, load/chaos, SBOM, signing, and deployment artifacts each require executable tests or drill evidence before Stage 8 acceptance.
 - `make verify`, relevant Compose/VPN/observability smoke suites, security scans, configuration validation, and a final privacy/concurrency/operations review pass before Stage 8 is presented for acceptance.

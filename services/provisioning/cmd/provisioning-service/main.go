@@ -28,12 +28,14 @@ import (
 	platformkafka "github.com/ZheglY/vpn-platform/internal/platform/kafka"
 	"github.com/ZheglY/vpn-platform/internal/platform/logging"
 	"github.com/ZheglY/vpn-platform/internal/platform/observability"
+	platformpostgres "github.com/ZheglY/vpn-platform/internal/platform/postgres"
 	"github.com/ZheglY/vpn-platform/internal/platform/version"
 	accessclient "github.com/ZheglY/vpn-platform/services/provisioning/internal/access"
 	"github.com/ZheglY/vpn-platform/services/provisioning/internal/application"
 	"github.com/ZheglY/vpn-platform/services/provisioning/internal/domain"
 	"github.com/ZheglY/vpn-platform/services/provisioning/internal/httpapi"
 	provisioningkafka "github.com/ZheglY/vpn-platform/services/provisioning/internal/kafka"
+	provisioningmetrics "github.com/ZheglY/vpn-platform/services/provisioning/internal/metrics"
 	nodeagentclient "github.com/ZheglY/vpn-platform/services/provisioning/internal/nodeagent"
 	provisioningpostgres "github.com/ZheglY/vpn-platform/services/provisioning/internal/postgres"
 	subscriptionclient "github.com/ZheglY/vpn-platform/services/provisioning/internal/subscription"
@@ -79,11 +81,25 @@ func run(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = logger.Sync() }()
-	store, err := provisioningpostgres.Open(ctx, cfg.DatabaseURL)
+	registry := observability.NewRegistry()
+	store, err := provisioningpostgres.Open(ctx, cfg.DatabaseURL, platformpostgres.WithMetrics(registry, serviceName))
 	if err != nil {
 		return err
 	}
 	defer store.Close()
+	if err := observability.RegisterBacklogMetrics(registry, serviceName, store, provisioningpostgres.BacklogSeries()); err != nil {
+		return err
+	}
+	if err := observability.RegisterStateMetrics(registry, serviceName, store, provisioningpostgres.StateSeries()); err != nil {
+		return err
+	}
+	if err := store.RegisterProvisioningMetrics(registry, serviceName); err != nil {
+		return err
+	}
+	operationMetrics, err := provisioningmetrics.NewOperationMetrics(registry, serviceName)
+	if err != nil {
+		return err
+	}
 	internalHTTP, err := platformhttpclient.NewMutualTLSClient(cfg.ClientCertFile, cfg.ClientKeyFile, []string{cfg.ServerCAFile}, cfg.OutboundTimeout)
 	if err != nil {
 		return err
@@ -100,19 +116,27 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	kafkaMetrics, err := platformkafka.NewMetrics(registry, serviceName, []string{
+		"access.provision.request.v1", "access.revoke.request.v1",
+		"access.provision.request.v1.dlq", "access.revoke.request.v1.dlq",
+		"access.provision.succeeded.v1", "access.provision.failed.v1", "access.revoke.succeeded.v1", "access.revoke.failed.v1",
+	})
+	if err != nil {
+		return err
+	}
 	kafkaClient, err := platformkafka.NewClient(cfg.KafkaBrokers, serviceName,
 		kgo.ConsumerGroup(cfg.ConsumerGroup),
 		kgo.ConsumeTopics("access.provision.request.v1", "access.revoke.request.v1"),
-		kgo.DisableAutoCommit(), kgo.BlockRebalanceOnPoll(), kgo.RequiredAcks(kgo.AllISRAcks()),
+		kgo.DisableAutoCommit(), kgo.BlockRebalanceOnPoll(), kgo.RequiredAcks(kgo.AllISRAcks()), kgo.WithHooks(kafkaMetrics),
 	)
 	if err != nil {
 		return err
 	}
 	defer kafkaClient.Close()
 	service := application.NewService(store, cfg.MaxAttempts)
-	consumer := provisioningkafka.NewConsumer(kafkaClient, service, store, logger, cfg.WorkerRetryDelay)
-	operationWorker := application.NewOperationWorker(store, access, subscription, agents, logger, cfg.WorkerPollInterval, cfg.WorkerRetryDelay, cfg.WorkerLease)
-	outboxWorker := application.NewOutboxWorker(store, provisioningkafka.NewPublisher(kafkaClient), logger, cfg.WorkerPollInterval, cfg.WorkerRetryDelay, cfg.WorkerLease)
+	consumer := provisioningkafka.NewConsumer(kafkaClient, service, store, logger, cfg.WorkerRetryDelay, kafkaMetrics)
+	operationWorker := application.NewOperationWorker(store, access, subscription, agents, logger, cfg.WorkerPollInterval, cfg.WorkerRetryDelay, cfg.WorkerLease, operationMetrics)
+	outboxWorker := application.NewOutboxWorker(store, provisioningkafka.NewPublisher(kafkaClient), logger, cfg.WorkerPollInterval, cfg.WorkerRetryDelay, cfg.WorkerLease, kafkaMetrics)
 	healthWorker := application.NewHealthWorker(store, agents, logger, cfg.HealthInterval, cfg.HealthStaleAfter)
 	reconciliationWorker := application.NewReconciliationWorker(store, access, agents, logger, cfg.ReconciliationInterval, cfg.ReconciliationBatch)
 	go healthWorker.Run(ctx)
@@ -122,7 +146,6 @@ func run(ctx context.Context) error {
 	go outboxWorker.Run(ctx)
 
 	mux := http.NewServeMux()
-	registry := observability.NewRegistry()
 	httpMetrics := observability.NewHTTPMetrics(registry, serviceName)
 	api := httpapi.New(store)
 	adminAuth := httpauth.RequireService(httpauth.ServicePolicy{TrustDomain: cfg.TrustDomain, Namespace: cfg.Environment, Allowed: []string{"admin-service"}})

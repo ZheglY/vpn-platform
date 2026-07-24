@@ -101,6 +101,9 @@ Out of scope for v1:
 | A disappeared discovery target produces no `up == 0` series | Profile-specific static inventories and count/absence alerts encode 8 baseline or 11 VPN targets. Rule tests cover both scrape failure and full series absence. Intentional topology changes require a reviewed inventory update. |
 | Dashboard or alert leaks sensitive data | Provisioned queries use only aggregate series and bounded labels. The runbook forbids raw paths/payloads and production remote write is absent. A future writable production Grafana still requires RBAC and query review. |
 | Observability image ships vulnerable unused code | Prometheus and Grafana builds pin source/runtime integrity, verify modules, update the reviewed vulnerable gRPC dependency, and require zero HIGH/CRITICAL image scans. Grafana omits unused bundled Zipkin/Elasticsearch executables and includes only the Tempo protobuf DTO tree needed by its server graph. |
+| SQL or Kafka telemetry discloses business identifiers or payloads | Query metrics classify only the first SQL operation; Kafka topics are finite allowlists and keys, payloads, headers, partitions, offsets, IDs, and errors are never labels. Unknown enum values collapse or fail closed as specified by ADR 0028. |
+| Corrupt or unexpected database state creates attacker-controlled labels | Owner collectors accept only exact reviewed `kind/state` pairs, emit explicit zeros, use a one-second bound, and set snapshot health to zero without exporting unexpected values. |
+| Node telemetry identifies customers or VPN credentials | Node-agent exports only aggregate active-client count, revision, Xray health, and reload outcome/duration. Provisioning aggregates by bounded node status; node ID and credential material are absent. |
 
 ## High-Priority Threat Scenarios
 

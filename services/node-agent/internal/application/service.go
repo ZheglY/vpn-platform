@@ -24,9 +24,18 @@ type Service struct {
 	xray         domain.XrayManager
 	snapshot     domain.Snapshot
 	journal      domain.Journal
+	metrics      StatusObserver
 }
 
-func NewService(ctx context.Context, nodeID, agentVersion string, store domain.StateStore, manager domain.XrayManager) (*Service, error) {
+type StatusObserver interface {
+	UpdateStatus(domain.Status)
+}
+
+type noopStatusObserver struct{}
+
+func (noopStatusObserver) UpdateStatus(domain.Status) {}
+
+func NewService(ctx context.Context, nodeID, agentVersion string, store domain.StateStore, manager domain.XrayManager, observers ...StatusObserver) (*Service, error) {
 	if !uuidPattern.MatchString(nodeID) || agentVersion == "" {
 		return nil, fmt.Errorf("node identity and agent version are required")
 	}
@@ -40,7 +49,13 @@ func NewService(ctx context.Context, nodeID, agentVersion string, store domain.S
 	if err := manager.Start(ctx, snapshot); err != nil {
 		return nil, err
 	}
-	return &Service{nodeID: nodeID, agentVersion: agentVersion, store: store, xray: manager, snapshot: snapshot, journal: journal}, nil
+	observer := StatusObserver(noopStatusObserver{})
+	if len(observers) > 0 && observers[0] != nil {
+		observer = observers[0]
+	}
+	service := &Service{nodeID: nodeID, agentVersion: agentVersion, store: store, xray: manager, snapshot: snapshot, journal: journal, metrics: observer}
+	service.Status(ctx)
+	return service, nil
 }
 
 func (s *Service) Apply(ctx context.Context, desired domain.DesiredState) (domain.ApplyResult, error) {
@@ -114,7 +129,9 @@ func (s *Service) Status(ctx context.Context) domain.Status {
 	configRevision := s.snapshot.ConfigRevision
 	xrayHealthy := s.xray.Healthy()
 	s.mu.Unlock()
-	return domain.Status{NodeID: s.nodeID, ConfigRevision: configRevision, ActiveClients: active, XrayHealthy: xrayHealthy, AgentVersion: s.agentVersion, XrayVersion: s.xray.Version(ctx)}
+	status := domain.Status{NodeID: s.nodeID, ConfigRevision: configRevision, ActiveClients: active, XrayHealthy: xrayHealthy, AgentVersion: s.agentVersion, XrayVersion: s.xray.Version(ctx)}
+	s.metrics.UpdateStatus(status)
+	return status
 }
 
 func (s *Service) CredentialState(credentialID string) (domain.CredentialState, error) {

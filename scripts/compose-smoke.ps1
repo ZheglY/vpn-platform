@@ -113,6 +113,18 @@ function Invoke-ScalarSQL([string]$database, [string]$sql) {
     return "$value".Trim()
 }
 
+function Invoke-PrometheusScalar([string]$promQL) {
+    $query = [uri]::EscapeDataString($promQL)
+    $result = Invoke-RestMethod -Uri "http://127.0.0.1:9090/api/v1/query?query=$query" -TimeoutSec 10
+    if ($result.status -ne "success") {
+        throw "Prometheus query failed"
+    }
+    if (@($result.data.result).Count -eq 0) {
+        return 0
+    }
+    return [int][double]$result.data.result[0].value[1]
+}
+
 function Invoke-YooKassaWebhookStatus([string]$body) {
     $responsePath = Join-Path $env:TEMP "vpn-platform-yookassa-response.json"
     $requestPath = Join-Path $env:TEMP "vpn-platform-yookassa-request.json"
@@ -233,6 +245,25 @@ try {
         }
         if ($healthyTargets -ne $expectedTargets) {
             throw "Prometheus has $healthyTargets healthy VPN targets, expected $expectedTargets"
+        }
+        $expectedPools = if ($fullVPN) { 8 } else { 7 }
+        $expectedMessageSnapshots = if ($fullVPN) { 5 } else { 4 }
+        $expectedDomainSnapshots = if ($fullVPN) { 4 } else { 3 }
+        foreach ($attempt in 1..30) {
+            $poolCount = Invoke-PrometheusScalar 'count(vpn_platform_postgres_pool_connections{state="max"})'
+            $messageSnapshots = Invoke-PrometheusScalar 'sum(vpn_platform_message_snapshot_success == 1)'
+            $domainSnapshots = Invoke-PrometheusScalar 'sum(vpn_platform_domain_snapshot_success == 1)'
+            $billingSnapshots = Invoke-PrometheusScalar 'sum(vpn_billing_metrics_snapshot_success == 1)'
+            $subscriptionSnapshots = Invoke-PrometheusScalar 'sum(vpn_subscription_metrics_snapshot_success == 1)'
+            $provisioningSnapshots = if ($fullVPN) { Invoke-PrometheusScalar 'sum(vpn_provisioning_metrics_snapshot_success == 1)' } else { 0 }
+            $healthyXray = if ($fullVPN) { Invoke-PrometheusScalar 'sum(vpn_node_xray_healthy == 1)' } else { 0 }
+            if ($poolCount -eq $expectedPools -and $messageSnapshots -eq $expectedMessageSnapshots -and $domainSnapshots -eq $expectedDomainSnapshots -and $billingSnapshots -eq 1 -and $subscriptionSnapshots -eq 1 -and (!$fullVPN -or ($provisioningSnapshots -eq 1 -and $healthyXray -eq 2))) {
+                break
+            }
+            Start-Sleep -Seconds 2
+        }
+        if ($poolCount -ne $expectedPools -or $messageSnapshots -ne $expectedMessageSnapshots -or $domainSnapshots -ne $expectedDomainSnapshots -or $billingSnapshots -ne 1 -or $subscriptionSnapshots -ne 1 -or ($fullVPN -and ($provisioningSnapshots -ne 1 -or $healthyXray -ne 2))) {
+            throw "Operational metrics incomplete: pools=$poolCount/$expectedPools message_snapshots=$messageSnapshots/$expectedMessageSnapshots domain_snapshots=$domainSnapshots/$expectedDomainSnapshots billing=$billingSnapshots subscription=$subscriptionSnapshots provisioning=$provisioningSnapshots xray=$healthyXray"
         }
         $grafanaHealth = Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/health" -TimeoutSec 10
         if ($grafanaHealth.database -ne "ok") {
@@ -734,6 +765,15 @@ try {
         Invoke-MTLSProbe @("GET", "https://127.0.0.1:8087/internal/v1/credentials/$accessCredentialID/provisioning-material", "secrets/dev-mtls/identity-health.crt", "secrets/dev-mtls/identity-health.key", "secrets/dev-mtls/ca.crt", "403") | Out-Null
         $materialAuditCount = Invoke-ScalarSQL "access_service" "SELECT count(*) FROM security_audit_events WHERE credential_id='$accessCredentialID' AND actor_service='provisioning-service' AND action='credential_material.read' AND outcome='succeeded'"
         if ($materialAuditCount -ne "1") { throw "provisioning material read was not audited exactly once" }
+    }
+    if ($observability) {
+        $series = Invoke-RestMethod -Uri 'http://127.0.0.1:9090/api/v1/series?match%5B%5D=%7B__name__%3D~%22vpn_.%2A%22%7D' -TimeoutSec 10
+        $seriesJSON = $series | ConvertTo-Json -Compress -Depth 10
+        foreach ($forbiddenMetricValue in @($subscriptionUserID, $subscriptionID, $accessCredentialID, $issuedToken, $vpnCredentialUUID)) {
+            if (![string]::IsNullOrWhiteSpace($forbiddenMetricValue) -and $seriesJSON.Contains($forbiddenMetricValue)) {
+                throw "Prometheus series metadata leaked a runtime identifier or VPN secret"
+            }
+        }
     }
 } finally {
     $cleanupPreference = $ErrorActionPreference

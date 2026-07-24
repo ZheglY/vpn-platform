@@ -52,10 +52,11 @@ type Consumer struct {
 	logger     *zap.Logger
 	retryDelay time.Duration
 	deferred   map[topicPartition]*kgo.Record
+	metrics    platformkafka.Observer
 }
 
-func NewConsumer(client consumerClient, processor Processor, store Store, logger *zap.Logger, retryDelay time.Duration) *Consumer {
-	return &Consumer{client: client, processor: processor, store: store, logger: logger, retryDelay: retryDelay, deferred: make(map[topicPartition]*kgo.Record)}
+func NewConsumer(client consumerClient, processor Processor, store Store, logger *zap.Logger, retryDelay time.Duration, observers ...platformkafka.Observer) *Consumer {
+	return &Consumer{client: client, processor: processor, store: store, logger: logger, retryDelay: retryDelay, deferred: make(map[topicPartition]*kgo.Record), metrics: platformkafka.ObserverOrNoop(observers...)}
 }
 
 func (c *Consumer) Run(ctx context.Context) {
@@ -81,29 +82,42 @@ func (c *Consumer) pollOnce(ctx context.Context) bool {
 			c.rewind(fetches.Records()[index:])
 			return false
 		}
+		startedAt := time.Now()
+		outcome := "success"
 		err := c.process(ctx, record)
 		if errors.Is(err, domain.ErrSequenceGap) {
+			c.metrics.ObserveHandler(record.Topic, "deferred", startedAt, record.Timestamp)
+			c.metrics.ObserveRetry(record.Topic, "consumer")
 			c.deferGap(record)
 			continue
 		}
 		if err != nil {
 			code, poison := application.ContractErrorCode(err)
 			if !poison {
+				c.metrics.ObserveHandler(record.Topic, "retry", startedAt, record.Timestamp)
+				c.metrics.ObserveRetry(record.Topic, "consumer")
 				c.rewind(fetches.Records()[index:])
 				c.wait(ctx)
 				return ctx.Err() == nil
 			}
 			if err := c.deadLetter(ctx, record, code); err != nil {
+				c.metrics.ObserveHandler(record.Topic, "retry", startedAt, record.Timestamp)
+				c.metrics.ObserveRetry(record.Topic, "consumer")
 				c.rewind(fetches.Records()[index:])
 				c.wait(ctx)
 				return ctx.Err() == nil
 			}
+			c.metrics.ObserveDLQ(record.Topic)
+			outcome = "dead_letter"
 		}
 		if !c.commit(ctx, record) {
+			c.metrics.ObserveHandler(record.Topic, "commit_error", startedAt, record.Timestamp)
+			c.metrics.ObserveRetry(record.Topic, "commit")
 			c.rewind(fetches.Records()[index:])
 			c.wait(ctx)
 			return ctx.Err() == nil
 		}
+		c.metrics.ObserveHandler(record.Topic, outcome, startedAt, record.Timestamp)
 		c.retryDeferred(ctx)
 	}
 	if len(fetches.Records()) == 0 {
@@ -217,19 +231,35 @@ func (c *Consumer) deferGap(record *kgo.Record) {
 
 func (c *Consumer) retryDeferred(ctx context.Context) {
 	for key, record := range c.deferred {
+		startedAt := time.Now()
+		outcome := "success"
 		err := c.process(ctx, record)
 		if errors.Is(err, domain.ErrSequenceGap) {
+			c.metrics.ObserveHandler(record.Topic, "deferred", startedAt, record.Timestamp)
+			c.metrics.ObserveRetry(record.Topic, "consumer")
 			continue
 		}
 		if err != nil {
 			code, poison := application.ContractErrorCode(err)
-			if !poison || c.deadLetter(ctx, record, code) != nil {
+			if !poison {
+				c.metrics.ObserveHandler(record.Topic, "retry", startedAt, record.Timestamp)
+				c.metrics.ObserveRetry(record.Topic, "consumer")
 				continue
 			}
+			if c.deadLetter(ctx, record, code) != nil {
+				c.metrics.ObserveHandler(record.Topic, "retry", startedAt, record.Timestamp)
+				c.metrics.ObserveRetry(record.Topic, "consumer")
+				continue
+			}
+			c.metrics.ObserveDLQ(record.Topic)
+			outcome = "dead_letter"
 		}
 		if !c.commit(ctx, record) {
+			c.metrics.ObserveHandler(record.Topic, "commit_error", startedAt, record.Timestamp)
+			c.metrics.ObserveRetry(record.Topic, "commit")
 			continue
 		}
+		c.metrics.ObserveHandler(record.Topic, outcome, startedAt, record.Timestamp)
 		delete(c.deferred, key)
 		c.client.ResumeFetchPartitions(map[string][]int32{record.Topic: {record.Partition}})
 	}

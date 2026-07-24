@@ -29,9 +29,18 @@ type Manager struct {
 	config  ManagerConfig
 	command *exec.Cmd
 	done    chan struct{}
+	metrics Observer
 }
 
-func NewManager(config ManagerConfig) (*Manager, error) {
+type Observer interface {
+	ObserveReload(outcome string, duration time.Duration)
+}
+
+type noopObserver struct{}
+
+func (noopObserver) ObserveReload(string, time.Duration) {}
+
+func NewManager(config ManagerConfig, observers ...Observer) (*Manager, error) {
 	if config.BinaryPath == "" || config.ConfigDirectory == "" || config.ValidateTimeout <= 0 || config.ReloadTimeout <= 0 || config.StartupGrace <= 0 {
 		return nil, fmt.Errorf("xray manager configuration is invalid")
 	}
@@ -41,7 +50,11 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 	if err := os.Chmod(config.ConfigDirectory, 0o700); err != nil {
 		return nil, fmt.Errorf("protect Xray configuration directory: %w", err)
 	}
-	return &Manager{config: config}, nil
+	observer := Observer(noopObserver{})
+	if len(observers) > 0 && observers[0] != nil {
+		observer = observers[0]
+	}
+	return &Manager{config: config, metrics: observer}, nil
 }
 
 func (m *Manager) Start(ctx context.Context, snapshot domain.Snapshot) error {
@@ -70,49 +83,60 @@ func (m *Manager) Start(ctx context.Context, snapshot domain.Snapshot) error {
 }
 
 func (m *Manager) Apply(ctx context.Context, snapshot domain.Snapshot) error {
+	startedAt := time.Now()
+	outcome, err := m.apply(ctx, snapshot)
+	m.metrics.ObserveReload(outcome, time.Since(startedAt))
+	return err
+}
+
+func (m *Manager) apply(ctx context.Context, snapshot domain.Snapshot) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	candidate, err := m.writeCandidate(snapshot)
 	if err != nil {
-		return err
+		return "error", err
 	}
 	defer func() { _ = os.Remove(candidate) }()
 	if err := m.validate(ctx, candidate); err != nil {
-		return err
+		return "validation_error", err
 	}
 	consistencyBound := 2*m.config.ReloadTimeout + 2*m.config.StartupGrace
 	consistencyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), consistencyBound)
 	defer cancel()
 	if err := m.stopLocked(consistencyCtx); err != nil {
 		if m.restoreCurrentLocked() {
-			return fmt.Errorf("stop Xray before reload; last-known-good restored")
+			return "rollback_restored", fmt.Errorf("stop Xray before reload; last-known-good restored")
 		}
-		return fmt.Errorf("stop Xray before reload and restore last-known-good")
+		return "rollback_failed", fmt.Errorf("stop Xray before reload and restore last-known-good")
 	}
 	current, backup := m.currentPath(), m.backupPath()
 	_ = os.Remove(backup)
 	if err := os.Rename(current, backup); err != nil {
-		_ = m.restoreCurrentLocked()
-		return fmt.Errorf("preserve last-known-good Xray configuration: %w", err)
+		if m.restoreCurrentLocked() {
+			return "rollback_restored", fmt.Errorf("preserve last-known-good Xray configuration: %w", err)
+		}
+		return "rollback_failed", fmt.Errorf("preserve or restore last-known-good Xray configuration: %w", err)
 	}
 	if err := os.Rename(candidate, current); err != nil {
 		_ = os.Rename(backup, current)
-		_ = m.restoreCurrentLocked()
-		return fmt.Errorf("install Xray candidate: %w", err)
+		if m.restoreCurrentLocked() {
+			return "rollback_restored", fmt.Errorf("install Xray candidate: %w", err)
+		}
+		return "rollback_failed", fmt.Errorf("install Xray candidate and restore last-known-good: %w", err)
 	}
 	if err := m.startLocked(); err == nil && m.waitHealthyLocked(m.config.StartupGrace) {
 		_ = os.Remove(backup)
-		return nil
+		return "success", nil
 	}
 	_ = m.stopLocked(consistencyCtx)
 	_ = os.Remove(current)
 	if err := os.Rename(backup, current); err != nil {
-		return fmt.Errorf("xray reload and rollback failed")
+		return "rollback_failed", fmt.Errorf("xray reload and rollback failed")
 	}
 	if !m.restoreCurrentLocked() {
-		return fmt.Errorf("xray reload and rollback failed")
+		return "rollback_failed", fmt.Errorf("xray reload and rollback failed")
 	}
-	return fmt.Errorf("xray reload failed; last-known-good restored")
+	return "rollback_restored", fmt.Errorf("xray reload failed; last-known-good restored")
 }
 
 func (m *Manager) restoreCurrentLocked() bool {

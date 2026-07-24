@@ -23,6 +23,7 @@ import (
 	platformkafka "github.com/ZheglY/vpn-platform/internal/platform/kafka"
 	"github.com/ZheglY/vpn-platform/internal/platform/logging"
 	"github.com/ZheglY/vpn-platform/internal/platform/observability"
+	platformpostgres "github.com/ZheglY/vpn-platform/internal/platform/postgres"
 	"github.com/ZheglY/vpn-platform/internal/platform/version"
 	"github.com/ZheglY/vpn-platform/services/billing/internal/application"
 	catalogclient "github.com/ZheglY/vpn-platform/services/billing/internal/catalog"
@@ -61,11 +62,21 @@ func run(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = logger.Sync() }()
-	store, err := billingpostgres.Open(ctx, cfg.DatabaseURL)
+	registry := observability.NewRegistry()
+	store, err := billingpostgres.Open(ctx, cfg.DatabaseURL, platformpostgres.WithMetrics(registry, serviceName))
 	if err != nil {
 		return err
 	}
 	defer store.Close()
+	if err := observability.RegisterBacklogMetrics(registry, serviceName, store, billingpostgres.BacklogSeries()); err != nil {
+		return err
+	}
+	if err := observability.RegisterStateMetrics(registry, serviceName, store, billingpostgres.StateSeries()); err != nil {
+		return err
+	}
+	if err := store.RegisterBillingMetrics(registry, serviceName); err != nil {
+		return err
+	}
 	internalHTTP := &http.Client{Timeout: cfg.OutboundTimeout}
 	if cfg.InternalAuth == "mtls" {
 		internalHTTP, err = platformhttpclient.NewMutualTLSClient(cfg.ClientCertFile, cfg.ClientKeyFile, []string{cfg.ServerCAFile}, cfg.OutboundTimeout)
@@ -86,13 +97,19 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	kafkaClient, err := platformkafka.NewClient(cfg.KafkaBrokers, serviceName, kgo.RequiredAcks(kgo.AllISRAcks()))
+	kafkaMetrics, err := platformkafka.NewMetrics(registry, serviceName, []string{
+		"billing.payment.succeeded.v1", "billing.payment.canceled.v1", "billing.refund.succeeded.v1",
+	})
+	if err != nil {
+		return err
+	}
+	kafkaClient, err := platformkafka.NewClient(cfg.KafkaBrokers, serviceName, kgo.RequiredAcks(kgo.AllISRAcks()), kgo.WithHooks(kafkaMetrics))
 	if err != nil {
 		return err
 	}
 	defer kafkaClient.Close()
 	service := application.NewService(store, identity, catalog, provider, cfg.YooKassaShopID, cfg.ProviderCreateWindow, cfg.WorkerRetryDelay)
-	worker := application.NewWorker(service, store, billingkafka.NewPublisher(kafkaClient), logger, cfg.WorkerPollInterval, cfg.WorkerLease)
+	worker := application.NewWorker(service, store, billingkafka.NewPublisher(kafkaClient), logger, cfg.WorkerPollInterval, cfg.WorkerLease, kafkaMetrics)
 	go worker.Run(ctx)
 	api := httpapi.New(service, store)
 	commerceAuth := func(next http.Handler) http.Handler { return next }
@@ -102,7 +119,6 @@ func run(ctx context.Context) error {
 		readAuth = httpauth.RequireService(httpauth.ServicePolicy{TrustDomain: cfg.MTLSTrustDomain, Namespace: cfg.MTLSNamespace, Allowed: []string{"telegram-bot", "subscription-service", "admin-service"}})
 	}
 	mux := http.NewServeMux()
-	registry := observability.NewRegistry()
 	httpMetrics := observability.NewHTTPMetrics(registry, serviceName)
 	mux.Handle("GET /livez", httpserver.LivenessHandler(serviceName))
 	mux.Handle("GET /readyz", httpserver.ReadinessHandler(serviceName, map[string]httpserver.Check{"postgres": store.Ping, "identity": identity.Ping, "catalog": catalog.Ping, "kafka": kafkaClient.Ping}))

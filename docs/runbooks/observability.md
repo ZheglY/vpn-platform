@@ -2,7 +2,7 @@
 
 ## Scope
 
-This runbook covers the Stage 8 HTTP RED baseline and the local Prometheus/Grafana profile. It does not authorize production deployment or define a production alert receiver.
+This runbook covers the Stage 8 HTTP and bounded operational metrics plus the local Prometheus/Grafana profile. It does not authorize production deployment or define a production alert receiver.
 
 Never paste raw request paths, query strings, subscription URLs, VLESS UUIDs, Telegram payloads, provider payloads, destination IPs, DNS history, or packet data into a dashboard, alert, ticket, or diagnostic command.
 
@@ -59,6 +59,8 @@ route="GET /s/{token}"
 
 Raw path values must never appear. Investigate any unexpected label before sharing or retaining data. Stop Prometheus, restrict access to its storage volume, and treat a leaked subscription token or VPN credential as a security incident using the access-delivery runbook.
 
+Operational labels are limited to reviewed SQL operation/outcome, allowlisted Kafka topic/direction/outcome/stage, durable `kind/state`, domain `kind/state`, node `status/type`, and Xray reload outcome. Never add a query, table, DSN, message key/header/payload, partition/offset, user/payment/subscription/credential/event/correlation/node ID, error text, or URL to a query, dashboard, or alert.
+
 ## Target down
 
 Alert: `VPNControlPlaneTargetDown`.
@@ -101,16 +103,72 @@ Alert: `VPNHTTPServerP95LatencyHigh`.
 4. Capture only aggregate timings and bounded error categories.
 5. Use a load test in a non-production environment before changing timeouts or capacity.
 
+## PostgreSQL pool saturation
+
+Alert: `VPNPostgresPoolSaturated`.
+
+1. Confirm sustained utilization by `service`; a short spike during startup is not saturation.
+2. Compare query-class latency and pool empty-wait/canceled-acquire counters. SQL text and arguments are intentionally unavailable in metrics.
+3. Check the owning service health, PostgreSQL resource pressure, lock waits, and recent migrations using support-safe database tooling.
+4. Prefer fixing slow transactions, leaked rows/connections, or a failed dependency before raising pool size. Validate any pool change under non-production load.
+5. Escalate repeated saturation with aggregate timings and bounded operation classes only.
+
+## Kafka and durable backlog
+
+Alerts: `VPNKafkaConsumerLagHigh` and `VPNDurableBacklogStuck`.
+
+1. Identify the owner, allowlisted topic or durable `kind/state`, and when delay began. The Kafka gauge is observed handled-record age, not broker offset lag; its alert requires a recent processing observation.
+2. Compare consume outcomes, retry stage, DLQ count, oldest durable age, and owner snapshot health.
+3. Check Kafka availability, consumer readiness, PostgreSQL transactions, and outbox leases. Do not inspect or paste message keys/payloads unless following an approved incident procedure.
+4. Use the owning service replay command/runbook only for a durable dead letter. Never edit an inbox/outbox row by hand.
+5. If work is legitimately quiet, do not infer broker offset health from record age; use broker administration tooling without adding partition or offset labels to application metrics.
+
+## Metrics snapshot failure
+
+Alert: `VPNOperationalSnapshotFailed`.
+
+1. Check whether only message/domain state or the owner-specific snapshot failed.
+2. Verify the owning database is reachable and the one-second collector query is not blocked.
+3. Compare the deployed migration version with the service binary. An unexpected state intentionally fails the snapshot closed and requires code/schema review.
+4. Do not broaden an allowlist merely to silence the alert. Confirm the state is legitimate and add behavior, tests, dashboard, ADR, and runbook changes together.
+
+## Owner scheduler lag
+
+Alerts: `VPNBillingReconciliationLagHigh` and `VPNSubscriptionSchedulerLagHigh`.
+
+1. Confirm both due count and lag; zero due work suppresses the alert.
+2. For Billing, check provider reachability, reconciliation leases, and safe provider error classes. Never expose provider IDs or payloads.
+3. For Subscription, check lifecycle worker readiness, PostgreSQL time, inbox ordering, and outbox backlog.
+4. Follow the Billing or Subscription owner runbook before replaying work. Do not mutate payment or entitlement state directly.
+
+## Node capacity and health
+
+Alerts: `VPNNodeCapacityHigh` and `VPNNodeHeartbeatStale`.
+
+1. Confirm the `vpn` profile or approved production node inventory is active and inspect aggregate capacity by bounded node status.
+2. Correlate heartbeat age, node target `up`, Xray health, allocation state, and provisioning backlog.
+3. Do not add node IDs, management URLs, credential IDs, or client UUIDs to metrics. Use the authenticated support API/runbook for a specific node investigation.
+4. Drain a node before maintenance. Capacity changes require a placement/load review; an offline node must not be made active solely to clear an alert.
+
+## Xray reload failure
+
+Alerts: `VPNXrayUnhealthy` and `VPNXrayReloadFailed`.
+
+1. Distinguish validation failure, restored rollback, failed rollback, and current unhealthy state.
+2. Preserve support-safe node-agent logs and local revision metadata. Never print the rendered Xray config, VLESS UUID, or REALITY private key.
+3. A restored rollback keeps the last-known-good config but still requires investigation. A failed rollback or unhealthy Xray is critical and the node must stop receiving new allocations.
+4. Use the provisioning runbook to drain/reconcile. Do not bypass Xray validation or manually inject clients.
+
 ## Configuration recovery
 
-Run `make observability-validate` before restart. It stages and reads the Prometheus key as UID 65532, validates both the 8-target and 11-target configurations, and executes the target-down/target-absence rule tests. Prometheus refuses invalid configuration. Grafana dashboards and data sources are provisioned from read-only repository files; UI edits are intentionally disabled.
+Run `make observability-validate` before restart. It stages and reads the Prometheus key as UID 65532, validates both the 8-target and 11-target configurations, and executes target, HTTP, PostgreSQL, durable-workflow, scheduler, and node rule tests. Prometheus refuses invalid configuration. Grafana dashboards and data sources are provisioned from read-only repository files; UI edits are intentionally disabled.
 
 If local data is corrupted, stop the profile and remove only the named `vpn-service_prometheus-data` or `vpn-service_grafana-data` development volume after confirming no investigation needs it. Production data deletion requires the approved retention and incident process.
 
 ## Current gaps
 
 - No production Alertmanager receiver or escalation ownership.
-- No Kafka, outbox/inbox, PostgreSQL pool, billing, subscription, provisioning, node capacity, or Xray reload metrics yet.
+- No broker offset-lag exporter or Kafka broker dashboard yet; application lag is observed record age.
 - No OpenTelemetry collector, Tempo, or Loki profile components yet.
 - No SLO burn-rate rules yet.
 - No production backup of observability state; dashboards remain reproducible from Git.

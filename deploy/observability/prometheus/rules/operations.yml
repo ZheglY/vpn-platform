@@ -1,0 +1,135 @@
+groups:
+  - name: vpn-platform-operations
+    interval: 30s
+    rules:
+      - alert: VPNPostgresPoolSaturated
+        expr: |
+          sum by (service) (vpn_platform_postgres_pool_connections{state="acquired"})
+          /
+          clamp_min(sum by (service) (vpn_platform_postgres_pool_connections{state="max"}), 1)
+          > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL pool is saturated for {{ $labels.service }}"
+          description: "More than 90% of the owning service pool has been acquired for ten minutes."
+          runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#postgresql-pool-saturation"
+
+      - alert: VPNKafkaConsumerLagHigh
+        expr: |
+          vpn_platform_kafka_consumer_lag_seconds > 120
+          and on(service, topic)
+          time() - vpn_platform_kafka_consumer_last_observed_timestamp_seconds < 900
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka processing lag is high for {{ $labels.service }}"
+          description: "The newest handled record on an allowlisted topic is more than two minutes old."
+          runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#kafka-and-durable-backlog"
+
+      - alert: VPNDurableBacklogStuck
+        expr: |
+          vpn_platform_message_oldest_age_seconds{state=~"pending|processing|retry|replay_requested"} > 300
+          and on(service, kind, state)
+          vpn_platform_message_backlog > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Durable workflow backlog is stuck for {{ $labels.service }}"
+          description: "The oldest {{ $labels.kind }}/{{ $labels.state }} item has exceeded five minutes."
+          runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#kafka-and-durable-backlog"
+
+      - alert: VPNDeadLetterPresent
+        expr: |
+          vpn_platform_message_backlog{kind="dlq",state=~"available|replay_requested"} > 0
+          or vpn_platform_message_backlog{kind="inbox",state="dead"} > 0
+          or vpn_platform_message_backlog{kind="notification",state="permanently_failed"} > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Durable dead letter requires attention for {{ $labels.service }}"
+          description: "The owning service has non-retriable or replay-pending work."
+          runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#kafka-and-durable-backlog"
+
+      - alert: VPNOperationalSnapshotFailed
+        expr: |
+          vpn_platform_message_snapshot_success == 0
+          or vpn_platform_domain_snapshot_success == 0
+          or vpn_billing_metrics_snapshot_success == 0
+          or vpn_subscription_metrics_snapshot_success == 0
+          or vpn_provisioning_metrics_snapshot_success == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Operational metrics snapshot failed for {{ $labels.service }}"
+          description: "An owner-local bounded metrics query has failed for five minutes."
+          runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#metrics-snapshot-failure"
+
+      - alert: VPNBillingReconciliationLagHigh
+        expr: vpn_billing_reconciliation_due > 0 and vpn_billing_reconciliation_lag_seconds > 300
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Billing reconciliation is delayed"
+          description: "At least one payment reconciliation has been due for more than five minutes."
+          runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#owner-scheduler-lag"
+
+      - alert: VPNSubscriptionSchedulerLagHigh
+        expr: vpn_subscription_scheduler_due > 0 and vpn_subscription_scheduler_lag_seconds > 120
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Subscription lifecycle scheduler is delayed"
+          description: "At least one lifecycle transition has been due for more than two minutes."
+          runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#owner-scheduler-lag"
+
+  - name: vpn-node-operations
+    interval: 30s
+    rules:
+      - alert: VPNNodeCapacityHigh
+        expr: vpn_provisioning_node_capacity_utilization_ratio{status="active"} > 0.85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Active VPN node capacity is high"
+          description: "At least one active node has exceeded 85% of its configured client limit."
+          runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#node-capacity-and-health"
+
+      - alert: VPNNodeHeartbeatStale
+        expr: vpn_provisioning_node_heartbeat_age_seconds{status="active"} > 60
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "VPN node heartbeat is stale"
+          description: "The oldest active-node heartbeat has been stale for more than one minute."
+          runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#node-capacity-and-health"
+
+      - alert: VPNXrayUnhealthy
+        expr: vpn_node_xray_healthy == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Xray is unhealthy on {{ $labels.instance }}"
+          description: "The node-agent supervisor reports that its Xray process is not healthy."
+          runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#xray-reload-failure"
+
+      - alert: VPNXrayReloadFailed
+        expr: |
+          vpn_node_xray_last_reload_failure_timestamp_seconds > 0
+          and time() - vpn_node_xray_last_reload_failure_timestamp_seconds < 600
+        labels:
+          severity: warning
+        annotations:
+          summary: "Xray reload failed on {{ $labels.instance }}"
+          description: "A reload failed validation or required rollback during the last ten minutes."
+          runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#xray-reload-failure"

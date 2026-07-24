@@ -20,6 +20,7 @@ import (
 	"github.com/ZheglY/vpn-platform/internal/platform/httpserver"
 	"github.com/ZheglY/vpn-platform/internal/platform/logging"
 	"github.com/ZheglY/vpn-platform/internal/platform/observability"
+	platformpostgres "github.com/ZheglY/vpn-platform/internal/platform/postgres"
 	"github.com/ZheglY/vpn-platform/internal/platform/version"
 	"github.com/ZheglY/vpn-platform/services/admin/internal/application"
 	"github.com/ZheglY/vpn-platform/services/admin/internal/httpapi"
@@ -55,7 +56,8 @@ func run(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = logger.Sync() }()
-	store, err := adminpostgres.Open(ctx, cfg.DatabaseURL)
+	registry := observability.NewRegistry()
+	store, err := adminpostgres.Open(ctx, cfg.DatabaseURL, platformpostgres.WithMetrics(registry, serviceName))
 	if err != nil {
 		return err
 	}
@@ -71,7 +73,6 @@ func run(ctx context.Context) error {
 	service := application.New(store)
 	api := httpapi.New(service, owners, cfg.TrustDomain, cfg.Environment)
 	mux := http.NewServeMux()
-	registry := observability.NewRegistry()
 	httpMetrics := observability.NewHTTPMetrics(registry, serviceName)
 	mux.Handle("GET /livez", httpserver.LivenessHandler(serviceName))
 	mux.Handle("GET /readyz", httpserver.ReadinessHandler(serviceName, map[string]httpserver.Check{"postgres": store.Ping}))

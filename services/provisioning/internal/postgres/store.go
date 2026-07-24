@@ -14,19 +14,16 @@ import (
 
 	"github.com/ZheglY/vpn-platform/internal/platform/cryptoutil"
 	platformkafka "github.com/ZheglY/vpn-platform/internal/platform/kafka"
+	platformpostgres "github.com/ZheglY/vpn-platform/internal/platform/postgres"
 	"github.com/ZheglY/vpn-platform/services/provisioning/internal/domain"
 )
 
 type Store struct{ pool *pgxpool.Pool }
 
-func Open(ctx context.Context, databaseURL string) (*Store, error) {
-	pool, err := pgxpool.New(ctx, databaseURL)
+func Open(ctx context.Context, databaseURL string, options ...platformpostgres.Option) (*Store, error) {
+	pool, err := platformpostgres.OpenPool(ctx, databaseURL, options...)
 	if err != nil {
-		return nil, fmt.Errorf("create provisioning database pool: %w", err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("ping provisioning database: %w", err)
+		return nil, err
 	}
 	return &Store{pool: pool}, nil
 }

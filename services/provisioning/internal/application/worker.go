@@ -11,6 +11,7 @@ import (
 
 	"go.uber.org/zap"
 
+	platformkafka "github.com/ZheglY/vpn-platform/internal/platform/kafka"
 	"github.com/ZheglY/vpn-platform/services/provisioning/internal/domain"
 )
 
@@ -23,10 +24,23 @@ type OperationWorker struct {
 	pollInterval time.Duration
 	retryDelay   time.Duration
 	lease        time.Duration
+	metrics      OperationObserver
 }
 
-func NewOperationWorker(store domain.Store, access domain.AccessClient, subscription domain.SubscriptionClient, agents domain.AgentClient, logger *zap.Logger, pollInterval, retryDelay, lease time.Duration) *OperationWorker {
-	return &OperationWorker{store: store, access: access, subscription: subscription, agents: agents, logger: logger, pollInterval: pollInterval, retryDelay: retryDelay, lease: lease}
+type OperationObserver interface {
+	ObserveOperation(kind string, duration time.Duration)
+}
+
+type noopOperationObserver struct{}
+
+func (noopOperationObserver) ObserveOperation(string, time.Duration) {}
+
+func NewOperationWorker(store domain.Store, access domain.AccessClient, subscription domain.SubscriptionClient, agents domain.AgentClient, logger *zap.Logger, pollInterval, retryDelay, lease time.Duration, observers ...OperationObserver) *OperationWorker {
+	observer := OperationObserver(noopOperationObserver{})
+	if len(observers) > 0 && observers[0] != nil {
+		observer = observers[0]
+	}
+	return &OperationWorker{store: store, access: access, subscription: subscription, agents: agents, logger: logger, pollInterval: pollInterval, retryDelay: retryDelay, lease: lease, metrics: observer}
 }
 
 func (w *OperationWorker) Run(ctx context.Context) {
@@ -49,6 +63,10 @@ func (w *OperationWorker) workOnce(ctx context.Context) error {
 	if err != nil || !ok {
 		return err
 	}
+	startedAt := time.Now()
+	defer func() {
+		w.metrics.ObserveOperation(operation.Kind, time.Since(startedAt))
+	}()
 	if operation.Kind == "provision" {
 		return w.provision(ctx, operation)
 	}
@@ -311,10 +329,11 @@ type OutboxWorker struct {
 	pollInterval time.Duration
 	retryDelay   time.Duration
 	lease        time.Duration
+	metrics      platformkafka.Observer
 }
 
-func NewOutboxWorker(store domain.Store, publisher Publisher, logger *zap.Logger, pollInterval, retryDelay, lease time.Duration) *OutboxWorker {
-	return &OutboxWorker{store: store, publisher: publisher, logger: logger, pollInterval: pollInterval, retryDelay: retryDelay, lease: lease}
+func NewOutboxWorker(store domain.Store, publisher Publisher, logger *zap.Logger, pollInterval, retryDelay, lease time.Duration, observers ...platformkafka.Observer) *OutboxWorker {
+	return &OutboxWorker{store: store, publisher: publisher, logger: logger, pollInterval: pollInterval, retryDelay: retryDelay, lease: lease, metrics: platformkafka.ObserverOrNoop(observers...)}
 }
 
 func (w *OutboxWorker) Run(ctx context.Context) {
@@ -339,9 +358,13 @@ func (w *OutboxWorker) workOnce(ctx context.Context) error {
 	}
 	publishCtx, cancel := context.WithTimeout(ctx, w.lease/2)
 	defer cancel()
+	startedAt := time.Now()
 	if err := w.publisher.Publish(publishCtx, message.Topic, message.PartitionKey, message.Payload); err != nil {
+		w.metrics.ObserveOutbox(message.Topic, "retry", startedAt)
+		w.metrics.ObserveRetry(message.Topic, "outbox")
 		return w.store.RetryOutbox(ctx, message.EventID, retryBackoff(w.retryDelay, message.Attempts, message.EventID))
 	}
+	w.metrics.ObserveOutbox(message.Topic, "success", startedAt)
 	return w.store.CompleteOutbox(ctx, message.EventID)
 }
 

@@ -7,6 +7,7 @@ import (
 
 	"go.uber.org/zap"
 
+	platformkafka "github.com/ZheglY/vpn-platform/internal/platform/kafka"
 	"github.com/ZheglY/vpn-platform/services/subscription/internal/domain"
 )
 
@@ -21,10 +22,11 @@ type Worker struct {
 	pollInterval time.Duration
 	retryDelay   time.Duration
 	lease        time.Duration
+	metrics      platformkafka.Observer
 }
 
-func NewWorker(store domain.Store, publisher Publisher, logger *zap.Logger, pollInterval, retryDelay, lease time.Duration) *Worker {
-	return &Worker{store: store, publisher: publisher, logger: logger, pollInterval: pollInterval, retryDelay: retryDelay, lease: lease}
+func NewWorker(store domain.Store, publisher Publisher, logger *zap.Logger, pollInterval, retryDelay, lease time.Duration, observers ...platformkafka.Observer) *Worker {
+	return &Worker{store: store, publisher: publisher, logger: logger, pollInterval: pollInterval, retryDelay: retryDelay, lease: lease, metrics: platformkafka.ObserverOrNoop(observers...)}
 }
 
 func (w *Worker) Run(ctx context.Context) {
@@ -76,9 +78,13 @@ func (w *Worker) publishOutbox(ctx context.Context) error {
 	}
 	publishCtx, cancel := context.WithTimeout(ctx, w.lease/2)
 	defer cancel()
+	startedAt := time.Now()
 	if err := w.publisher.Publish(publishCtx, message.Topic, message.PartitionKey, message.Payload); err != nil {
+		w.metrics.ObserveOutbox(message.Topic, "retry", startedAt)
+		w.metrics.ObserveRetry(message.Topic, "outbox")
 		return w.store.RetryOutbox(ctx, message.EventID, RetryBackoff(w.retryDelay, message.Attempts, message.EventID))
 	}
+	w.metrics.ObserveOutbox(message.Topic, "success", startedAt)
 	return w.store.CompleteOutbox(ctx, message.EventID)
 }
 

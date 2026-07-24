@@ -50,5 +50,5 @@ docker run --rm --entrypoint /bin/promtool \
   "$prometheus_image" check config /etc/prometheus/prometheus-vpn.yml
 docker run --rm --entrypoint /bin/promtool \
   -v "${repo}/deploy/observability/prometheus:/etc/prometheus:ro" \
-  "$prometheus_image" test rules /etc/prometheus/tests/platform.test.yml /etc/prometheus/tests/vpn-targets.test.yml
+  "$prometheus_image" test rules /etc/prometheus/tests/platform.test.yml /etc/prometheus/tests/operations.test.yml /etc/prometheus/tests/vpn-targets.test.yml
 node -e "JSON.parse(require('fs').readFileSync('deploy/observability/grafana/dashboards/platform-overview.json','utf8'))"

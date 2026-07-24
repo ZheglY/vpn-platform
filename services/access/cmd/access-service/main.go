@@ -24,6 +24,7 @@ import (
 	platformkafka "github.com/ZheglY/vpn-platform/internal/platform/kafka"
 	"github.com/ZheglY/vpn-platform/internal/platform/logging"
 	"github.com/ZheglY/vpn-platform/internal/platform/observability"
+	platformpostgres "github.com/ZheglY/vpn-platform/internal/platform/postgres"
 	platformredis "github.com/ZheglY/vpn-platform/internal/platform/redis"
 	"github.com/ZheglY/vpn-platform/internal/platform/version"
 	"github.com/ZheglY/vpn-platform/services/access/internal/application"
@@ -62,11 +63,18 @@ func run(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = logger.Sync() }()
-	store, err := accesspostgres.Open(ctx, cfg.DatabaseURL)
+	registry := observability.NewRegistry()
+	store, err := accesspostgres.Open(ctx, cfg.DatabaseURL, platformpostgres.WithMetrics(registry, serviceName))
 	if err != nil {
 		return err
 	}
 	defer store.Close()
+	if err := observability.RegisterBacklogMetrics(registry, serviceName, store, accesspostgres.BacklogSeries()); err != nil {
+		return err
+	}
+	if err := observability.RegisterStateMetrics(registry, serviceName, store, accesspostgres.StateSeries()); err != nil {
+		return err
+	}
 	keyring, err := credential.NewKeyring(cfg.CredentialKeyVersion, cfg.CredentialKeys)
 	if err != nil {
 		return err
@@ -88,20 +96,28 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	kafkaMetrics, err := platformkafka.NewMetrics(registry, serviceName, []string{
+		"subscription.activated.v1", "subscription.extended.v1", "subscription.grace.started.v1", "subscription.expired.v1", "subscription.revoked.v1",
+		"access.provision.succeeded.v1", "access.provision.failed.v1", "access.revoke.succeeded.v1", "access.revoke.failed.v1",
+		"access.provision.request.v1", "access.revoke.request.v1", "access.ready.v1", "access.provisioning.failed.v1", "access.revoked.v1",
+	})
+	if err != nil {
+		return err
+	}
 	kafkaClient, err := platformkafka.NewClient(cfg.KafkaBrokers, serviceName,
 		kgo.ConsumerGroup(cfg.ConsumerGroup),
 		kgo.ConsumeTopics(
 			"subscription.activated.v1", "subscription.extended.v1", "subscription.grace.started.v1", "subscription.expired.v1", "subscription.revoked.v1",
 			"access.provision.succeeded.v1", "access.provision.failed.v1", "access.revoke.succeeded.v1", "access.revoke.failed.v1",
 		),
-		kgo.DisableAutoCommit(), kgo.BlockRebalanceOnPoll(), kgo.RequiredAcks(kgo.AllISRAcks()),
+		kgo.DisableAutoCommit(), kgo.BlockRebalanceOnPoll(), kgo.RequiredAcks(kgo.AllISRAcks()), kgo.WithHooks(kafkaMetrics),
 	)
 	if err != nil {
 		return err
 	}
 	defer kafkaClient.Close()
-	consumer := accesskafka.NewConsumer(kafkaClient, service, store, logger, cfg.WorkerRetryDelay)
-	worker := application.NewWorker(store, accesskafka.NewPublisher(kafkaClient), logger, cfg.WorkerPollInterval, cfg.WorkerRetryDelay, cfg.WorkerLease)
+	consumer := accesskafka.NewConsumer(kafkaClient, service, store, logger, cfg.WorkerRetryDelay, kafkaMetrics)
+	worker := application.NewWorker(store, accesskafka.NewPublisher(kafkaClient), logger, cfg.WorkerPollInterval, cfg.WorkerRetryDelay, cfg.WorkerLease, kafkaMetrics)
 	go consumer.Run(ctx)
 	go worker.Run(ctx)
 
@@ -118,7 +134,6 @@ func run(ctx context.Context) error {
 		recoveryAuth = policy("admin-service")
 	}
 	mux := http.NewServeMux()
-	registry := observability.NewRegistry()
 	httpMetrics := observability.NewHTTPMetrics(registry, serviceName)
 	mux.Handle("GET /livez", httpserver.LivenessHandler(serviceName))
 	mux.Handle("GET /readyz", httpserver.ReadinessHandler(serviceName, map[string]httpserver.Check{"postgres": store.Ping, "kafka": kafkaClient.Ping, "redis": func(ctx context.Context) error { return platformredis.Ping(ctx, redisClient) }}))

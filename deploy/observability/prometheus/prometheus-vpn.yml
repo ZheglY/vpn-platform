@@ -6,6 +6,7 @@ global:
 
 rule_files:
   - /etc/prometheus/rules/platform.yml
+  - /etc/prometheus/rules/operations.yml
   - /etc/prometheus/rules/vpn-targets.yml
 
 scrape_configs:
