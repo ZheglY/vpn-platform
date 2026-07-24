@@ -20,10 +20,19 @@ Run the control-plane smoke with Prometheus and Grafana:
 make observability-smoke
 ```
 
+`make stage7-smoke` also enables observability during the full local VPN lifecycle and verifies all 11 expected scrape targets. CI runs both commands on native Ubuntu: the first proves the 8-target baseline, and the second proves the 11-target VPN inventory.
+
 For interactive local use, provide the normal local environment variables and start:
 
 ```text
 docker compose --profile core --profile app --profile obs up --build
+```
+
+When `vpn` and `obs` are enabled together, select the matching inventory before startup:
+
+```powershell
+$env:PROMETHEUS_CONFIG_FILE="./deploy/observability/prometheus/prometheus-vpn.yml"
+docker compose --profile core --profile app --profile vpn --profile obs up --build
 ```
 
 Local endpoints:
@@ -34,7 +43,9 @@ Local endpoints:
 
 Grafana is anonymous Viewer-only and loopback-bound in the local profile. Do not expose port 3000 beyond the development host.
 
-The repository Prometheus image is built from the integrity-checked official 3.13.1 source and prebuilt web UI with the approved gRPC-Go security override. Its distroless UID 65532 can read the Docker Desktop host-mode-`0600` development client key directly, so no root initializer or world-readable key is used.
+The repository Prometheus image is built from the peeled official 3.13.1 release commit and integrity-checked prebuilt web UI with the approved gRPC-Go security override. The image includes upstream `LICENSE` and `NOTICE`.
+
+Runtime containers never bind-mount host private keys. Compose stages an explicit allowlist into separate named volumes using a network-isolated root init with only the file-ownership capabilities it needs. Private material is owner-readable `0400`; certificates are `0440`. A second container checks metadata and reads all non-root credentials as UID 65532 before any dependent service starts. A failure is terminal for startup. Never bypass the verifier, make a key `0644`, stage `ca.key`, or replace per-service volumes with one shared credential volume.
 
 Grafana is built from integrity-checked 13.1.1 source over its digest-pinned official runtime. The rebuild updates gRPC-Go, retains only the Tempo protobuf DTO dependency used by the Grafana server, and omits unused bundled Zipkin and Elasticsearch backend executables. Re-enabling either omitted data source requires a new dependency review, image scan, and dashboard smoke.
 
@@ -61,6 +72,15 @@ Alert: `VPNControlPlaneTargetDown`.
 
 Do not set `insecure_skip_verify`, expose `/metrics` publicly, or reuse an administrator certificate as a workaround.
 
+## Target inventory mismatch
+
+Alerts: `VPNControlPlaneTargetInventoryMismatch`, `VPNProvisioningTargetInventoryMismatch`, and `VPNNodeTargetInventoryMismatch`.
+
+1. Confirm that `PROMETHEUS_CONFIG_FILE` matches the active Compose profiles: baseline expects 8 targets; VPN expects 11.
+2. Query `count by (job) (up)` and inspect `/targets`. A missing series is an inventory failure even when no `up == 0` sample exists.
+3. Check whether the service was removed, renamed, detached from the network, or omitted from Compose. Do not lower the expected count to hide an unplanned outage.
+4. If the topology changed intentionally, update the static inventory, count alert, `promtool` tests, dashboard, smoke expectation, and this runbook in one reviewed change.
+
 ## High HTTP error ratio
 
 Alert: `VPNHTTPServerErrorRatioHigh`.
@@ -83,7 +103,7 @@ Alert: `VPNHTTPServerP95LatencyHigh`.
 
 ## Configuration recovery
 
-Run `make observability-validate` before restart. Prometheus refuses invalid configuration. Grafana dashboards and data sources are provisioned from read-only repository files; UI edits are intentionally disabled.
+Run `make observability-validate` before restart. It stages and reads the Prometheus key as UID 65532, validates both the 8-target and 11-target configurations, and executes the target-down/target-absence rule tests. Prometheus refuses invalid configuration. Grafana dashboards and data sources are provisioned from read-only repository files; UI edits are intentionally disabled.
 
 If local data is corrupted, stop the profile and remove only the named `vpn-service_prometheus-data` or `vpn-service_grafana-data` development volume after confirming no investigation needs it. Production data deletion requires the approved retention and incident process.
 

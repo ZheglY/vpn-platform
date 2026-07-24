@@ -6,6 +6,7 @@ global:
 
 rule_files:
   - /etc/prometheus/rules/platform.yml
+  - /etc/prometheus/rules/vpn-targets.yml
 
 scrape_configs:
   - job_name: vpn-control-plane
@@ -26,3 +27,28 @@ scrape_configs:
           - notification-service:8091
           - admin-service:8092
           - telegram-bot:8090
+
+  - job_name: vpn-provisioning
+    scheme: https
+    metrics_path: /metrics
+    tls_config:
+      ca_file: /run/mtls/ca.crt
+      cert_file: /run/mtls/observability.crt
+      key_file: /run/mtls/observability.key
+      min_version: TLS13
+    static_configs:
+      - targets:
+          - provisioning-service:8088
+
+  - job_name: vpn-nodes
+    scheme: https
+    metrics_path: /metrics
+    tls_config:
+      ca_file: /run/mtls/ca.crt
+      cert_file: /run/mtls/observability.crt
+      key_file: /run/mtls/observability.key
+      min_version: TLS13
+    static_configs:
+      - targets:
+          - node-agent-primary:8443
+          - node-agent-failover:8443

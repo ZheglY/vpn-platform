@@ -1,0 +1,65 @@
+rule_files:
+  - /etc/prometheus/rules/platform.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: target responds with a scrape error
+    interval: 1m
+    input_series:
+      - series: 'up{job="vpn-control-plane",instance="identity-service:8080"}'
+        values: '0+0x4'
+      - series: 'up{job="vpn-control-plane",instance="catalog-service:8083"}'
+        values: '1+0x4'
+      - series: 'up{job="vpn-control-plane",instance="billing-service:8084"}'
+        values: '1+0x4'
+      - series: 'up{job="vpn-control-plane",instance="subscription-service:8086"}'
+        values: '1+0x4'
+      - series: 'up{job="vpn-control-plane",instance="access-service:8087"}'
+        values: '1+0x4'
+      - series: 'up{job="vpn-control-plane",instance="notification-service:8091"}'
+        values: '1+0x4'
+      - series: 'up{job="vpn-control-plane",instance="admin-service:8092"}'
+        values: '1+0x4'
+      - series: 'up{job="vpn-control-plane",instance="telegram-bot:8090"}'
+        values: '1+0x4'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: VPNControlPlaneTargetDown
+        exp_alerts:
+          - exp_labels:
+              instance: identity-service:8080
+              job: vpn-control-plane
+              severity: critical
+            exp_annotations:
+              summary: "VPN platform metrics target is unavailable"
+              description: "Prometheus cannot scrape identity-service:8080 in job vpn-control-plane."
+              runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#target-down"
+
+  - name: target disappears from the inventory
+    interval: 1m
+    input_series:
+      - series: 'up{job="vpn-control-plane",instance="identity-service:8080"}'
+        values: '1+0x4'
+      - series: 'up{job="vpn-control-plane",instance="catalog-service:8083"}'
+        values: '1+0x4'
+      - series: 'up{job="vpn-control-plane",instance="billing-service:8084"}'
+        values: '1+0x4'
+      - series: 'up{job="vpn-control-plane",instance="subscription-service:8086"}'
+        values: '1+0x4'
+      - series: 'up{job="vpn-control-plane",instance="access-service:8087"}'
+        values: '1+0x4'
+      - series: 'up{job="vpn-control-plane",instance="notification-service:8091"}'
+        values: '1+0x4'
+      - series: 'up{job="vpn-control-plane",instance="admin-service:8092"}'
+        values: '1+0x4'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: VPNControlPlaneTargetInventoryMismatch
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "VPN control-plane metrics inventory is incomplete"
+              description: "Prometheus has fewer than the eight expected control-plane targets."
+              runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#target-inventory-mismatch"

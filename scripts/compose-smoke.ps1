@@ -48,6 +48,10 @@ $profileNames = @("core", "app")
 if ($fullVPN) { $profileNames += "vpn" }
 if ($observability) { $profileNames += "obs" }
 [Environment]::SetEnvironmentVariable("COMPOSE_PROFILES", ($profileNames -join ","), "Process")
+if ($observability) {
+    $prometheusConfig = if ($fullVPN) { "./deploy/observability/prometheus/prometheus-vpn.yml" } else { "./deploy/observability/prometheus/prometheus.yml" }
+    [Environment]::SetEnvironmentVariable("PROMETHEUS_CONFIG_FILE", $prometheusConfig, "Process")
+}
 $vpnClientName = "vpn-stage6-client"
 $vpnClientImage = "ghcr.io/xtls/xray-core:26.3.27@sha256:592ec4d11f656db95598d01e76dbcc6e002d67360b96a5436500a938230f52c7"
 
@@ -162,7 +166,7 @@ try {
         exit $LASTEXITCODE
     }
 
-    $buildServices = @("identity-migrate", "identity-service", "catalog-service", "billing-service", "subscription-service", "access-service", "notification-service", "admin-service", "yookassa-api", "telegram-api", "telegram-bot")
+    $buildServices = @("mtls-credentials-init", "identity-migrate", "identity-service", "catalog-service", "billing-service", "subscription-service", "access-service", "notification-service", "admin-service", "yookassa-api", "telegram-api", "telegram-bot")
 	if ($fullVPN) { $buildServices += @("provisioning-migrate", "provisioning-service", "node-agent-primary") }
     if ($observability) { $buildServices += @("prometheus", "grafana") }
     foreach ($service in $buildServices) {

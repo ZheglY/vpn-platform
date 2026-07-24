@@ -107,6 +107,160 @@ services:
     networks:
       - backend
 
+  mtls-credentials-init:
+    image: vpn-service/credentialstage:local
+    build:
+      context: .
+      dockerfile: tools/credentialstage/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app", "vpn", "obs"]
+    user: "0:0"
+    command:
+      - stage
+      - --manifest=/etc/credentialstage/manifest.json
+      - --source=/source
+      - --destination=/runtime
+    volumes:
+      - ./deploy/local/credentials/mtls-manifest.json:/etc/credentialstage/manifest.json:ro
+      - ./secrets/dev-mtls:/source:ro
+      - mtls-identity:/runtime/identity
+      - mtls-catalog:/runtime/catalog
+      - mtls-billing:/runtime/billing
+      - mtls-subscription:/runtime/subscription
+      - mtls-access:/runtime/access
+      - mtls-provisioning:/runtime/provisioning
+      - mtls-node-primary:/runtime/node-primary
+      - mtls-node-failover:/runtime/node-failover
+      - mtls-notification:/runtime/notification
+      - mtls-admin:/runtime/admin
+      - mtls-telegram:/runtime/telegram
+      - mtls-observability:/runtime/observability
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
+    network_mode: none
+    restart: "no"
+
+  mtls-credentials-verify:
+    image: vpn-service/credentialstage:local
+    profiles: ["app", "vpn", "obs"]
+    user: "65532:65532"
+    command:
+      - verify
+      - --manifest=/etc/credentialstage/manifest.json
+      - --destination=/runtime
+    volumes:
+      - ./deploy/local/credentials/mtls-manifest.json:/etc/credentialstage/manifest.json:ro
+      - mtls-identity:/runtime/identity:ro
+      - mtls-catalog:/runtime/catalog:ro
+      - mtls-billing:/runtime/billing:ro
+      - mtls-subscription:/runtime/subscription:ro
+      - mtls-access:/runtime/access:ro
+      - mtls-provisioning:/runtime/provisioning:ro
+      - mtls-node-primary:/runtime/node-primary:ro
+      - mtls-node-failover:/runtime/node-failover:ro
+      - mtls-notification:/runtime/notification:ro
+      - mtls-admin:/runtime/admin:ro
+      - mtls-telegram:/runtime/telegram:ro
+      - mtls-observability:/runtime/observability:ro
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    network_mode: none
+    restart: "no"
+    depends_on:
+      mtls-credentials-init:
+        condition: service_completed_successfully
+
+  xray-credentials-init:
+    image: vpn-service/credentialstage:local
+    profiles: ["vpn"]
+    user: "0:0"
+    command:
+      - stage
+      - --manifest=/etc/credentialstage/manifest.json
+      - --source=/source
+      - --destination=/runtime
+    volumes:
+      - ./deploy/local/credentials/xray-manifest.json:/etc/credentialstage/manifest.json:ro
+      - ./secrets/dev-xray:/source:ro
+      - xray-provisioning:/runtime/provisioning
+      - xray-node-primary:/runtime/node-primary
+      - xray-node-failover:/runtime/node-failover
+      - xray-camouflage:/runtime/camouflage
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
+    network_mode: none
+    restart: "no"
+
+  xray-credentials-verify:
+    image: vpn-service/credentialstage:local
+    profiles: ["vpn"]
+    user: "65532:65532"
+    command:
+      - verify
+      - --manifest=/etc/credentialstage/manifest.json
+      - --destination=/runtime
+      - --group=nonroot
+    volumes:
+      - ./deploy/local/credentials/xray-manifest.json:/etc/credentialstage/manifest.json:ro
+      - xray-provisioning:/runtime/provisioning:ro
+      - xray-node-primary:/runtime/node-primary:ro
+      - xray-node-failover:/runtime/node-failover:ro
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    network_mode: none
+    restart: "no"
+    depends_on:
+      xray-credentials-init:
+        condition: service_completed_successfully
+
+  camouflage-credentials-verify:
+    image: vpn-service/credentialstage:local
+    profiles: ["vpn"]
+    user: "0:0"
+    command:
+      - verify
+      - --manifest=/etc/credentialstage/manifest.json
+      - --destination=/runtime
+      - --group=camouflage
+    volumes:
+      - ./deploy/local/credentials/xray-manifest.json:/etc/credentialstage/manifest.json:ro
+      - xray-camouflage:/runtime/camouflage:ro
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    network_mode: none
+    restart: "no"
+    depends_on:
+      xray-credentials-init:
+        condition: service_completed_successfully
+
   identity-migrate:
     image: vpn-service/migrate:local
     build:
@@ -150,13 +304,11 @@ services:
     ports:
       - "127.0.0.1:${IDENTITY_HTTP_PORT:-8080}:8080"
     volumes:
-      - ./secrets/dev-mtls/ca.crt:/run/mtls/ca.crt:ro
-      - ./secrets/dev-mtls/identity-service.crt:/run/mtls/identity-service.crt:ro
-      - ./secrets/dev-mtls/identity-service.key:/run/mtls/identity-service.key:ro
-      - ./secrets/dev-mtls/identity-health.crt:/run/mtls/identity-health.crt:ro
-      - ./secrets/dev-mtls/identity-health.key:/run/mtls/identity-health.key:ro
+      - mtls-identity:/run/mtls:ro
     depends_on:
       identity-migrate:
+        condition: service_completed_successfully
+      mtls-credentials-verify:
         condition: service_completed_successfully
     networks:
       - backend
@@ -226,11 +378,11 @@ services:
     ports:
       - "127.0.0.1:${CATALOG_HTTP_PORT:-8083}:8083"
     volumes:
-      - ./secrets/dev-mtls/ca.crt:/run/mtls/ca.crt:ro
-      - ./secrets/dev-mtls/catalog-service.crt:/run/mtls/catalog-service.crt:ro
-      - ./secrets/dev-mtls/catalog-service.key:/run/mtls/catalog-service.key:ro
+      - mtls-catalog:/run/mtls:ro
     depends_on:
       catalog-seed:
+        condition: service_completed_successfully
+      mtls-credentials-verify:
         condition: service_completed_successfully
     networks:
       - backend
@@ -305,11 +457,11 @@ services:
     ports:
       - "127.0.0.1:${BILLING_HTTP_PORT:-8084}:8084"
     volumes:
-      - ./secrets/dev-mtls/ca.crt:/run/mtls/ca.crt:ro
-      - ./secrets/dev-mtls/billing-service.crt:/run/mtls/billing-service.crt:ro
-      - ./secrets/dev-mtls/billing-service.key:/run/mtls/billing-service.key:ro
+      - mtls-billing:/run/mtls:ro
     depends_on:
       billing-migrate:
+        condition: service_completed_successfully
+      mtls-credentials-verify:
         condition: service_completed_successfully
       identity-service:
         condition: service_healthy
@@ -373,11 +525,11 @@ services:
     ports:
       - "127.0.0.1:${SUBSCRIPTION_HTTP_PORT:-8086}:8086"
     volumes:
-      - ./secrets/dev-mtls/ca.crt:/run/mtls/ca.crt:ro
-      - ./secrets/dev-mtls/subscription-service.crt:/run/mtls/subscription-service.crt:ro
-      - ./secrets/dev-mtls/subscription-service.key:/run/mtls/subscription-service.key:ro
+      - mtls-subscription:/run/mtls:ro
     depends_on:
       subscription-migrate:
+        condition: service_completed_successfully
+      mtls-credentials-verify:
         condition: service_completed_successfully
       billing-service:
         condition: service_healthy
@@ -443,11 +595,11 @@ services:
     ports:
       - "127.0.0.1:${ACCESS_HTTP_PORT:-8087}:8087"
     volumes:
-      - ./secrets/dev-mtls/ca.crt:/run/mtls/ca.crt:ro
-      - ./secrets/dev-mtls/access-service.crt:/run/mtls/access-service.crt:ro
-      - ./secrets/dev-mtls/access-service.key:/run/mtls/access-service.key:ro
+      - mtls-access:/run/mtls:ro
     depends_on:
       access-migrate:
+        condition: service_completed_successfully
+      mtls-credentials-verify:
         condition: service_completed_successfully
       kafka:
         condition: service_healthy
@@ -489,9 +641,11 @@ services:
       DATABASE_URL: postgres://provisioning_app:${PROVISIONING_DB_PASSWORD:?set PROVISIONING_DB_PASSWORD}@postgres:5432/provisioning_service?sslmode=disable
       PROVISIONING_NODE_SEED_FILE: /run/xray/nodes.json
     volumes:
-      - ./secrets/dev-xray/nodes.json:/run/xray/nodes.json:ro
+      - xray-provisioning:/run/xray:ro
     depends_on:
       provisioning-migrate:
+        condition: service_completed_successfully
+      xray-credentials-verify:
         condition: service_completed_successfully
     networks:
       - backend
@@ -527,11 +681,13 @@ services:
     ports:
       - "127.0.0.1:${PROVISIONING_HTTP_PORT:-8088}:8088"
     volumes:
-      - ./secrets/dev-mtls/ca.crt:/run/mtls/ca.crt:ro
-      - ./secrets/dev-mtls/provisioning-service.crt:/run/mtls/provisioning-service.crt:ro
-      - ./secrets/dev-mtls/provisioning-service.key:/run/mtls/provisioning-service.key:ro
+      - mtls-provisioning:/run/mtls:ro
     depends_on:
       provisioning-migrate:
+        condition: service_completed_successfully
+      mtls-credentials-verify:
+        condition: service_completed_successfully
+      xray-credentials-verify:
         condition: service_completed_successfully
       access-service:
         condition: service_healthy
@@ -550,8 +706,10 @@ services:
     profiles: ["vpn"]
     volumes:
       - ./deploy/local/xray/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./secrets/dev-xray/camouflage.crt:/run/xray/camouflage.crt:ro
-      - ./secrets/dev-xray/camouflage.key:/run/xray/camouflage.key:ro
+      - xray-camouflage:/run/xray:ro
+    depends_on:
+      camouflage-credentials-verify:
+        condition: service_completed_successfully
     networks:
       vpn-data:
         aliases:
@@ -593,17 +751,17 @@ services:
       - "127.0.0.1:${PRIMARY_NODE_AGENT_HTTP_PORT:-18443}:8443"
       - "127.0.0.1:${PRIMARY_VPN_PORT:-1443}:443"
     volumes:
-      - ./secrets/dev-mtls/ca.crt:/run/mtls/ca.crt:ro
-      - ./secrets/dev-mtls/node-agent-primary.crt:/run/mtls/node-agent-primary.crt:ro
-      - ./secrets/dev-mtls/node-agent-primary.key:/run/mtls/node-agent-primary.key:ro
-      - ./secrets/dev-mtls/node-health-primary.crt:/run/mtls/node-health-primary.crt:ro
-      - ./secrets/dev-mtls/node-health-primary.key:/run/mtls/node-health-primary.key:ro
-      - ./secrets/dev-xray/primary.key:/run/xray/primary.key:ro
+      - mtls-node-primary:/run/mtls:ro
+      - xray-node-primary:/run/xray:ro
       - node-primary-state:/var/lib/node-agent
       - node-primary-xray:/var/lib/xray
     depends_on:
       camouflage:
         condition: service_started
+      mtls-credentials-verify:
+        condition: service_completed_successfully
+      xray-credentials-verify:
+        condition: service_completed_successfully
     networks:
       - node-management
       - vpn-data
@@ -644,17 +802,17 @@ services:
       - "127.0.0.1:${FAILOVER_NODE_AGENT_HTTP_PORT:-28443}:8443"
       - "127.0.0.1:${FAILOVER_VPN_PORT:-2443}:443"
     volumes:
-      - ./secrets/dev-mtls/ca.crt:/run/mtls/ca.crt:ro
-      - ./secrets/dev-mtls/node-agent-failover.crt:/run/mtls/node-agent-failover.crt:ro
-      - ./secrets/dev-mtls/node-agent-failover.key:/run/mtls/node-agent-failover.key:ro
-      - ./secrets/dev-mtls/node-health-failover.crt:/run/mtls/node-health-failover.crt:ro
-      - ./secrets/dev-mtls/node-health-failover.key:/run/mtls/node-health-failover.key:ro
-      - ./secrets/dev-xray/failover.key:/run/xray/failover.key:ro
+      - mtls-node-failover:/run/mtls:ro
+      - xray-node-failover:/run/xray:ro
       - node-failover-state:/var/lib/node-agent
       - node-failover-xray:/var/lib/xray
     depends_on:
       camouflage:
         condition: service_started
+      mtls-credentials-verify:
+        condition: service_completed_successfully
+      xray-credentials-verify:
+        condition: service_completed_successfully
     networks:
       - node-management
       - vpn-data
@@ -717,13 +875,11 @@ services:
     ports:
       - "127.0.0.1:${NOTIFICATION_HTTP_PORT:-8091}:8091"
     volumes:
-      - ./secrets/dev-mtls/ca.crt:/run/mtls/ca.crt:ro
-      - ./secrets/dev-mtls/notification-service.crt:/run/mtls/notification-service.crt:ro
-      - ./secrets/dev-mtls/notification-service.key:/run/mtls/notification-service.key:ro
-      - ./secrets/dev-mtls/notification-health.crt:/run/mtls/notification-health.crt:ro
-      - ./secrets/dev-mtls/notification-health.key:/run/mtls/notification-health.key:ro
+      - mtls-notification:/run/mtls:ro
     depends_on:
       notification-migrate:
+        condition: service_completed_successfully
+      mtls-credentials-verify:
         condition: service_completed_successfully
       identity-service:
         condition: service_healthy
@@ -810,13 +966,11 @@ services:
     ports:
       - "127.0.0.1:${ADMIN_HTTP_PORT:-8092}:8092"
     volumes:
-      - ./secrets/dev-mtls/ca.crt:/run/mtls/ca.crt:ro
-      - ./secrets/dev-mtls/admin-service.crt:/run/mtls/admin-service.crt:ro
-      - ./secrets/dev-mtls/admin-service.key:/run/mtls/admin-service.key:ro
-      - ./secrets/dev-mtls/admin-health.crt:/run/mtls/admin-health.crt:ro
-      - ./secrets/dev-mtls/admin-health.key:/run/mtls/admin-health.key:ro
+      - mtls-admin:/run/mtls:ro
     depends_on:
       admin-bootstrap:
+        condition: service_completed_successfully
+      mtls-credentials-verify:
         condition: service_completed_successfully
       notification-service:
         condition: service_healthy
@@ -882,12 +1036,12 @@ services:
     ports:
       - "127.0.0.1:${TELEGRAM_HTTP_PORT:-8081}:8081"
     volumes:
-      - ./secrets/dev-mtls/ca.crt:/run/mtls/ca.crt:ro
-      - ./secrets/dev-mtls/telegram-bot.crt:/run/mtls/telegram-bot.crt:ro
-      - ./secrets/dev-mtls/telegram-bot.key:/run/mtls/telegram-bot.key:ro
+      - mtls-telegram:/run/mtls:ro
     depends_on:
       redis:
         condition: service_healthy
+      mtls-credentials-verify:
+        condition: service_completed_successfully
       identity-service:
         condition: service_healthy
       catalog-service:
@@ -914,11 +1068,9 @@ services:
     ports:
       - "127.0.0.1:${PROMETHEUS_HTTP_PORT:-9090}:9090"
     volumes:
-      - ./deploy/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${PROMETHEUS_CONFIG_FILE:-./deploy/observability/prometheus/prometheus.yml}:/etc/prometheus/prometheus.yml:ro
       - ./deploy/observability/prometheus/rules:/etc/prometheus/rules:ro
-      - ./secrets/dev-mtls/ca.crt:/run/mtls/ca.crt:ro
-      - ./secrets/dev-mtls/observability.crt:/run/mtls/observability.crt:ro
-      - ./secrets/dev-mtls/observability.key:/run/mtls/observability.key:ro
+      - mtls-observability:/run/mtls:ro
       - prometheus-data:/prometheus
     read_only: true
     tmpfs:
@@ -932,8 +1084,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+    depends_on:
+      mtls-credentials-verify:
+        condition: service_completed_successfully
     networks:
       - backend
+      - node-management
 
   grafana:
     image: vpn-service/grafana:local
@@ -989,6 +1145,22 @@ networks:
 volumes:
   postgres-data:
   kafka-data:
+  mtls-identity:
+  mtls-catalog:
+  mtls-billing:
+  mtls-subscription:
+  mtls-access:
+  mtls-provisioning:
+  mtls-node-primary:
+  mtls-node-failover:
+  mtls-notification:
+  mtls-admin:
+  mtls-telegram:
+  mtls-observability:
+  xray-provisioning:
+  xray-node-primary:
+  xray-node-failover:
+  xray-camouflage:
   node-primary-state:
   node-primary-xray:
   node-failover-state:

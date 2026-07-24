@@ -1,0 +1,35 @@
+rule_files:
+  - /etc/prometheus/rules/vpn-targets.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: active VPN profile loses a discovered node
+    interval: 1m
+    input_series:
+      - series: 'up{job="vpn-nodes",instance="node-agent-primary:8443"}'
+        values: '1+0x4'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: VPNNodeTargetInventoryMismatch
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "VPN node metrics inventory is incomplete"
+              description: "The active VPN profile has fewer than its two expected node targets."
+              runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#target-inventory-mismatch"
+
+  - name: active VPN profile loses provisioning completely
+    interval: 1m
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: VPNProvisioningTargetInventoryMismatch
+        exp_alerts:
+          - exp_labels:
+              job: vpn-provisioning
+              severity: critical
+            exp_annotations:
+              summary: "VPN provisioning metrics inventory is incomplete"
+              description: "The active VPN profile is missing its provisioning target."
+              runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#target-inventory-mismatch"

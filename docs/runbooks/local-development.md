@@ -42,7 +42,7 @@ Copy-Item .env.example .env
 make compose-up
 ```
 
-Local ports bind to `127.0.0.1` only. Kafka exposes `localhost:9094` for host tools and `kafka:9092` for containers on the Compose network. `make compose-up`, `make compose-config`, and `make compose-smoke` generate local development mTLS material under ignored `secrets/dev-mtls`.
+Local ports bind to `127.0.0.1` only. Kafka exposes `localhost:9094` for host tools and `kafka:9092` for containers on the Compose network. `make compose-up`, `make compose-config`, and `make compose-smoke` generate local development mTLS material under ignored `secrets/dev-mtls`. A network-isolated init container stages the runtime allowlist into per-owner named volumes; application containers never bind-mount the host key directory.
 
 Identity, catalog, billing, and subscription internal routes use HTTPS with service identity authorization in local Compose. Readiness checks include synchronous dependencies and Kafka where used. Local `telegram-api` and `yookassa-api` fakes prevent calls to real providers. `make compose-smoke` removes Compose volumes to verify all service databases and migrations from zero.
 

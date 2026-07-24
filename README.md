@@ -19,7 +19,8 @@ Current milestone: Stage 8 observability, hardening, and deployment. Stage 7 is 
 - `notification-service` with a separate database, ordered Kafka inbox, causal delivery-stream barriers, business deduplication, typed escaped templates, durable leases/retries, current-state suppression, and typed mTLS delivery through telegram-bot.
 - `admin-service` and Go `admin-cli` with administrator mTLS identities, default-deny RBAC, fenced recoverable owner attempts, idempotent typed mutations, safe reads, and append-only audit.
 - Local Compose stack with isolated service databases, Kafka, Redis, fake external APIs, and an optional two-node VLESS + REALITY data plane.
-- Optional `obs` Compose profile with integrity-pinned Prometheus 3.13.1 and Grafana 13.1.1 security rebuilds, a provisioned read-only dashboard, initial HTTP alerts, and mTLS-only service scraping.
+- Optional `obs` Compose profile with integrity-pinned Prometheus 3.13.1 and Grafana 13.1.1 security rebuilds, a provisioned read-only dashboard, explicit 8/11-target inventories, initial HTTP alerts, and TLS 1.3 mTLS-only service scraping.
+- Linux-safe credential init/verifier containers that stage allowlisted keys into per-owner named volumes with `0400`/`0440` modes before non-root services start.
 - Goose migration runner tool.
 - OpenAPI/AsyncAPI contract linting.
 - Makefile and CI verification workflow, including Go vulnerability checks, secret scan, image build, and image scan.
@@ -69,7 +70,7 @@ Catalog, billing, subscription, and access listen on `https://localhost:8083`, `
 
 `make compose-smoke` exercises onboarding and a complete sandbox purchase through entitlement activation and access delivery. It runs real Billing, Subscription, and Access PostgreSQL suites, injects a provisioning result, verifies one-time issue replay, Happ headers/body, token-path redaction, event publication, and mTLS authorization. It does not start Xray.
 
-`make observability-validate` checks Prometheus configuration/rules and the provisioned Grafana dashboard. `make observability-smoke` runs the normal Compose flow with the `obs` profile and verifies all eight always-on control-plane scrape targets plus the Grafana dashboard. Provisioning and node-agent targets are discovered when the `vpn` profile is present. Local Prometheus and Grafana listen on `127.0.0.1:9090` and `127.0.0.1:3000`.
+`make observability-validate` checks both Prometheus inventories, target-down/target-absence rule tests, staged-key readability as UID 65532, and the provisioned Grafana dashboard. `make observability-smoke` verifies all eight always-on targets. `make stage7-smoke` enables `vpn` plus `obs` and verifies the complete 11-target inventory on the full VPN path. Local Prometheus and Grafana listen on `127.0.0.1:9090` and `127.0.0.1:3000`.
 
 `make vpn-smoke` generates local-only keys on D and runs the full Stage 6 acceptance path: Access command outbox, Kafka, Provisioning, authenticated material and placement reads, two node-agents with the integrity-checked Xray-core `26.3.27` security rebuild, sequenced outcome consumption, one-time Happ profile issuance, real VLESS + REALITY traffic, refund-driven revoke, and proof that traffic no longer passes afterward.
 

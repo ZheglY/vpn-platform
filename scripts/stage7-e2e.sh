@@ -145,6 +145,7 @@ fi
 wait_sql notification_service "SELECT count(*) FROM notification_jobs WHERE credential_id='${credential_id}' AND notification_type='access_physically_revoked' AND status='suppressed'" 1
 wait_sql notification_service "SELECT count(*) FROM notification_jobs WHERE subscription_id='${subscription_id}' AND notification_type='subscription_revoked' AND status='delivered'" 1
 wait_sql notification_service "SELECT last_sequence FROM notification_cursors WHERE aggregate_type='access' AND aggregate_id='${credential_id}'" 2
+wait_sql notification_service "SELECT count(*) FROM notification_jobs WHERE status IN ('pending','retry','delivering')" 0
 messages_before="$(curl -fsS http://127.0.0.1:8082/messages | sed -n 's/.*"count":\([0-9]*\).*/\1/p')"
 now="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 stale_ready='{"event_id":"77000000-0000-4000-8000-000000000005","event_type":"access.ready.v1","schema_version":1,"occurred_at":"'"${now}"'","producer":"access-service","correlation_id":"77000000-0000-4000-8000-000000000098","causation_id":null,"aggregate_type":"access","aggregate_id":"'"${credential_id}"'","aggregate_sequence":3,"partition_key":"user:'"${user_id}"'","data":{"subscription_id":"'"${subscription_id}"'","credential_id":"'"${credential_id}"'","user_id":"'"${user_id}"'","provisioning_status":"active","ready_at":"'"${now}"'","link_issuance_required":true}}'

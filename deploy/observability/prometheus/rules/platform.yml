@@ -12,6 +12,16 @@ groups:
           description: "Prometheus cannot scrape {{ $labels.instance }} in job {{ $labels.job }}."
           runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#target-down"
 
+      - alert: VPNControlPlaneTargetInventoryMismatch
+        expr: absent(up{job="vpn-control-plane"}) or count(up{job="vpn-control-plane"}) < 8
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "VPN control-plane metrics inventory is incomplete"
+          description: "Prometheus has fewer than the eight expected control-plane targets."
+          runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#target-inventory-mismatch"
+
       - alert: VPNHTTPServerErrorRatioHigh
         expr: |
           (

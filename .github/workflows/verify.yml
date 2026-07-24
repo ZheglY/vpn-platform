@@ -31,7 +31,7 @@ jobs:
         run: npm ci
       - name: Verify
         run: make verify
-      - name: Compose and observability smoke
+      - name: Native Linux credential and 8-target observability smoke
         run: make observability-smoke
-      - name: Stage 7 end-to-end smoke
+      - name: Native Linux credential and 11-target Stage 7 smoke
         run: make stage7-smoke

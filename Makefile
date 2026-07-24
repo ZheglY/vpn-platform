@@ -81,6 +81,7 @@ contracts: openapi asyncapi
 	npm run lint:events
 
 docker-build:
+	docker build -f tools/credentialstage/Dockerfile -t vpn-service/credentialstage:local .
 	docker build -f services/identity/Dockerfile -t vpn-service/identity-service:local .
 	docker build -f services/catalog/Dockerfile -t vpn-service/catalog-service:local .
 	docker build -f services/billing/Dockerfile -t vpn-service/billing-service:local .
@@ -96,6 +97,7 @@ docker-build:
 	docker build -f deploy/observability/grafana/Dockerfile -t vpn-service/grafana:local .
 
 image-scan:
+	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/credentialstage:local
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/identity-service:local
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/catalog-service:local
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/billing-service:local

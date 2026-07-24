@@ -166,6 +166,7 @@ if ($Phase -eq "BeforeRevoke") {
 Wait-SQL "notification_service" "SELECT count(*) FROM notification_jobs WHERE credential_id='$CredentialID' AND notification_type='access_physically_revoked' AND status='suppressed'" "1"
 Wait-SQL "notification_service" "SELECT count(*) FROM notification_jobs WHERE subscription_id='$SubscriptionID' AND notification_type='subscription_revoked' AND status='delivered'" "1"
 Wait-SQL "notification_service" "SELECT last_sequence FROM notification_cursors WHERE aggregate_type='access' AND aggregate_id='$CredentialID'" "2"
+Wait-SQL "notification_service" "SELECT count(*) FROM notification_jobs WHERE status IN ('pending','retry','delivering')" "0"
 $messagesBeforeStale = (Invoke-RestMethod -Uri "http://127.0.0.1:8082/messages" -TimeoutSec 10).count
 $now = (Get-Date).ToUniversalTime().ToString("o")
 $staleReady = @{

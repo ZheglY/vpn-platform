@@ -44,6 +44,11 @@ fi
 if [[ "$observability" == "1" ]]; then
   profiles+=(--profile obs)
   profile_names+=(obs)
+  if [[ "$full_vpn" == "1" ]]; then
+    export PROMETHEUS_CONFIG_FILE="./deploy/observability/prometheus/prometheus-vpn.yml"
+  else
+    export PROMETHEUS_CONFIG_FILE="./deploy/observability/prometheus/prometheus.yml"
+  fi
 fi
 export COMPOSE_PROFILES
 COMPOSE_PROFILES="$(IFS=,; echo "${profile_names[*]}")"
@@ -101,7 +106,7 @@ wait_redis_processing_key() {
   exit 1
 }
 
-build_services=(identity-migrate identity-service catalog-service billing-service subscription-service access-service notification-service admin-service yookassa-api telegram-api telegram-bot)
+build_services=(mtls-credentials-init identity-migrate identity-service catalog-service billing-service subscription-service access-service notification-service admin-service yookassa-api telegram-api telegram-bot)
 if [[ "$full_vpn" == "1" ]]; then build_services+=(provisioning-migrate provisioning-service node-agent-primary); fi
 if [[ "$observability" == "1" ]]; then build_services+=(prometheus grafana); fi
 for service in "${build_services[@]}"; do

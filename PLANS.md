@@ -342,7 +342,7 @@ First-slice acceptance:
 - A regression test proves a raw `/s/{token}` value cannot enter metric labels.
 - `/metrics` accepts only the environment-bound `observability` mTLS identity; Telegram metrics are absent from the public listener.
 - Integrity-pinned Prometheus and Grafana security rebuilds run with reduced container privileges, loopback-only host ports, 15-day local metric retention, immutable provisioning, no HIGH/CRITICAL scan finding, and no committed administrator password.
-- Prometheus configuration/rules, Grafana dashboard JSON, Compose configuration, unit/race/lint checks, `make verify`, and `make observability-smoke` pass.
+- Prometheus 8/11-target configurations and absence/down rules, Grafana dashboard JSON, Linux credential staging/readability, Compose configuration, unit/race/lint checks, `make verify`, `make observability-smoke`, and the 11-target Stage 7 smoke pass.
 - ADR 0027, architecture, threat model, runbook, external sources, README, and Definition of Done agree with behavior and list the remaining Stage 8 work.
 
 ### Stage 9 - Production readiness review

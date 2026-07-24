@@ -103,13 +103,15 @@ This Definition of Done applies to every implementation task after Stage 0. Stag
 - Admin owner attempts use durable claim leases. Timeout/reset/`5xx`/invalid successful responses become recoverable `outcome_unknown`; only definitive rejection becomes `failed`, and replay reuses action/correlation/owner idempotency IDs.
 - Accepted, attempted, retrying, unknown, and completion audit rows are append-only, use PostgreSQL time, retain safe identity/permission/request snapshots, and cannot be updated/deleted/truncated by the runtime role.
 - OpenAPI, AsyncAPI, JSON Schemas/examples, ADRs, threat model, runbooks, risk register, README, Compose, Makefile, and CI match behavior.
-- Migration from zero, unit/PostgreSQL/race/security/contract checks, all images and scans, normal Compose smoke, VPN smoke, and Stage 7 E2E pass before acceptance. Stage 8 remains blocked.
+- Migration from zero, unit/PostgreSQL/race/security/contract checks, all images and scans, normal Compose smoke, VPN smoke, and Stage 7 E2E passed before Stage 7 acceptance. Stage 8 began only after that explicit acceptance.
 
 ## Stage 8 Specific
 
 - Stage 7 is accepted and Stage 8 work remains split into reviewable slices; no real VPS, production credential, alert receiver, or user traffic is touched without a separate approval.
 - Metrics, traces, logs, dashboards, alerts, and diagnostics comply with ADR 0013. Labels are bounded and contain no raw paths, user/payment/subscription/credential/event/request/correlation IDs, Telegram/provider payload data, VPN material, or browsing metadata.
 - Every observability ingress is authenticated and private for its environment. Local loopback-only anonymous Grafana configuration is never reused as a production authentication policy.
+- Runtime private keys are staged into least-privilege named volumes with owner-only modes and are read under each actual container UID on native Linux before service startup; no runtime service depends on host bind-mount ownership translation.
+- Expected scrape inventory is explicit for every active profile, and tests cover both an existing failed target and a target whose `up` series is absent.
 - Dashboard and alert configuration is reproducible from Git, validates before startup, links alerts to runbooks, and has owner, severity, retention, and rollback behavior.
 - Retention, backup/restore, node hardening, secret rotation, load/chaos, SBOM, signing, and deployment artifacts each require executable tests or drill evidence before Stage 8 acceptance.
 - `make verify`, relevant Compose/VPN/observability smoke suites, security scans, configuration validation, and a final privacy/concurrency/operations review pass before Stage 8 is presented for acceptance.

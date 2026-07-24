@@ -1,0 +1,23 @@
+groups:
+  - name: vpn-platform-vpn-targets
+    interval: 30s
+    rules:
+      - alert: VPNProvisioningTargetInventoryMismatch
+        expr: absent(up{job="vpn-provisioning"}) or count(up{job="vpn-provisioning"}) < 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "VPN provisioning metrics inventory is incomplete"
+          description: "The active VPN profile is missing its provisioning target."
+          runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#target-inventory-mismatch"
+
+      - alert: VPNNodeTargetInventoryMismatch
+        expr: absent(up{job="vpn-nodes"}) or count(up{job="vpn-nodes"}) < 2
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "VPN node metrics inventory is incomplete"
+          description: "The active VPN profile has fewer than its two expected node targets."
+          runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#target-inventory-mismatch"
