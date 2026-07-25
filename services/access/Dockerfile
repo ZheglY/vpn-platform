@@ -11,11 +11,13 @@ COPY services/access/ services/access/
 ARG VERSION=dev
 ARG COMMIT=none
 ARG DATE=unknown
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION} -X main.buildCommit=${COMMIT} -X main.buildDate=${DATE}" -o /out/access-service ./services/access/cmd/access-service
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION} -X main.buildCommit=${COMMIT} -X main.buildDate=${DATE}" -o /out/access-service ./services/access/cmd/access-service && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/access-retention ./services/access/cmd/access-retention
 
 FROM gcr.io/distroless/static-debian12:nonroot@${DISTROLESS_DIGEST}
 WORKDIR /
 COPY --from=build /out/access-service /access-service
+COPY --from=build /out/access-retention /access-retention
 USER nonroot:nonroot
 ENV HTTP_ADDR=:8087
 EXPOSE 8087

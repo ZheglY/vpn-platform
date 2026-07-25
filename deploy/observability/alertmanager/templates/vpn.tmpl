@@ -1,0 +1,11 @@
+{{ define "vpn.title" -}}
+[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}
+{{- end }}
+
+{{ define "vpn.body" -}}
+Severity: {{ .CommonLabels.severity }}
+{{ with .CommonLabels.slo }}SLO: {{ . }}{{ end }}
+{{ with .CommonAnnotations.summary }}Summary: {{ . }}{{ end }}
+{{ with .CommonAnnotations.description }}Details: {{ . }}{{ end }}
+{{ with .CommonAnnotations.runbook_url }}Runbook: {{ . }}{{ end }}
+{{- end }}

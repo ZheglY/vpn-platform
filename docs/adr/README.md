@@ -33,3 +33,6 @@ ADRs are immutable decision records. If a decision changes after implementation 
 | [0027](0027-stage8-observability-metrics-and-local-stack.md) | Stage 8 observability metrics and local stack | Accepted for Stage 8 implementation |
 | [0028](0028-stage8-bounded-operational-metrics.md) | Stage 8 bounded operational metrics | Accepted for Stage 8 implementation |
 | [0029](0029-stage8-trace-context-and-log-pipeline.md) | Stage 8 trace context and log pipeline | Accepted for Stage 8 implementation |
+| [0030](0030-stage8-sli-slo-and-alert-routing.md) | Stage 8 SLI, SLO, and alert routing | Accepted for Stage 8 implementation |
+| [0031](0031-stage8-owner-retention-and-legal-holds.md) | Stage 8 owner retention and legal holds | Accepted for Stage 8 implementation |
+| [0032](0032-stage8-encrypted-backup-and-restore.md) | Stage 8 encrypted backup and restore | Accepted for Stage 8 implementation |

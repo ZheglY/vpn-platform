@@ -1,0 +1,28 @@
+global:
+  resolve_timeout: 5m
+
+templates:
+  - /etc/alertmanager/templates/*.tmpl
+
+route:
+  receiver: unconfigured-default
+  group_by: [alertname, severity, slo]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - receiver: unconfigured-critical
+      matchers:
+        - severity="critical"
+      repeat_interval: 1h
+
+receivers:
+  - name: unconfigured-default
+  - name: unconfigured-critical
+
+inhibit_rules:
+  - source_matchers:
+      - severity="critical"
+    target_matchers:
+      - severity="warning"
+    equal: [slo]

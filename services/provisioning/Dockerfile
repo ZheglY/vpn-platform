@@ -11,11 +11,13 @@ COPY services/provisioning/ services/provisioning/
 ARG VERSION=dev
 ARG COMMIT=none
 ARG DATE=unknown
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION} -X main.buildCommit=${COMMIT} -X main.buildDate=${DATE}" -o /out/provisioning-service ./services/provisioning/cmd/provisioning-service
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION} -X main.buildCommit=${COMMIT} -X main.buildDate=${DATE}" -o /out/provisioning-service ./services/provisioning/cmd/provisioning-service && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/provisioning-retention ./services/provisioning/cmd/provisioning-retention
 
 FROM gcr.io/distroless/static-debian12:nonroot@${DISTROLESS_DIGEST}
 WORKDIR /
 COPY --from=build /out/provisioning-service /provisioning-service
+COPY --from=build /out/provisioning-retention /provisioning-retention
 USER nonroot:nonroot
 ENV HTTP_ADDR=:8088
 EXPOSE 8088

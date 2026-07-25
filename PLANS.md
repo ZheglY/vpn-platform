@@ -321,7 +321,7 @@ Verification completed on 2026-07-23:
 
 Depends on working services. Adds dashboards, alerts, runbooks, backup/restore drill, node hardening, secret rotation, privacy retention jobs, SBOM, and signing.
 
-Status: in progress on `codex/stage8-observability-hardening`. The first bounded slice implements the privacy-safe HTTP RED baseline and local Prometheus/Grafana profile. The second slice implements bounded PostgreSQL, Kafka, durable-workflow, owner-domain, node-capacity, and Xray metrics. The third slice implements W3C HTTP/Kafka trace context, privacy-gated OTLP logs, and the local Collector/Tempo/Loki pipeline. Stage 8 is not complete and Stage 9 remains blocked.
+Status: in progress on `codex/stage8-observability-hardening`. Slices 1-3 implement privacy-safe metrics, W3C HTTP/Kafka trace context, and the protected Collector/Tempo/Loki pipeline. Slice 4 implements explicit SLI/SLO budget alerts and an inert Alertmanager baseline. Slice 5 implements owner-local bounded retention and Billing legal holds. Slice 6 implements streaming encrypted backups and an eight-database clean restore drill. Stage 8 is not complete and Stage 9 remains blocked.
 
 Implementation plan:
 
@@ -363,6 +363,30 @@ Third-slice acceptance:
 - Tempo and Loki are rebuilt from integrity-pinned release sources with reviewed security dependency updates, verified licenses/modules, and zero unsuppressed HIGH/CRITICAL findings. Tempo's exact Prometheus LTS PURL has one visible OpenVEX correction backed by a build assertion of the patched redacting Azure AD client-secret type because Tempo exposes effective configuration.
 - `make observability-validate` and `make observability-smoke` prove native configuration, real-UID key readability, a known W3C trace, a trace-correlated log, and absence of a synthetic query-string secret in Tempo/Loki.
 - ADR 0029, architecture, threat model, runbook, risk register, external sources, README, and Definition of Done match the implementation.
+
+Fourth-slice acceptance:
+
+- Control API and public subscription availability have explicit eligible/bad-event recording rules for 99.9% and 99.95% monthly objectives.
+- Initial activation records one identifier-free payment-period-start to committed provisioning-command duration; replay, extension, and rollback do not double-count.
+- Fast 1h/5m and slow 6h/30m budget-burn alerts cover both availability objectives and the 99% under-60-second asynchronous objective. p95 warnings cover 300 ms control API and 200 ms subscription rendering targets.
+- `promtool` tests cover healthy and budget-burning states. Alertmanager configuration and templates pass `amtool` with inert receivers and no credentials or production delivery claim.
+- ADR 0030 and the observability runbook define SLI semantics, operator response, limitations, and the production escalation blocker.
+
+Fifth-slice acceptance:
+
+- Billing, Access, Provisioning, Notification, and Admin each own a maintenance binary that connects only to the owner database. The shared runner contains technical bounds only.
+- Every command defaults to dry-run, limits batches to 1,000 and per-dataset deletion to 100,000, and emits aggregate identifier-free reports.
+- Billing legal holds protect eligible processed webhook rows; payment/order/refund/idempotency/outbox data is never auto-deleted.
+- Fresh rows, unresolved dead letters, owner correctness barriers, and Admin runtime audit immutability have PostgreSQL regression coverage. Admin audit deletion requires the migrator identity.
+- ADR 0031, privacy policy, threat model, risk register, and retention runbook agree on eligible datasets and production legal/custody blockers.
+
+Sixth-slice acceptance:
+
+- PostgreSQL custom-format output streams directly into authenticated age X25519 encryption without a plaintext dump artifact or password-bearing process argument.
+- Restore verifies metadata and ciphertext SHA-256, decrypts directly into `pg_restore --single-transaction`, and assigns the exact service owner in an isolated empty database.
+- The disposable drill backs up and restores all eight owner databases, compares exact public-table row counts and relation owners, enforces local RPO <= 24 hours and RTO <= 30 minutes, and removes temporary keys, artifacts, and volumes.
+- Unit tests cover key mode, connection-secret handling, comparison failure, and safe identifiers. The backup image is license-complete and included in build and HIGH/CRITICAL scan gates.
+- ADR 0032 and the backup runbook explicitly leave production scheduling, off-host immutable storage, key custody, HA/PITR, and approved recovery targets unresolved.
 
 ### Stage 9 - Production readiness review
 

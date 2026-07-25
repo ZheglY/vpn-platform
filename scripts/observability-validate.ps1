@@ -7,6 +7,7 @@ $collectorImage = "vpn-service/otel-collector:local"
 $tempoImage = "vpn-service/tempo:local"
 $lokiImage = "vpn-service/loki:local"
 $credentialImage = "vpn-service/credentialstage:local"
+$alertmanagerImage = "prom/alertmanager:v0.33.1@sha256:9e082985f56f4c8c9f724e18f2288c6708f472e56a5286b8863d080434ea065d"
 $credentialVolume = "vpn-service-observability-validate-$([guid]::NewGuid().ToString('N'))"
 $collectorCredentialVolume = "vpn-service-collector-validate-$([guid]::NewGuid().ToString('N'))"
 $tempoVEXPath = Join-Path $repo "deploy\observability\tempo\tempo.openvex.json"
@@ -107,7 +108,11 @@ try {
     }
     docker run --rm --entrypoint /bin/promtool `
         -v "$repo\deploy\observability\prometheus:/etc/prometheus:ro" `
-        $prometheusImage test rules /etc/prometheus/tests/platform.test.yml /etc/prometheus/tests/operations.test.yml /etc/prometheus/tests/vpn-targets.test.yml
+        $prometheusImage test rules /etc/prometheus/tests/platform.test.yml /etc/prometheus/tests/operations.test.yml /etc/prometheus/tests/vpn-targets.test.yml /etc/prometheus/tests/slo.test.yml
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    docker run --rm --entrypoint /bin/amtool `
+        -v "$repo\deploy\observability\alertmanager:/etc/alertmanager:ro" `
+        $alertmanagerImage check-config /etc/alertmanager/alertmanager.yml
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     docker run --rm `
@@ -143,7 +148,7 @@ try {
 
     node -e "JSON.parse(require('fs').readFileSync('deploy/observability/grafana/dashboards/platform-overview.json','utf8'))"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    node -e "const y=require('js-yaml'); for (const f of ['deploy/observability/grafana/provisioning/datasources/telemetry.yml','deploy/observability/otel-collector/config.yml','deploy/observability/tempo/tempo.yml','deploy/observability/loki/loki.yml']) y.load(require('fs').readFileSync(f,'utf8'));"
+    node -e "const y=require('js-yaml'); for (const f of ['deploy/observability/grafana/provisioning/datasources/telemetry.yml','deploy/observability/otel-collector/config.yml','deploy/observability/tempo/tempo.yml','deploy/observability/loki/loki.yml','deploy/observability/alertmanager/alertmanager.yml']) y.load(require('fs').readFileSync(f,'utf8'));"
     exit $LASTEXITCODE
 } finally {
     docker volume rm -f $credentialVolume 2>$null | Out-Null

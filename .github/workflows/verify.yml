@@ -35,3 +35,5 @@ jobs:
         run: make observability-smoke
       - name: Native Linux credential and 11-target Stage 7 smoke
         run: make stage7-smoke
+      - name: Encrypted database-per-service backup and clean restore drill
+        run: make backup-restore-drill

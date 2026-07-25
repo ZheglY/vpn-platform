@@ -227,7 +227,7 @@ func openIntegrationStore(t *testing.T) *Store {
 
 func resetBilling(t *testing.T, store *Store) {
 	t.Helper()
-	if _, err := store.pool.Exec(context.Background(), `TRUNCATE outbox,webhook_inbox,idempotency_keys,payments,orders`); err != nil {
+	if _, err := store.pool.Exec(context.Background(), `TRUNCATE retention_legal_holds,outbox,webhook_inbox,idempotency_keys,payments,orders`); err != nil {
 		t.Fatal(err)
 	}
 }

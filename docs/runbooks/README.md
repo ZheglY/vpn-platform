@@ -11,6 +11,8 @@ Implemented local and sandbox runbooks are listed below. Production operations s
 - [Telegram notifications and notification recovery](notifications.md)
 - [Administrator CLI, RBAC, action recovery, and audit](admin-operations.md)
 - [Prometheus, Grafana, metrics privacy, and HTTP alerts](observability.md)
+- [Owner-local data retention and legal holds](data-retention.md)
+- [Encrypted database backup and clean restore](backup-restore.md)
 - [Support and abuse](support-abuse.md)
 
 Required before production:
@@ -24,5 +26,5 @@ Required before production:
 - Production capacity alert routing. Local diagnosis is covered by the provisioning runbook.
 - Production Xray/systemd ownership. Local rollback is covered by the provisioning runbook.
 - Leaked subscription token. See [access delivery](access-delivery.md).
-- Backup/restore failure.
+- Production backup/restore monitoring, storage, and key custody. The local encrypted drill is covered by the backup runbook.
 - Support and abuse intake.

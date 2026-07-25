@@ -11,11 +11,13 @@ COPY services/billing/ services/billing/
 ARG VERSION=dev
 ARG COMMIT=none
 ARG DATE=unknown
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION} -X main.buildCommit=${COMMIT} -X main.buildDate=${DATE}" -o /out/billing-service ./services/billing/cmd/billing-service
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION} -X main.buildCommit=${COMMIT} -X main.buildDate=${DATE}" -o /out/billing-service ./services/billing/cmd/billing-service && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/billing-retention ./services/billing/cmd/billing-retention
 
 FROM gcr.io/distroless/static-debian12:nonroot@${DISTROLESS_DIGEST}
 WORKDIR /
 COPY --from=build /out/billing-service /billing-service
+COPY --from=build /out/billing-retention /billing-retention
 USER nonroot:nonroot
 ENV HTTP_ADDR=:8084
 EXPOSE 8084

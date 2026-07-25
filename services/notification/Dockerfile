@@ -13,11 +13,14 @@ ARG COMMIT=none
 ARG DATE=unknown
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
     -ldflags="-s -w -X main.buildVersion=${VERSION} -X main.buildCommit=${COMMIT} -X main.buildDate=${DATE}" \
-    -o /out/notification-service ./services/notification/cmd/notification-service
+    -o /out/notification-service ./services/notification/cmd/notification-service && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" \
+    -o /out/notification-retention ./services/notification/cmd/notification-retention
 
 FROM gcr.io/distroless/static-debian12:nonroot@${DISTROLESS_DIGEST}
 WORKDIR /
 COPY --from=build /out/notification-service /notification-service
+COPY --from=build /out/notification-retention /notification-retention
 USER nonroot:nonroot
 ENV HTTP_ADDR=:8091
 EXPOSE 8091

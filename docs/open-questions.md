@@ -10,7 +10,7 @@ Open questions must be resolved before the milestone where they affect code, con
 | OQ-004 | Which VPS providers and regions are allowed by AUP and law? | Stage 6 production node onboarding | Review AUP and document approved provider list. |
 | OQ-006 | What support and abuse contacts are real for production? | Stage 8/9 operations | Add contacts and response process before launch. |
 | OQ-007 | What is the production lawful request process? | Stage 9 production readiness | Define process with legal counsel. |
-| OQ-010 | What are production backup encryption keys and restore ownership? | Stage 8 | Define key management and restore drill. |
+| OQ-010 | Who owns production backup encryption identities, off-host storage, restore authorization, and approved RPO/RTO? | Stage 9 production readiness | Local encrypted restore drill is implemented; approve production key custody, immutable storage, rotation, and disaster ownership before launch. |
 
 ## Resolved During Stage 5
 

@@ -197,8 +197,8 @@ try {
         exit $LASTEXITCODE
     }
 
-    $buildServices = @("mtls-credentials-init", "identity-migrate", "identity-service", "catalog-service", "billing-service", "subscription-service", "access-service", "notification-service", "admin-service", "yookassa-api", "telegram-api", "telegram-bot")
-	if ($fullVPN) { $buildServices += @("provisioning-migrate", "provisioning-service", "node-agent-primary") }
+    $buildServices = @("mtls-credentials-init", "identity-migrate", "identity-service", "catalog-service", "billing-service", "subscription-service", "access-service", "provisioning-migrate", "notification-service", "admin-service", "yookassa-api", "telegram-api", "telegram-bot")
+	if ($fullVPN) { $buildServices += @("provisioning-service", "node-agent-primary") }
     if ($observability) { $buildServices += @("prometheus", "grafana", "otel-collector", "tempo", "loki") }
     foreach ($service in $buildServices) {
         docker compose @profiles build $service
@@ -367,6 +367,13 @@ try {
     Invoke-GoIntegrationTest @{
         ACCESS_TEST_DATABASE_URL = "postgres://access_app:$($env:ACCESS_DB_PASSWORD)@postgres:5432/access_service?sslmode=disable"
     } "./services/access/internal/postgres"
+    docker compose @profiles run --rm provisioning-migrate
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+    Invoke-GoIntegrationTest @{
+        PROVISIONING_TEST_DATABASE_URL = "postgres://provisioning_app:$($env:PROVISIONING_DB_PASSWORD)@postgres:5432/provisioning_service?sslmode=disable"
+    } "./services/provisioning/internal/postgres"
     Invoke-GoIntegrationTest @{
         ACCESS_TEST_REDIS_ADDR = "redis:6379"
         ACCESS_TEST_REDIS_PASSWORD = $env:REDIS_PASSWORD

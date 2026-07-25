@@ -15,12 +15,15 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
     -ldflags="-s -w -X main.buildVersion=${VERSION} -X main.buildCommit=${COMMIT} -X main.buildDate=${DATE}" \
     -o /out/admin-service ./services/admin/cmd/admin-service && \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" \
-    -o /out/admin-bootstrap ./services/admin/cmd/admin-bootstrap
+    -o /out/admin-bootstrap ./services/admin/cmd/admin-bootstrap && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" \
+    -o /out/admin-retention ./services/admin/cmd/admin-retention
 
 FROM gcr.io/distroless/static-debian12:nonroot@${DISTROLESS_DIGEST}
 WORKDIR /
 COPY --from=build /out/admin-service /admin-service
 COPY --from=build /out/admin-bootstrap /admin-bootstrap
+COPY --from=build /out/admin-retention /admin-retention
 USER nonroot:nonroot
 ENV HTTP_ADDR=:8092
 EXPOSE 8092

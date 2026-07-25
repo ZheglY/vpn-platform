@@ -16,7 +16,14 @@ import (
 	"github.com/ZheglY/vpn-platform/services/access/internal/domain"
 )
 
-type Store struct{ pool *pgxpool.Pool }
+type PaymentProvisioningObserver interface {
+	ObservePaymentToProvisioning(time.Duration)
+}
+
+type Store struct {
+	pool                        *pgxpool.Pool
+	paymentProvisioningObserver PaymentProvisioningObserver
+}
 
 func Open(ctx context.Context, dsn string, options ...platformpostgres.Option) (*Store, error) {
 	pool, err := platformpostgres.OpenPool(ctx, dsn, options...)
@@ -28,6 +35,10 @@ func Open(ctx context.Context, dsn string, options ...platformpostgres.Option) (
 
 func (s *Store) Close()                         { s.pool.Close() }
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
+
+func (s *Store) SetPaymentProvisioningObserver(observer PaymentProvisioningObserver) {
+	s.paymentProvisioningObserver = observer
+}
 
 func (s *Store) ApplyPeriod(ctx context.Context, meta domain.EventMeta, event domain.PeriodEvent, seed domain.CredentialSeed) error {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -72,7 +83,11 @@ INSERT INTO access_credentials (
 		if err := insertOperationOutbox(ctx, tx, meta, now, "access.provision.request.v1", seed.OperationID, seed.CredentialID, 1); err != nil {
 			return err
 		}
-		return commit(ctx, tx, "period event")
+		if err := commit(ctx, tx, "period event"); err != nil {
+			return err
+		}
+		s.observePaymentProvisioning(meta, event, now)
+		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("select current access credential: %w", err)
@@ -115,6 +130,12 @@ WHERE credential_id = $1 AND status = 'active'`, credentialID, event.GraceEndsAt
 		}
 	}
 	return commit(ctx, tx, "period event")
+}
+
+func (s *Store) observePaymentProvisioning(meta domain.EventMeta, event domain.PeriodEvent, startedAt time.Time) {
+	if meta.EventType == "subscription.activated.v1" && s.paymentProvisioningObserver != nil {
+		s.paymentProvisioningObserver.ObservePaymentToProvisioning(startedAt.Sub(event.PeriodStart))
+	}
 }
 
 func (s *Store) ApplyGrace(ctx context.Context, meta domain.EventMeta, event domain.GraceEvent) error {

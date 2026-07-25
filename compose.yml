@@ -1251,6 +1251,132 @@ services:
       - backend
       - observability
 
+  billing-retention:
+    image: vpn-service/billing-service:local
+    profiles: ["maintenance"]
+    entrypoint: ["/billing-retention"]
+    environment:
+      DATABASE_URL: postgres://billing_app:${BILLING_DB_PASSWORD:?set BILLING_DB_PASSWORD}@postgres:5432/billing_service?sslmode=disable
+      RETENTION_DRY_RUN: ${RETENTION_DRY_RUN:-true}
+      RETENTION_BATCH_SIZE: ${RETENTION_BATCH_SIZE:-500}
+      RETENTION_MAX_DELETE: ${RETENTION_MAX_DELETE:-5000}
+      BILLING_WEBHOOK_RETENTION_DAYS: ${BILLING_WEBHOOK_RETENTION_DAYS:-30}
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [backend]
+
+  access-retention:
+    image: vpn-service/access-service:local
+    profiles: ["maintenance"]
+    entrypoint: ["/access-retention"]
+    environment:
+      DATABASE_URL: postgres://access_app:${ACCESS_DB_PASSWORD:?set ACCESS_DB_PASSWORD}@postgres:5432/access_service?sslmode=disable
+      RETENTION_DRY_RUN: ${RETENTION_DRY_RUN:-true}
+      RETENTION_BATCH_SIZE: ${RETENTION_BATCH_SIZE:-500}
+      RETENTION_MAX_DELETE: ${RETENTION_MAX_DELETE:-5000}
+      ACCESS_SECURITY_AUDIT_RETENTION_DAYS: ${ACCESS_SECURITY_AUDIT_RETENTION_DAYS:-365}
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [backend]
+
+  provisioning-retention:
+    image: vpn-service/provisioning-service:local
+    profiles: ["maintenance"]
+    entrypoint: ["/provisioning-retention"]
+    environment:
+      DATABASE_URL: postgres://provisioning_app:${PROVISIONING_DB_PASSWORD:?set PROVISIONING_DB_PASSWORD}@postgres:5432/provisioning_service?sslmode=disable
+      RETENTION_DRY_RUN: ${RETENTION_DRY_RUN:-true}
+      RETENTION_BATCH_SIZE: ${RETENTION_BATCH_SIZE:-500}
+      RETENTION_MAX_DELETE: ${RETENTION_MAX_DELETE:-5000}
+      PROVISIONING_DIAGNOSTIC_RETENTION_DAYS: ${PROVISIONING_DIAGNOSTIC_RETENTION_DAYS:-30}
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [backend]
+
+  notification-retention:
+    image: vpn-service/notification-service:local
+    profiles: ["maintenance"]
+    entrypoint: ["/notification-retention"]
+    environment:
+      DATABASE_URL: postgres://notification_app:${NOTIFICATION_DB_PASSWORD:?set NOTIFICATION_DB_PASSWORD}@postgres:5432/notification_service?sslmode=disable
+      RETENTION_DRY_RUN: ${RETENTION_DRY_RUN:-true}
+      RETENTION_BATCH_SIZE: ${RETENTION_BATCH_SIZE:-500}
+      RETENTION_MAX_DELETE: ${RETENTION_MAX_DELETE:-5000}
+      NOTIFICATION_DLQ_RETENTION_DAYS: ${NOTIFICATION_DLQ_RETENTION_DAYS:-30}
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [backend]
+
+  admin-retention:
+    image: vpn-service/admin-service:local
+    profiles: ["maintenance"]
+    entrypoint: ["/admin-retention"]
+    environment:
+      DATABASE_URL: postgres://admin_migrator:${ADMIN_MIGRATOR_DB_PASSWORD:?set ADMIN_MIGRATOR_DB_PASSWORD}@postgres:5432/admin_service?sslmode=disable
+      RETENTION_DRY_RUN: ${RETENTION_DRY_RUN:-true}
+      RETENTION_BATCH_SIZE: ${RETENTION_BATCH_SIZE:-500}
+      RETENTION_MAX_DELETE: ${RETENTION_MAX_DELETE:-5000}
+      ADMIN_AUDIT_RETENTION_DAYS: ${ADMIN_AUDIT_RETENTION_DAYS:-365}
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [backend]
+
+  backup-tool:
+    image: vpn-service/backupctl:local
+    build:
+      context: .
+      dockerfile: tools/backupctl/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["maintenance"]
+    user: "${BACKUP_UID:-65532}:${BACKUP_GID:-65532}"
+    environment:
+      DATABASE_URL: ${BACKUP_DATABASE_URL:-postgres://invalid:invalid@invalid/invalid}
+    volumes:
+      - ${BACKUP_ARTIFACT_DIR:-./tmp/backup-artifacts}:/backups
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [backend]
+
+  restore-postgres:
+    image: postgres:18-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
+    profiles: ["maintenance"]
+    environment:
+      POSTGRES_USER: ${RESTORE_POSTGRES_USER:-restore_admin}
+      POSTGRES_PASSWORD: ${RESTORE_POSTGRES_PASSWORD:-restore-local-password}
+      POSTGRES_DB: ${RESTORE_POSTGRES_DB:-restore_control}
+      IDENTITY_DB_PASSWORD: ${IDENTITY_DB_PASSWORD:?set IDENTITY_DB_PASSWORD}
+      CATALOG_DB_PASSWORD: ${CATALOG_DB_PASSWORD:?set CATALOG_DB_PASSWORD}
+      BILLING_DB_PASSWORD: ${BILLING_DB_PASSWORD:?set BILLING_DB_PASSWORD}
+      SUBSCRIPTION_DB_PASSWORD: ${SUBSCRIPTION_DB_PASSWORD:?set SUBSCRIPTION_DB_PASSWORD}
+      ACCESS_DB_PASSWORD: ${ACCESS_DB_PASSWORD:?set ACCESS_DB_PASSWORD}
+      PROVISIONING_DB_PASSWORD: ${PROVISIONING_DB_PASSWORD:?set PROVISIONING_DB_PASSWORD}
+      NOTIFICATION_DB_PASSWORD: ${NOTIFICATION_DB_PASSWORD:?set NOTIFICATION_DB_PASSWORD}
+      ADMIN_DB_PASSWORD: ${ADMIN_DB_PASSWORD:?set ADMIN_DB_PASSWORD}
+      ADMIN_MIGRATOR_DB_PASSWORD: ${ADMIN_MIGRATOR_DB_PASSWORD:?set ADMIN_MIGRATOR_DB_PASSWORD}
+    tmpfs:
+      - /var/lib/postgresql:rw,noexec,nosuid,size=2g
+    volumes:
+      - ./deploy/local/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [backend]
+
 networks:
   backend:
     driver: bridge

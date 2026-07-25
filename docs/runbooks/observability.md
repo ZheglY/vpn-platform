@@ -131,6 +131,22 @@ Alert: `VPNHTTPServerP95LatencyHigh`.
 4. Capture only aggregate timings and bounded error categories.
 5. Use a load test in a non-production environment before changing timeouts or capacity.
 
+## SLO budget burn
+
+Alerts:
+
+- `VPNControlAPIErrorBudgetFastBurn` and `VPNControlAPIErrorBudgetSlowBurn`
+- `VPNSubscriptionEndpointErrorBudgetFastBurn` and `VPNSubscriptionEndpointErrorBudgetSlowBurn`
+- `VPNPaymentProvisioningErrorBudgetFastBurn` and `VPNPaymentProvisioningErrorBudgetSlowBurn`
+- `VPNControlAPIP95LatencySLOMiss` and `VPNSubscriptionEndpointP95LatencySLOMiss`
+
+1. Confirm both windows are present. Fast burn requires 1 hour and 5 minutes above 14.4 times budget; slow burn requires 6 hours and 30 minutes above 6 times budget.
+2. Check request or activation volume. Empty traffic is suppressed; very low nonzero volume still needs human interpretation.
+3. For control API or subscription availability, inspect bounded service/route/status metrics and dependency alerts. Never add a raw URL, bearer token, user, payment, or subscription identifier to the query.
+4. For payment-to-provisioning, check Subscription consumer delay, Access inbox/outbox state, PostgreSQL saturation, and Kafka observations. The SLI ends when Access commits the initial durable provisioning command; it does not prove node application or Telegram delivery.
+5. Treat critical fast burn as an immediate incident candidate. Treat warning slow burn as sustained budget erosion requiring an owner and corrective action.
+6. The local Alertmanager receivers are intentionally inert. Production paging requires an approved receiver, secret injection, escalation owner, and delivery test; do not claim that a local alert reached a person.
+
 ## PostgreSQL pool saturation
 
 Alert: `VPNPostgresPoolSaturated`.
@@ -189,7 +205,7 @@ Alerts: `VPNXrayUnhealthy` and `VPNXrayReloadFailed`.
 
 ## Configuration recovery
 
-Run `make observability-validate` before restart. It stages and reads all runtime credentials under their actual UIDs, validates both Prometheus inventories and rules, validates Collector/Tempo/Loki native configuration, checks license material, and parses Grafana provisioning. Prometheus and the telemetry backends refuse invalid configuration. Grafana dashboards and data sources are provisioned from read-only repository files; UI edits are intentionally disabled.
+Run `make observability-validate` before restart. It stages and reads all runtime credentials under their actual UIDs, validates both Prometheus inventories, SLO/operational rules, Alertmanager, Collector/Tempo/Loki native configuration, checks license material, and parses Grafana provisioning. Prometheus and the telemetry backends refuse invalid configuration. Grafana dashboards and data sources are provisioned from read-only repository files; UI edits are intentionally disabled.
 
 If local data is corrupted, stop the profile and remove only the affected `vpn-service_prometheus-data`, `vpn-service_grafana-data`, `vpn-service_tempo-data`, or `vpn-service_loki-data` development volume after confirming no investigation needs it. Production data deletion requires the approved retention and incident process.
 
@@ -197,6 +213,6 @@ If local data is corrupted, stop the profile and remove only the affected `vpn-s
 
 - No production Alertmanager receiver or escalation ownership.
 - No broker offset-lag exporter or Kafka broker dashboard yet; application lag is observed record age.
-- No SLO burn-rate rules yet.
-- No production Collector authorization policy, Grafana authentication/RBAC, Tempo/Loki tenancy, durable object storage, or observability backup/restore drill.
-- No production retention/legal-hold policy; 30-day traces and 14-day logs are local Stage 8 defaults only.
+- No production Collector authorization policy, Grafana authentication/RBAC, Tempo/Loki tenancy, or durable object storage.
+- Database backup/restore and owner retention are executable local drills/jobs, but production scheduling, storage, key/hold custody, and legal approval are not defined.
+- Thirty-day traces and 14-day logs are local Stage 8 defaults only; the database drill does not back up observability volumes.

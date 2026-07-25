@@ -7,6 +7,7 @@ global:
 rule_files:
   - /etc/prometheus/rules/platform.yml
   - /etc/prometheus/rules/operations.yml
+  - /etc/prometheus/rules/slo.yml
 
 scrape_configs:
   - job_name: vpn-control-plane

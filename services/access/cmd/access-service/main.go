@@ -32,6 +32,7 @@ import (
 	"github.com/ZheglY/vpn-platform/services/access/internal/credential"
 	"github.com/ZheglY/vpn-platform/services/access/internal/httpapi"
 	accesskafka "github.com/ZheglY/vpn-platform/services/access/internal/kafka"
+	accessmetrics "github.com/ZheglY/vpn-platform/services/access/internal/metrics"
 	accesspostgres "github.com/ZheglY/vpn-platform/services/access/internal/postgres"
 	"github.com/ZheglY/vpn-platform/services/access/internal/ratelimit"
 )
@@ -81,6 +82,7 @@ func run(ctx context.Context) error {
 	if err := observability.RegisterStateMetrics(registry, serviceName, store, accesspostgres.StateSeries()); err != nil {
 		return err
 	}
+	store.SetPaymentProvisioningObserver(accessmetrics.NewPaymentProvisioning(registry))
 	keyring, err := credential.NewKeyring(cfg.CredentialKeyVersion, cfg.CredentialKeys)
 	if err != nil {
 		return err

@@ -7,6 +7,7 @@ collector_image='vpn-service/otel-collector:local'
 tempo_image='vpn-service/tempo:local'
 loki_image='vpn-service/loki:local'
 credential_image='vpn-service/credentialstage:local'
+alertmanager_image='prom/alertmanager:v0.33.1@sha256:9e082985f56f4c8c9f724e18f2288c6708f472e56a5286b8863d080434ea065d'
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 credential_volume="vpn-service-observability-validate-$$"
 collector_credential_volume="vpn-service-collector-validate-$$"
@@ -103,7 +104,10 @@ docker run --rm --entrypoint /bin/promtool \
   "$prometheus_image" check config /etc/prometheus/prometheus-vpn.yml
 docker run --rm --entrypoint /bin/promtool \
   -v "${repo}/deploy/observability/prometheus:/etc/prometheus:ro" \
-  "$prometheus_image" test rules /etc/prometheus/tests/platform.test.yml /etc/prometheus/tests/operations.test.yml /etc/prometheus/tests/vpn-targets.test.yml
+  "$prometheus_image" test rules /etc/prometheus/tests/platform.test.yml /etc/prometheus/tests/operations.test.yml /etc/prometheus/tests/vpn-targets.test.yml /etc/prometheus/tests/slo.test.yml
+docker run --rm --entrypoint /bin/amtool \
+  -v "${repo}/deploy/observability/alertmanager:/etc/alertmanager:ro" \
+  "$alertmanager_image" check-config /etc/alertmanager/alertmanager.yml
 docker run --rm \
   --user 65532:65532 \
   --network none \
@@ -132,4 +136,4 @@ docker run --rm \
   -v "${repo}/deploy/observability/loki/loki.yml:/etc/loki/loki.yml:ro" \
   "$loki_image" -config.file=/etc/loki/loki.yml -verify-config=true
 node -e "JSON.parse(require('fs').readFileSync('deploy/observability/grafana/dashboards/platform-overview.json','utf8'))"
-node -e "const y=require('js-yaml'); for (const f of ['deploy/observability/grafana/provisioning/datasources/telemetry.yml','deploy/observability/otel-collector/config.yml','deploy/observability/tempo/tempo.yml','deploy/observability/loki/loki.yml']) y.load(require('fs').readFileSync(f,'utf8'));"
+node -e "const y=require('js-yaml'); for (const f of ['deploy/observability/grafana/provisioning/datasources/telemetry.yml','deploy/observability/otel-collector/config.yml','deploy/observability/tempo/tempo.yml','deploy/observability/loki/loki.yml','deploy/observability/alertmanager/alertmanager.yml']) y.load(require('fs').readFileSync(f,'utf8'));"

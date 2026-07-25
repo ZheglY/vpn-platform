@@ -1,0 +1,44 @@
+package postgres
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/ZheglY/vpn-platform/internal/platform/retention"
+)
+
+func (s *Store) RetentionDatasets(keepFor time.Duration) []retention.Dataset {
+	return []retention.Dataset{{
+		Name:    "replayed_dead_letters",
+		KeepFor: keepFor,
+		Preview: func(ctx context.Context, cutoff time.Time) (retention.Eligibility, error) {
+			var count int64
+			if err := s.pool.QueryRow(ctx, `
+SELECT count(*) FROM notification_dead_letters
+WHERE state = 'replayed' AND updated_at < $1`, cutoff).Scan(&count); err != nil {
+				return retention.Eligibility{}, fmt.Errorf("preview notification DLQ retention: %w", err)
+			}
+			return retention.Eligibility{Eligible: count}, nil
+		},
+		DeleteBatch: func(ctx context.Context, cutoff time.Time, limit int) (int64, error) {
+			tag, err := s.pool.Exec(ctx, `
+WITH selected AS (
+    SELECT source_topic, source_partition, source_offset
+    FROM notification_dead_letters
+    WHERE state = 'replayed' AND updated_at < $1
+    ORDER BY updated_at, source_topic, source_partition, source_offset
+    LIMIT $2
+    FOR UPDATE SKIP LOCKED
+)
+DELETE FROM notification_dead_letters item USING selected
+WHERE item.source_topic = selected.source_topic
+  AND item.source_partition = selected.source_partition
+  AND item.source_offset = selected.source_offset`, cutoff, limit)
+			if err != nil {
+				return 0, fmt.Errorf("delete notification DLQ retention batch: %w", err)
+			}
+			return tag.RowsAffected(), nil
+		},
+	}}
+}

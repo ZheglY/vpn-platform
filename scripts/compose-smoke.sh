@@ -116,8 +116,8 @@ wait_redis_processing_key() {
   exit 1
 }
 
-build_services=(mtls-credentials-init identity-migrate identity-service catalog-service billing-service subscription-service access-service notification-service admin-service yookassa-api telegram-api telegram-bot)
-if [[ "$full_vpn" == "1" ]]; then build_services+=(provisioning-migrate provisioning-service node-agent-primary); fi
+build_services=(mtls-credentials-init identity-migrate identity-service catalog-service billing-service subscription-service access-service provisioning-migrate notification-service admin-service yookassa-api telegram-api telegram-bot)
+if [[ "$full_vpn" == "1" ]]; then build_services+=(provisioning-service node-agent-primary); fi
 if [[ "$observability" == "1" ]]; then build_services+=(prometheus grafana otel-collector tempo loki); fi
 for service in "${build_services[@]}"; do
   docker compose "${profiles[@]}" build "$service"
@@ -272,6 +272,9 @@ SUBSCRIPTION_TEST_DATABASE_URL="postgres://subscription_app:${SUBSCRIPTION_DB_PA
   go test ./services/subscription/internal/postgres -run '^TestIntegration' -count=1
 ACCESS_TEST_DATABASE_URL="postgres://access_app:${ACCESS_DB_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/access_service?sslmode=disable" \
   go test ./services/access/internal/postgres -run '^TestIntegration' -count=1
+docker compose "${profiles[@]}" run --rm provisioning-migrate
+PROVISIONING_TEST_DATABASE_URL="postgres://provisioning_app:${PROVISIONING_DB_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/provisioning_service?sslmode=disable" \
+  go test ./services/provisioning/internal/postgres -run '^TestIntegration' -count=1
 ACCESS_TEST_REDIS_ADDR="127.0.0.1:6379" ACCESS_TEST_REDIS_PASSWORD="${REDIS_PASSWORD}" \
   go test ./services/access/internal/ratelimit -run '^TestIntegration' -count=1
 NOTIFICATION_TEST_DATABASE_URL="postgres://notification_app:${NOTIFICATION_DB_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/notification_service?sslmode=disable" \

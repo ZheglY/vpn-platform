@@ -89,7 +89,7 @@ Out of scope for v1:
 | Compromised notification-service | It can request typed Telegram sends and read consent targets but cannot obtain Bot API token, subscription URL, VPN credential, or owner DB access. Fixed mTLS allowlists constrain calls. |
 | Compromised telegram-bot | It owns the Bot API token and receives transient typed messages/chat IDs, but cannot mutate Notification jobs or use arbitrary internal owner APIs. Token compromise still requires rotation and incident response. |
 
-## Stage 8 Observability Threat Scenarios
+## Stage 8 Operational Hardening Threat Scenarios
 
 | Threat | Mitigation and residual risk |
 |---|---|
@@ -110,6 +110,11 @@ Out of scope for v1:
 | New structured log fields silently enter durable storage | The OTLP zap core drops any message or field outside exact source allowlists before export. Collector transforms repeat resource/span/log allowlists and redaction with fail-closed error handling. Stdout remains separate. |
 | Stolen telemetry client key writes arbitrary telemetry | Collector ingress requires TLS 1.3 and a dedicated per-process client-only certificate chained to the environment CA; HTTP server and service-to-service keys are not reused for OTLP. Residual risk remains until production PKI rotation/revocation and per-service Collector authorization are implemented. |
 | Tempo/Loki expose retained operational data | Neither backend publishes a host port; only Grafana on loopback joins their private network. Local retention is 30/14 days. Production authentication, tenancy, backup, and legal retention are not inherited from Compose. |
+| Retention removes financial or correctness evidence | Deletion remains owner-local, dry-run-first, and bounded. Financial records, inbox/outbox/idempotency barriers, fresh rows, held Billing scopes, and unresolved dead letters are ineligible. Admin audit needs the separate migrator identity. Production periods and hold custody remain legal/operations blockers. |
+| Retention reports become an identifier side channel | Reports contain only owner, fixed dataset, cutoff, aggregate eligible/protected/deleted counts, and bounds. They contain no row ID, payload, hold reason, user, payment, credential, or event data. |
+| Backup creates a plaintext second copy of sensitive databases | PostgreSQL custom output streams directly into authenticated age encryption. No plaintext dump file is created; passwords are supplied through subprocess environment rather than arguments, and errors are bounded. |
+| Corrupt, partial, or wrong-owner backup is accepted as recoverable | Restore verifies ciphertext SHA-256, uses one transaction in an isolated empty cluster, and compares exact public-table row counts and relation owners for every service database. Integrity or ownership mismatch fails the drill. |
+| Backup key and ciphertext are stolen together | Local drill keys are disposable and deleted with artifacts. Production requires separate approved key custody, off-host immutable storage, rotation, and access audit; Compose does not claim these controls. |
 
 ## High-Priority Threat Scenarios
 
@@ -190,7 +195,7 @@ Mitigation:
 
 - Explicitly forbid these fields in domain models, logs, traces, metrics, and node health snapshots.
 - Allow only aggregate bytes by credential/node, node load, active credential counts, and temporary technical metrics.
-- Add Stage 8 retention jobs and secret/privacy scans.
+- Owner-local retention jobs delete only approved bounded datasets; secret/privacy scans remain mandatory.
 
 ### T7 - Plaintext subscription URL is lost between async stages
 
@@ -422,6 +427,30 @@ Mitigation:
 - Exact admin replay retains action ID and correlation ID, obtains a new fenced attempt, and calls the owner with the same owner key.
 - The owner returns its idempotent replay, so admin-service can confirm `succeeded` without a second business mutation.
 - Append-only audit records accepted, attempted, retrying, unknown, and confirmed outcomes instead of rewriting history or claiming a false failure.
+
+### T26 - Retention destroys durable evidence
+
+Risk: an automated cleanup removes a payment record, idempotency barrier, pending outbox item, unresolved dead letter, legal-hold scope, or recent audit row.
+
+Mitigation:
+
+- Each owner defines an explicit SQL eligibility policy in its own database; no central service has cross-database credentials.
+- Commands default to dry-run and enforce bounded batches and a bounded invocation.
+- Payment/order/refund records and durable workflow barriers are never eligible.
+- Dead letters require successful replay before age eligibility; Billing rows under an active legal hold remain protected.
+- Admin runtime remains unable to delete audit, while the separate migrator path is guarded and tested.
+
+### T27 - Backup is confidential but not recoverable
+
+Risk: encrypted artifacts exist, but corruption, a missing key, bad role mapping, or silent data loss makes restoration impossible during an incident.
+
+Mitigation:
+
+- Every artifact has ciphertext SHA-256 metadata and is verified before decryption.
+- All eight databases are restored into a separate empty cluster; public relation owners and exact table counts must match source inspections.
+- Dump and restore are streamed so neither the host nor the container persists plaintext.
+- The drill records backup age and restore duration, then deletes disposable keys/artifacts and isolated volumes.
+- Production key custody, immutable off-host storage, PITR, and recovery authority remain explicit launch blockers.
 
 ## Initial Security Requirements
 
