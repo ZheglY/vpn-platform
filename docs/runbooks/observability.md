@@ -2,7 +2,7 @@
 
 ## Scope
 
-This runbook covers the Stage 8 HTTP and bounded operational metrics plus the local Prometheus/Grafana profile. It does not authorize production deployment or define a production alert receiver.
+This runbook covers the Stage 8 privacy-safe metrics, W3C tracing, allowlisted log collection, and the local Prometheus/Grafana/OpenTelemetry Collector/Tempo/Loki profile. It does not authorize production deployment or define a production alert receiver, storage policy, or identity system.
 
 Never paste raw request paths, query strings, subscription URLs, VLESS UUIDs, Telegram payloads, provider payloads, destination IPs, DNS history, or packet data into a dashboard, alert, ticket, or diagnostic command.
 
@@ -20,7 +20,7 @@ Run the control-plane smoke with Prometheus and Grafana:
 make observability-smoke
 ```
 
-`make stage7-smoke` also enables observability during the full local VPN lifecycle and verifies all 11 expected scrape targets. CI runs both commands on native Ubuntu: the first proves the 8-target baseline, and the second proves the 11-target VPN inventory.
+`make observability-smoke` sets trace sampling to 100 percent, injects a known W3C parent, and verifies trace/log arrival plus redaction. `make stage7-smoke` also enables observability during the full local VPN lifecycle and verifies all 11 expected scrape targets. CI runs both commands on native Ubuntu: the first proves the 8-target baseline, and the second proves the 11-target VPN inventory.
 
 For interactive local use, provide the normal local environment variables and start:
 
@@ -41,13 +41,19 @@ Local endpoints:
 - Grafana: `http://127.0.0.1:3000`
 - dashboard: folder `VPN Platform`, dashboard `VPN Platform Overview`
 
-Grafana is anonymous Viewer-only and loopback-bound in the local profile. Do not expose port 3000 beyond the development host.
+Grafana is anonymous Viewer-only and loopback-bound in the local profile. Tempo, Loki, and Collector have no host port. Do not expose port 3000 beyond the development host or add backend ports as a debugging shortcut.
 
 The repository Prometheus image is built from the peeled official 3.13.1 release commit and integrity-checked prebuilt web UI with the approved gRPC-Go security override. The image includes upstream `LICENSE` and `NOTICE`.
 
 Runtime containers never bind-mount host private keys. Compose stages an explicit allowlist into separate named volumes using a network-isolated root init with only the file-ownership capabilities it needs. Private material is owner-readable `0400`; certificates are `0440`. A second container checks metadata and reads all non-root credentials as UID 65532 before any dependent service starts. A failure is terminal for startup. Never bypass the verifier, make a key `0644`, stage `ca.key`, or replace per-service volumes with one shared credential volume.
 
-Grafana is built from integrity-checked 13.1.1 source over its digest-pinned official runtime. The rebuild updates gRPC-Go, retains only the Tempo protobuf DTO dependency used by the Grafana server, and omits unused bundled Zipkin and Elasticsearch backend executables. Re-enabling either omitted data source requires a new dependency review, image scan, and dashboard smoke.
+Grafana is built from integrity-checked 13.1.1 source over its digest-pinned official runtime. The rebuild updates gRPC-Go and `kin-openapi`, retains only the Tempo protobuf DTO dependency used by the Grafana server, and omits unused bundled Zipkin and Elasticsearch backend executables. Re-enabling either omitted data source requires a new dependency review, image scan, and dashboard smoke.
+
+The custom Collector 0.157.0 distribution contains only the OTLP receiver, memory limiter, transform/batch processors, OTLP HTTP exporter, and health extension. Tempo 2.10.5 and Loki 3.7.2 are rebuilt from integrity-pinned release sources with reviewed dependency updates, narrow compatibility patches, verified modules and licenses, and a digest-pinned distroless runtime. Every image is built and scanned by `make verify`.
+
+Tempo uses Prometheus `v0.305.5` from the supported 3.5 LTS line. The build asserts that Azure AD remote-write `ClientSecret` uses the redacting `prometheus/common/config.Secret` type fixed for `CVE-2026-42151`; this matters because Tempo accepts Prometheus remote-write configuration and exposes effective configuration through `/status/config`. Trivy's module range omits the patched LTS branch, so the exact `v0.305.5` PURL has one `vulnerable_code_not_present` OpenVEX correction. `make image-scan` displays that suppressed row and fails on every other HIGH/CRITICAL result. A Prometheus version, secret-field assertion, Tempo config route, or VEX change requires a new source review.
+
+Services use a parent-based 10 percent root sampling ratio by default. Set `OTEL_TRACES_SAMPLER_ARG` between `0` and `1`; use `1` only for bounded tests. `OTEL_SDK_DISABLED=true` disables export but does not weaken HTTP or Kafka behavior. OTLP requires the generated per-process client-only certificate alias and Collector server certificate over TLS 1.3. The OTLP credential must remain distinct from HTTP server and service-to-service credentials. Never use plaintext OTLP, `insecure_skip_verify`, a shared world-readable key, or the Prometheus certificate.
 
 ## Privacy checks
 
@@ -60,6 +66,28 @@ route="GET /s/{token}"
 Raw path values must never appear. Investigate any unexpected label before sharing or retaining data. Stop Prometheus, restrict access to its storage volume, and treat a leaked subscription token or VPN credential as a security incident using the access-delivery runbook.
 
 Operational labels are limited to reviewed SQL operation/outcome, allowlisted Kafka topic/direction/outcome/stage, durable `kind/state`, domain `kind/state`, node `status/type`, and Xray reload outcome. Never add a query, table, DSN, message key/header/payload, partition/offset, user/payment/subscription/credential/event/correlation/node ID, error text, or URL to a query, dashboard, or alert.
+
+Trace spans may contain only:
+
+- resource: `service.name`, `service.namespace`, `deployment.environment.name`;
+- HTTP: bounded method, registered route template, response status;
+- Kafka: `messaging.system=kafka` and fixed `publish|process` operation.
+
+W3C baggage is disabled. Trace context is not stored in outbox rows or business events, so a delayed outbox publish can begin a new root. Do not add URL, host, path value, query, user agent, peer address, body, error text, topic, key, payload, partition, offset, header value, request/correlation ID, or business ID to a span.
+
+Collected logs are intentionally narrower than stdout. Only exact reviewed message strings and fields reach OTLP. Loki indexes only service, namespace, and environment; trace IDs and reviewed technical fields are structured metadata. Adding a log message or field to collection requires a privacy test and ADR/runbook review. Never bypass the application allowlist in the Collector.
+
+## Trace or log missing
+
+1. Confirm the service and `otel-collector`, `tempo`, and `loki` containers are healthy.
+2. Check that `OTEL_TRACES_SAMPLER_ARG` is nonzero for the test. A missing unsampled trace is expected.
+3. Verify the service-specific `/run/mtls/otel-client.key` is owner-readable and the Collector server certificate matches `otel-collector`.
+4. Check Collector warnings for TLS, transform, queue, or exporter failures. Do not enable payload debug logging.
+5. Query Tempo or Loki through the provisioned Grafana data source. Do not publish a backend port.
+6. For logs, confirm the source message and fields are in the static application allowlist. Treat a dropped unreviewed message as intended behavior.
+7. For outbox work, expect a new trace root after durable storage. Use owner support-safe records for durable correlation; do not add tracing headers to event schemas.
+
+To preserve a failed local smoke stack for inspection, set `SMOKE_KEEP_STACK=1` for that run. Remove it immediately after diagnosis and run `docker compose --profile core --profile app --profile obs down -v --remove-orphans`. Preserved local telemetry may contain operational identifiers and must not be copied into tickets without review.
 
 ## Target down
 
@@ -161,14 +189,14 @@ Alerts: `VPNXrayUnhealthy` and `VPNXrayReloadFailed`.
 
 ## Configuration recovery
 
-Run `make observability-validate` before restart. It stages and reads the Prometheus key as UID 65532, validates both the 8-target and 11-target configurations, and executes target, HTTP, PostgreSQL, durable-workflow, scheduler, and node rule tests. Prometheus refuses invalid configuration. Grafana dashboards and data sources are provisioned from read-only repository files; UI edits are intentionally disabled.
+Run `make observability-validate` before restart. It stages and reads all runtime credentials under their actual UIDs, validates both Prometheus inventories and rules, validates Collector/Tempo/Loki native configuration, checks license material, and parses Grafana provisioning. Prometheus and the telemetry backends refuse invalid configuration. Grafana dashboards and data sources are provisioned from read-only repository files; UI edits are intentionally disabled.
 
-If local data is corrupted, stop the profile and remove only the named `vpn-service_prometheus-data` or `vpn-service_grafana-data` development volume after confirming no investigation needs it. Production data deletion requires the approved retention and incident process.
+If local data is corrupted, stop the profile and remove only the affected `vpn-service_prometheus-data`, `vpn-service_grafana-data`, `vpn-service_tempo-data`, or `vpn-service_loki-data` development volume after confirming no investigation needs it. Production data deletion requires the approved retention and incident process.
 
 ## Current gaps
 
 - No production Alertmanager receiver or escalation ownership.
 - No broker offset-lag exporter or Kafka broker dashboard yet; application lag is observed record age.
-- No OpenTelemetry collector, Tempo, or Loki profile components yet.
 - No SLO burn-rate rules yet.
-- No production backup of observability state; dashboards remain reproducible from Git.
+- No production Collector authorization policy, Grafana authentication/RBAC, Tempo/Loki tenancy, durable object storage, or observability backup/restore drill.
+- No production retention/legal-hold policy; 30-day traces and 14-day logs are local Stage 8 defaults only.

@@ -81,6 +81,25 @@ function Invoke-MTLSProbe([string[]]$arguments) {
     return $result
 }
 
+function Invoke-GoIntegrationTest([hashtable]$environment, [string]$package) {
+    $environmentArguments = @()
+    foreach ($name in $environment.Keys) {
+        $environmentArguments += @("-e", "$name=$($environment[$name])")
+    }
+    & docker run --rm `
+        --network vpn-service_backend `
+        -v "$($repo):/src" `
+        -v "vpn-service-go-mod-cache:/go/pkg/mod" `
+        -v "vpn-service-go-build-cache:/root/.cache/go-build" `
+        -w /src `
+        @environmentArguments `
+        $goImage `
+        go test -mod=readonly $package -run "^TestIntegration" -count=1
+    if ($LASTEXITCODE -ne 0) {
+        throw "containerized integration test failed: $package"
+    }
+}
+
 function Invoke-WebhookStatus([string]$body) {
     $responsePath = Join-Path $env:TEMP "vpn-platform-webhook-response.json"
     $requestPath = Join-Path $env:TEMP "vpn-platform-webhook-request.json"
@@ -180,7 +199,7 @@ try {
 
     $buildServices = @("mtls-credentials-init", "identity-migrate", "identity-service", "catalog-service", "billing-service", "subscription-service", "access-service", "notification-service", "admin-service", "yookassa-api", "telegram-api", "telegram-bot")
 	if ($fullVPN) { $buildServices += @("provisioning-migrate", "provisioning-service", "node-agent-primary") }
-    if ($observability) { $buildServices += @("prometheus", "grafana") }
+    if ($observability) { $buildServices += @("prometheus", "grafana", "otel-collector", "tempo", "loki") }
     foreach ($service in $buildServices) {
         docker compose @profiles build $service
         if ($LASTEXITCODE -ne 0) {
@@ -212,7 +231,13 @@ try {
 		$containers += @("vpn-service-provisioning-service-1", "vpn-service-node-agent-primary-1", "vpn-service-node-agent-failover-1")
 	}
     if ($observability) {
-        $containers += @("vpn-service-prometheus-1", "vpn-service-grafana-1")
+        $containers += @(
+            "vpn-service-prometheus-1",
+            "vpn-service-grafana-1",
+            "vpn-service-otel-collector-1",
+            "vpn-service-tempo-1",
+            "vpn-service-loki-1"
+        )
     }
     foreach ($attempt in 1..60) {
         $statuses = @()
@@ -273,6 +298,59 @@ try {
         if (@($dashboards | Where-Object { $_.uid -eq "vpn-platform-overview" }).Count -ne 1) {
             throw "provisioned VPN Platform dashboard was not found"
         }
+        foreach ($dataSourceUID in @("tempo", "loki")) {
+            $dataSource = Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/datasources/uid/$dataSourceUID" -TimeoutSec 10
+            if ($dataSource.uid -ne $dataSourceUID) {
+                throw "provisioned $dataSourceUID data source was not found"
+            }
+        }
+
+        $traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+        $traceParent = "00-$traceID-00f067aa0ba902b7-01"
+        $privacySentinel = "stage8-private-url-value"
+        Invoke-MTLSProbe @(
+            "GET",
+            "https://127.0.0.1:8080/version?probe=$privacySentinel",
+            "secrets/dev-mtls/identity-health.crt",
+            "secrets/dev-mtls/identity-health.key",
+            "secrets/dev-mtls/ca.crt",
+            "200",
+            "traceparent",
+            $traceParent
+        ) | Out-Null
+
+        $tempoJSON = ""
+        $lokiJSON = ""
+        $lokiQuery = [uri]::EscapeDataString('{service_name="identity-service"} |= "http request"')
+        foreach ($attempt in 1..30) {
+            try {
+                $tempoResponse = Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/datasources/proxy/uid/tempo/api/traces/$traceID" -TimeoutSec 10
+                $tempoJSON = $tempoResponse | ConvertTo-Json -Compress -Depth 30
+            } catch {
+                $tempoJSON = ""
+            }
+            try {
+                $lokiResponse = Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/datasources/proxy/uid/loki/loki/api/v1/query_range?query=$lokiQuery&limit=100&direction=backward" -TimeoutSec 10
+                $lokiJSON = $lokiResponse | ConvertTo-Json -Compress -Depth 30
+            } catch {
+                $lokiJSON = ""
+            }
+            if ($tempoJSON.Contains("GET /version") -and $lokiJSON.Contains($traceID)) {
+                break
+            }
+            Start-Sleep -Seconds 2
+        }
+        if (!$tempoJSON.Contains("GET /version")) {
+            throw "known W3C trace did not reach Tempo"
+        }
+        if (!$lokiJSON.Contains($traceID) -or !$lokiJSON.Contains("http request")) {
+            throw "trace-correlated structured log did not reach Loki"
+        }
+        foreach ($telemetryJSON in @($tempoJSON, $lokiJSON)) {
+            if ($telemetryJSON.Contains($privacySentinel) -or $telemetryJSON.Contains("/version?probe=")) {
+                throw "telemetry backend leaked raw URL data"
+            }
+        }
     }
 
     if (-not $fullVPN) {
@@ -280,68 +358,26 @@ try {
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
-    $previousBillingTestDatabaseURL = $env:BILLING_TEST_DATABASE_URL
-    try {
-        $env:BILLING_TEST_DATABASE_URL = "postgres://billing_app:$($env:BILLING_DB_PASSWORD)@127.0.0.1:$($env:POSTGRES_PORT)/billing_service?sslmode=disable"
-        go test ./services/billing/internal/postgres -run '^TestIntegration' -count=1
-        if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-        }
-    } finally {
-        $env:BILLING_TEST_DATABASE_URL = $previousBillingTestDatabaseURL
-    }
-    $previousSubscriptionTestDatabaseURL = $env:SUBSCRIPTION_TEST_DATABASE_URL
-    try {
-        $env:SUBSCRIPTION_TEST_DATABASE_URL = "postgres://subscription_app:$($env:SUBSCRIPTION_DB_PASSWORD)@127.0.0.1:$($env:POSTGRES_PORT)/subscription_service?sslmode=disable"
-        go test ./services/subscription/internal/postgres -run '^TestIntegration' -count=1
-        if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-        }
-    } finally {
-        $env:SUBSCRIPTION_TEST_DATABASE_URL = $previousSubscriptionTestDatabaseURL
-    }
-    $previousAccessTestDatabaseURL = $env:ACCESS_TEST_DATABASE_URL
-    try {
-        $env:ACCESS_TEST_DATABASE_URL = "postgres://access_app:$($env:ACCESS_DB_PASSWORD)@127.0.0.1:$($env:POSTGRES_PORT)/access_service?sslmode=disable"
-        go test ./services/access/internal/postgres -run '^TestIntegration' -count=1
-        if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-        }
-    } finally {
-        $env:ACCESS_TEST_DATABASE_URL = $previousAccessTestDatabaseURL
-    }
-    $previousAccessRedisAddr = $env:ACCESS_TEST_REDIS_ADDR
-    $previousAccessRedisPassword = $env:ACCESS_TEST_REDIS_PASSWORD
-    try {
-        $env:ACCESS_TEST_REDIS_ADDR = "127.0.0.1:6379"
-        $env:ACCESS_TEST_REDIS_PASSWORD = $env:REDIS_PASSWORD
-        go test ./services/access/internal/ratelimit -run '^TestIntegration' -count=1
-        if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-        }
-    } finally {
-        $env:ACCESS_TEST_REDIS_ADDR = $previousAccessRedisAddr
-        $env:ACCESS_TEST_REDIS_PASSWORD = $previousAccessRedisPassword
-    }
-    $previousNotificationTestDatabaseURL = $env:NOTIFICATION_TEST_DATABASE_URL
-    try {
-        $env:NOTIFICATION_TEST_DATABASE_URL = "postgres://notification_app:$($env:NOTIFICATION_DB_PASSWORD)@127.0.0.1:$($env:POSTGRES_PORT)/notification_service?sslmode=disable"
-        go test ./services/notification/internal/postgres -run '^TestIntegration' -count=1
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    } finally {
-        $env:NOTIFICATION_TEST_DATABASE_URL = $previousNotificationTestDatabaseURL
-    }
-    $previousAdminTestDatabaseURL = $env:ADMIN_TEST_DATABASE_URL
-    $previousAdminMigratorTestDatabaseURL = $env:ADMIN_MIGRATOR_TEST_DATABASE_URL
-    try {
-        $env:ADMIN_TEST_DATABASE_URL = "postgres://admin_app:$($env:ADMIN_DB_PASSWORD)@127.0.0.1:$($env:POSTGRES_PORT)/admin_service?sslmode=disable"
-        $env:ADMIN_MIGRATOR_TEST_DATABASE_URL = "postgres://admin_migrator:$($env:ADMIN_MIGRATOR_DB_PASSWORD)@127.0.0.1:$($env:POSTGRES_PORT)/admin_service?sslmode=disable"
-        go test ./services/admin/internal/postgres -run '^TestIntegration' -count=1
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    } finally {
-        $env:ADMIN_TEST_DATABASE_URL = $previousAdminTestDatabaseURL
-        $env:ADMIN_MIGRATOR_TEST_DATABASE_URL = $previousAdminMigratorTestDatabaseURL
-    }
+    Invoke-GoIntegrationTest @{
+        BILLING_TEST_DATABASE_URL = "postgres://billing_app:$($env:BILLING_DB_PASSWORD)@postgres:5432/billing_service?sslmode=disable"
+    } "./services/billing/internal/postgres"
+    Invoke-GoIntegrationTest @{
+        SUBSCRIPTION_TEST_DATABASE_URL = "postgres://subscription_app:$($env:SUBSCRIPTION_DB_PASSWORD)@postgres:5432/subscription_service?sslmode=disable"
+    } "./services/subscription/internal/postgres"
+    Invoke-GoIntegrationTest @{
+        ACCESS_TEST_DATABASE_URL = "postgres://access_app:$($env:ACCESS_DB_PASSWORD)@postgres:5432/access_service?sslmode=disable"
+    } "./services/access/internal/postgres"
+    Invoke-GoIntegrationTest @{
+        ACCESS_TEST_REDIS_ADDR = "redis:6379"
+        ACCESS_TEST_REDIS_PASSWORD = $env:REDIS_PASSWORD
+    } "./services/access/internal/ratelimit"
+    Invoke-GoIntegrationTest @{
+        NOTIFICATION_TEST_DATABASE_URL = "postgres://notification_app:$($env:NOTIFICATION_DB_PASSWORD)@postgres:5432/notification_service?sslmode=disable"
+    } "./services/notification/internal/postgres"
+    Invoke-GoIntegrationTest @{
+        ADMIN_TEST_DATABASE_URL = "postgres://admin_app:$($env:ADMIN_DB_PASSWORD)@postgres:5432/admin_service?sslmode=disable"
+        ADMIN_MIGRATOR_TEST_DATABASE_URL = "postgres://admin_migrator:$($env:ADMIN_MIGRATOR_DB_PASSWORD)@postgres:5432/admin_service?sslmode=disable"
+    } "./services/admin/internal/postgres"
     docker start "vpn-service-billing-service-1" "vpn-service-subscription-service-1" "vpn-service-access-service-1" "vpn-service-telegram-bot-1" "vpn-service-notification-service-1" "vpn-service-admin-service-1" | Out-Null
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
@@ -780,6 +816,10 @@ try {
     $ErrorActionPreference = "SilentlyContinue"
     docker rm -f $vpnClientName 2>$null | Out-Null
     if (Test-Path $vpnClientConfig) { Remove-Item $vpnClientConfig -Force }
-    docker compose @profiles down -v --remove-orphans
+    if ([Environment]::GetEnvironmentVariable("SMOKE_KEEP_STACK") -eq "1") {
+        Write-Warning "SMOKE_KEEP_STACK=1: Compose services and volumes were preserved for diagnostics."
+    } else {
+        docker compose @profiles down -v --remove-orphans
+    }
     $ErrorActionPreference = $cleanupPreference
 }

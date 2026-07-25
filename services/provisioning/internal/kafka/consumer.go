@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap"
 
 	platformkafka "github.com/ZheglY/vpn-platform/internal/platform/kafka"
+	platformtelemetry "github.com/ZheglY/vpn-platform/internal/platform/telemetry"
 	"github.com/ZheglY/vpn-platform/services/provisioning/internal/application"
 	"github.com/ZheglY/vpn-platform/services/provisioning/internal/domain"
 )
@@ -85,7 +86,7 @@ func (c *Consumer) pollOnce(ctx context.Context) bool {
 		}
 		startedAt := time.Now()
 		outcome := "success"
-		err := c.process(ctx, record)
+		err := c.processTraced(ctx, record)
 		if errors.Is(err, domain.ErrSequenceGap) {
 			c.metrics.ObserveHandler(record.Topic, "deferred", startedAt, record.Timestamp)
 			c.metrics.ObserveRetry(record.Topic, "consumer")
@@ -195,7 +196,7 @@ func (c *Consumer) retryDeferred(ctx context.Context) {
 		for key, record := range c.deferred {
 			startedAt := time.Now()
 			outcome := "success"
-			err := c.process(ctx, record)
+			err := c.processTraced(ctx, record)
 			if errors.Is(err, domain.ErrSequenceGap) {
 				c.metrics.ObserveHandler(record.Topic, "deferred", startedAt, record.Timestamp)
 				c.metrics.ObserveRetry(record.Topic, "consumer")
@@ -231,6 +232,13 @@ func (c *Consumer) retryDeferred(ctx context.Context) {
 			return
 		}
 	}
+}
+
+func (c *Consumer) processTraced(ctx context.Context, record *kgo.Record) error {
+	processCtx, finish := platformtelemetry.StartKafkaConsumer(ctx, record)
+	err := c.process(processCtx, record)
+	finish(err)
+	return err
 }
 
 func (c *Consumer) commit(ctx context.Context, record *kgo.Record) bool {

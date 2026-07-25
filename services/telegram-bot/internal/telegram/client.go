@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	platformtelemetry "github.com/ZheglY/vpn-platform/internal/platform/telemetry"
 )
 
 const maxResponseBytes = 64 * 1024
@@ -33,7 +35,7 @@ func NewClient(apiBaseURL, token string, timeout time.Duration) (*Client, error)
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-	return NewClientWithHTTPClient(apiBaseURL, token, &http.Client{Timeout: timeout})
+	return NewClientWithHTTPClient(apiBaseURL, token, &http.Client{Timeout: timeout, Transport: platformtelemetry.WrapHTTPTransport(nil)})
 }
 
 func NewClientWithHTTPClient(apiBaseURL, token string, httpClient *http.Client) (*Client, error) {

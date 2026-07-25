@@ -72,7 +72,8 @@ func run(outDir string) error {
 			commonName: "identity-service.local",
 			dnsNames:   []string{"identity-service", "identity-service.local", "localhost"},
 			ipAddrs:    []net.IP{net.ParseIP("127.0.0.1")},
-			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+			spiffeName: "identity-service",
+			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		},
 		{
 			name:       "telegram-bot",
@@ -99,7 +100,8 @@ func run(outDir string) error {
 			commonName: "catalog-service.local",
 			dnsNames:   []string{"catalog-service", "catalog-service.local", "localhost"},
 			ipAddrs:    []net.IP{net.ParseIP("127.0.0.1")},
-			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+			spiffeName: "catalog-service",
+			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		},
 		{
 			name:       "billing-service",
@@ -139,7 +141,7 @@ func run(outDir string) error {
 			dnsNames:   []string{"node-agent-primary", "node-agent-primary.local", "localhost"},
 			ipAddrs:    []net.IP{net.ParseIP("127.0.0.1")},
 			spiffeName: "node-agent-primary",
-			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		},
 		{
 			name:       "node-agent-failover",
@@ -147,7 +149,7 @@ func run(outDir string) error {
 			dnsNames:   []string{"node-agent-failover", "node-agent-failover.local", "localhost"},
 			ipAddrs:    []net.IP{net.ParseIP("127.0.0.1")},
 			spiffeName: "node-agent-failover",
-			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		},
 		{
 			name:       "node-health-primary",
@@ -207,6 +209,34 @@ func run(outDir string) error {
 			spiffeURI:  "spiffe://vpn-service/ns/local/admin/operations-local",
 			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		},
+		{
+			name:       "otel-collector",
+			commonName: "otel-collector.local",
+			dnsNames:   []string{"otel-collector", "otel-collector.local", "localhost"},
+			ipAddrs:    []net.IP{net.ParseIP("127.0.0.1")},
+			spiffeName: "otel-collector",
+			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		},
+	}
+	for _, name := range []string{
+		"identity-service",
+		"catalog-service",
+		"billing-service",
+		"subscription-service",
+		"access-service",
+		"provisioning-service",
+		"node-agent-primary",
+		"node-agent-failover",
+		"notification-service",
+		"admin-service",
+		"telegram-bot",
+	} {
+		specs = append(specs, certSpec{
+			name:       name + "-otel",
+			commonName: "ignored",
+			spiffeName: name + "-otel",
+			extUsages:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		})
 	}
 
 	for _, spec := range specs {

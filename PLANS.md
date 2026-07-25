@@ -321,7 +321,7 @@ Verification completed on 2026-07-23:
 
 Depends on working services. Adds dashboards, alerts, runbooks, backup/restore drill, node hardening, secret rotation, privacy retention jobs, SBOM, and signing.
 
-Status: in progress on `codex/stage8-observability-hardening`. The first bounded slice implements the privacy-safe HTTP RED baseline and local Prometheus/Grafana profile. The second slice implements bounded PostgreSQL, Kafka, durable-workflow, owner-domain, node-capacity, and Xray metrics. Stage 8 is not complete and Stage 9 remains blocked.
+Status: in progress on `codex/stage8-observability-hardening`. The first bounded slice implements the privacy-safe HTTP RED baseline and local Prometheus/Grafana profile. The second slice implements bounded PostgreSQL, Kafka, durable-workflow, owner-domain, node-capacity, and Xray metrics. The third slice implements W3C HTTP/Kafka trace context, privacy-gated OTLP logs, and the local Collector/Tempo/Loki pipeline. Stage 8 is not complete and Stage 9 remains blocked.
 
 Implementation plan:
 
@@ -352,6 +352,17 @@ Second-slice acceptance:
 - Owner-local collectors expose explicit durable backlog and domain-state series with one-second query bounds, exact label allowlists, zero values, and fail-closed snapshot health.
 - Billing reconciliation, Subscription lifecycle scheduling, Access state, Provisioning operation/capacity/heartbeat, Notification delivery, and node-agent Xray metrics are present and privacy-safe.
 - Operational dashboard panels, alerts, representative `promtool` tests, 8/11-target smoke assertions, ADR 0028, architecture, threat model, runbook, risk register, external sources, README, and Definition of Done match the implementation.
+
+Third-slice acceptance:
+
+- All service HTTP servers and reviewed HTTP clients propagate W3C `traceparent`/`tracestate` without baggage and record only method, registered route, and status.
+- Every franz-go client injects W3C context; each owner consumer extracts it. Kafka span data excludes topic, key, payload, partition, offset, envelope IDs, and headers.
+- OTLP logs pass an exact message/field allowlist before export. Collector transforms repeat the privacy allowlist and remove unreviewed resource, span, scope, and log attributes.
+- OTLP ingress requires TLS 1.3 mTLS with per-service staged client credentials and a separate Collector server identity. Tempo and Loki remain private to Compose; only loopback Grafana can query them.
+- Local trace retention is 30 days and log retention is 14 days. No production storage, tenancy, authentication, backup, or retention policy is implied.
+- Tempo and Loki are rebuilt from integrity-pinned release sources with reviewed security dependency updates, verified licenses/modules, and zero unsuppressed HIGH/CRITICAL findings. Tempo's exact Prometheus LTS PURL has one visible OpenVEX correction backed by a build assertion of the patched redacting Azure AD client-secret type because Tempo exposes effective configuration.
+- `make observability-validate` and `make observability-smoke` prove native configuration, real-UID key readability, a known W3C trace, a trace-correlated log, and absence of a synthetic query-string secret in Tempo/Loki.
+- ADR 0029, architecture, threat model, runbook, risk register, external sources, README, and Definition of Done match the implementation.
 
 ### Stage 9 - Production readiness review
 

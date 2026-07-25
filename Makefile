@@ -95,6 +95,9 @@ docker-build:
 	docker build -f services/admin/Dockerfile.cli -t vpn-service/admin-cli:local .
 	docker build -f deploy/observability/prometheus/Dockerfile -t vpn-service/prometheus:local .
 	docker build -f deploy/observability/grafana/Dockerfile -t vpn-service/grafana:local .
+	docker build -f deploy/observability/otel-collector/Dockerfile -t vpn-service/otel-collector:local .
+	docker build -f deploy/observability/tempo/Dockerfile -t vpn-service/tempo:local .
+	docker build -f deploy/observability/loki/Dockerfile -t vpn-service/loki:local .
 
 image-scan:
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/credentialstage:local
@@ -111,6 +114,9 @@ image-scan:
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/admin-cli:local
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/prometheus:local
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/grafana:local
+	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/otel-collector:local
+	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy -v "$(CURDIR):/workspace:ro" $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress --show-suppressed --vex /workspace/deploy/observability/tempo/tempo.openvex.json vpn-service/tempo:local
+	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/loki:local
 
 compose-config:
 ifeq ($(OS),Windows_NT)

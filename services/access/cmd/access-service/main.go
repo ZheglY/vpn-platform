@@ -26,6 +26,7 @@ import (
 	"github.com/ZheglY/vpn-platform/internal/platform/observability"
 	platformpostgres "github.com/ZheglY/vpn-platform/internal/platform/postgres"
 	platformredis "github.com/ZheglY/vpn-platform/internal/platform/redis"
+	platformtelemetry "github.com/ZheglY/vpn-platform/internal/platform/telemetry"
 	"github.com/ZheglY/vpn-platform/internal/platform/version"
 	"github.com/ZheglY/vpn-platform/services/access/internal/application"
 	"github.com/ZheglY/vpn-platform/services/access/internal/credential"
@@ -58,6 +59,11 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	telemetryRuntime, err := platformtelemetry.Setup(ctx, serviceName, cfg.Environment)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = telemetryRuntime.Shutdown(context.Background()) }()
 	logger, err := logging.New(logging.Config{Environment: cfg.Environment, Level: cfg.LogLevel})
 	if err != nil {
 		return err
@@ -147,7 +153,7 @@ func run(ctx context.Context) error {
 	mux.Handle("GET /s/{token}", http.HandlerFunc(api.GetHappSubscription))
 	mux.Handle("GET /s/", http.HandlerFunc(api.GetUnavailableHappSubscription))
 	mux.Handle("GET /s", http.HandlerFunc(api.GetUnavailableHappSubscription))
-	handler := httpserver.Chain(mux, httpserver.RequestID, httpserver.LimitBody(cfg.MaxBodyBytes), httpserver.Recover(logger), httpserver.LogRequests(logger), httpMetrics.Middleware)
+	handler := httpserver.Chain(mux, httpserver.RequestID, platformtelemetry.HTTPServer, httpserver.LimitBody(cfg.MaxBodyBytes), httpserver.Recover(logger), httpserver.LogRequests(logger), httpMetrics.Middleware)
 	srv := httpserver.New(cfg.HTTP, handler)
 	srv.TLSConfig = cfg.TLS
 	logger.Info("starting service", zap.String("service", serviceName), zap.String("environment", cfg.Environment))

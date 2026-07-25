@@ -21,6 +21,7 @@ import (
 	"github.com/ZheglY/vpn-platform/internal/platform/logging"
 	"github.com/ZheglY/vpn-platform/internal/platform/observability"
 	platformpostgres "github.com/ZheglY/vpn-platform/internal/platform/postgres"
+	platformtelemetry "github.com/ZheglY/vpn-platform/internal/platform/telemetry"
 	"github.com/ZheglY/vpn-platform/internal/platform/version"
 	"github.com/ZheglY/vpn-platform/services/admin/internal/application"
 	"github.com/ZheglY/vpn-platform/services/admin/internal/httpapi"
@@ -51,6 +52,11 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	telemetryRuntime, err := platformtelemetry.Setup(ctx, serviceName, cfg.Environment)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = telemetryRuntime.Shutdown(context.Background()) }()
 	logger, err := logging.New(logging.Config{Environment: cfg.Environment, Level: cfg.LogLevel})
 	if err != nil {
 		return err
@@ -92,7 +98,7 @@ func run(ctx context.Context) error {
 	mux.Handle("POST /admin/v1/subscriptions/{subscription_id}/revoke", api.Protect("subscription.revoke", api.RevokeSubscription))
 	mux.Handle("POST /admin/v1/credentials/{credential_id}/recover", api.Protect("access.provisioning.recover", api.RecoverAccess))
 	mux.Handle("GET /admin/v1/audit", api.Protect("audit.read", api.ListAudit))
-	handler := httpserver.Chain(mux, httpserver.RequestID, httpserver.LimitBody(cfg.MaxBodyBytes), httpserver.Recover(logger), httpserver.LogRequests(logger), httpMetrics.Middleware)
+	handler := httpserver.Chain(mux, httpserver.RequestID, platformtelemetry.HTTPServer, httpserver.LimitBody(cfg.MaxBodyBytes), httpserver.Recover(logger), httpserver.LogRequests(logger), httpMetrics.Middleware)
 	server := httpserver.New(cfg.HTTP, handler)
 	server.TLSConfig = cfg.TLS
 	logger.Info("starting service", zap.String("service", serviceName), zap.String("environment", cfg.Environment))

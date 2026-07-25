@@ -167,7 +167,9 @@ Wait-SQL "notification_service" "SELECT count(*) FROM notification_jobs WHERE cr
 Wait-SQL "notification_service" "SELECT count(*) FROM notification_jobs WHERE subscription_id='$SubscriptionID' AND notification_type='subscription_revoked' AND status='delivered'" "1"
 Wait-SQL "notification_service" "SELECT last_sequence FROM notification_cursors WHERE aggregate_type='access' AND aggregate_id='$CredentialID'" "2"
 Wait-SQL "notification_service" "SELECT count(*) FROM notification_jobs WHERE status IN ('pending','retry','delivering')" "0"
-$messagesBeforeStale = (Invoke-RestMethod -Uri "http://127.0.0.1:8082/messages" -TimeoutSec 10).count
+$readyText = "<b>VPN access is ready.</b> Send /link to receive your one-time Happ subscription link."
+$messagesBeforeStale = Invoke-RestMethod -Uri "http://127.0.0.1:8082/messages" -TimeoutSec 10
+$readyMessagesBeforeStale = @($messagesBeforeStale.messages | Where-Object { $_.text -eq $readyText }).Count
 $now = (Get-Date).ToUniversalTime().ToString("o")
 $staleReady = @{
     event_id = "77000000-0000-4000-8000-000000000005"; event_type = "access.ready.v1"; schema_version = 1
@@ -177,6 +179,8 @@ $staleReady = @{
 } | ConvertTo-Json -Compress -Depth 5
 Publish-Event "access.ready.v1" "user:$UserID" $staleReady
 Wait-SQL "notification_service" "SELECT status || ':' || terminal_reason_code FROM notification_jobs WHERE business_dedupe_key='access_ready:${CredentialID}:3'" "suppressed:stale_subscription_state"
-if ((Invoke-RestMethod -Uri "http://127.0.0.1:8082/messages" -TimeoutSec 10).count -ne $messagesBeforeStale) { throw "stale access-ready event was delivered after revoke" }
+$messagesAfterStale = Invoke-RestMethod -Uri "http://127.0.0.1:8082/messages" -TimeoutSec 10
+$readyMessagesAfterStale = @($messagesAfterStale.messages | Where-Object { $_.text -eq $readyText }).Count
+if ($readyMessagesAfterStale -ne $readyMessagesBeforeStale) { throw "stale access-ready event was delivered after revoke" }
 
 Write-Host "Stage 7 post-revoke stale-notification E2E checks passed."

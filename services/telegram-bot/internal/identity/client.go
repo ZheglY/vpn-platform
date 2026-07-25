@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ZheglY/vpn-platform/internal/platform/requestid"
+	platformtelemetry "github.com/ZheglY/vpn-platform/internal/platform/telemetry"
 	"github.com/ZheglY/vpn-platform/services/telegram-bot/internal/bot"
 )
 
@@ -22,7 +23,7 @@ func NewClient(baseURL string, timeout time.Duration) (*Client, error) {
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-	return NewClientWithHTTPClient(baseURL, &http.Client{Timeout: timeout})
+	return NewClientWithHTTPClient(baseURL, &http.Client{Timeout: timeout, Transport: platformtelemetry.WrapHTTPTransport(nil)})
 }
 
 func NewClientWithHTTPClient(baseURL string, httpClient *http.Client) (*Client, error) {

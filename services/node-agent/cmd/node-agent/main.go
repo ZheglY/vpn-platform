@@ -20,6 +20,7 @@ import (
 	"github.com/ZheglY/vpn-platform/internal/platform/httpserver"
 	"github.com/ZheglY/vpn-platform/internal/platform/logging"
 	"github.com/ZheglY/vpn-platform/internal/platform/observability"
+	platformtelemetry "github.com/ZheglY/vpn-platform/internal/platform/telemetry"
 	"github.com/ZheglY/vpn-platform/internal/platform/version"
 	"github.com/ZheglY/vpn-platform/services/node-agent/internal/application"
 	"github.com/ZheglY/vpn-platform/services/node-agent/internal/httpapi"
@@ -51,6 +52,11 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	telemetryRuntime, err := platformtelemetry.Setup(ctx, serviceName, cfg.environment)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = telemetryRuntime.Shutdown(context.Background()) }()
 	logger, err := logging.New(logging.Config{Environment: cfg.environment, Level: cfg.logLevel})
 	if err != nil {
 		return err
@@ -104,7 +110,7 @@ func run(ctx context.Context) error {
 	mux.Handle("GET /internal/v1/status", managementAuth(http.HandlerFunc(api.Status)))
 	mux.Handle("GET /internal/v1/credentials/{credential_id}", managementAuth(http.HandlerFunc(api.CredentialState)))
 	mux.Handle("PUT /internal/v1/credentials/{credential_id}", managementAuth(http.HandlerFunc(api.ApplyDesiredState)))
-	handler := httpserver.Chain(mux, httpserver.RequestID, httpserver.LimitBody(cfg.maxBodyBytes), httpserver.Recover(logger), httpMetrics.Middleware)
+	handler := httpserver.Chain(mux, httpserver.RequestID, platformtelemetry.HTTPServer, httpserver.LimitBody(cfg.maxBodyBytes), httpserver.Recover(logger), httpMetrics.Middleware)
 	srv := httpserver.New(cfg.http, handler)
 	srv.TLSConfig = cfg.tls
 	logger.Info("starting node agent", zap.String("service", serviceName), zap.String("node_id", cfg.nodeID), zap.String("environment", cfg.environment))

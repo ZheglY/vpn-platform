@@ -24,6 +24,7 @@ import (
 	"github.com/ZheglY/vpn-platform/internal/platform/logging"
 	"github.com/ZheglY/vpn-platform/internal/platform/observability"
 	platformpostgres "github.com/ZheglY/vpn-platform/internal/platform/postgres"
+	platformtelemetry "github.com/ZheglY/vpn-platform/internal/platform/telemetry"
 	"github.com/ZheglY/vpn-platform/internal/platform/version"
 	accessclient "github.com/ZheglY/vpn-platform/services/notification/internal/access"
 	"github.com/ZheglY/vpn-platform/services/notification/internal/application"
@@ -58,6 +59,11 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	telemetryRuntime, err := platformtelemetry.Setup(ctx, serviceName, cfg.Environment)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = telemetryRuntime.Shutdown(context.Background()) }()
 	logger, err := logging.New(logging.Config{Environment: cfg.Environment, Level: cfg.LogLevel})
 	if err != nil {
 		return err
@@ -133,7 +139,7 @@ func run(ctx context.Context) error {
 	mux.Handle("GET /internal/v1/notifications/{notification_id}", auth(http.HandlerFunc(api.GetNotification)))
 	mux.Handle("POST /internal/v1/notifications/{notification_id}/retry", auth(http.HandlerFunc(api.RetryNotification)))
 	mux.Handle("GET /internal/v1/dead-letters", auth(http.HandlerFunc(api.ListDeadLetters)))
-	handler := httpserver.Chain(mux, httpserver.RequestID, httpserver.LimitBody(cfg.MaxBodyBytes), httpserver.Recover(logger), httpserver.LogRequests(logger), httpMetrics.Middleware)
+	handler := httpserver.Chain(mux, httpserver.RequestID, platformtelemetry.HTTPServer, httpserver.LimitBody(cfg.MaxBodyBytes), httpserver.Recover(logger), httpserver.LogRequests(logger), httpMetrics.Middleware)
 	srv := httpserver.New(cfg.HTTP, handler)
 	srv.TLSConfig = cfg.TLS
 	logger.Info("starting service", zap.String("service", serviceName), zap.String("environment", cfg.Environment))

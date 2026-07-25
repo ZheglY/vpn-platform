@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	platformkafka "github.com/ZheglY/vpn-platform/internal/platform/kafka"
+	platformtelemetry "github.com/ZheglY/vpn-platform/internal/platform/telemetry"
 	"github.com/ZheglY/vpn-platform/services/subscription/internal/application"
 	"github.com/ZheglY/vpn-platform/services/subscription/internal/domain"
 )
@@ -66,7 +67,7 @@ func (c *Consumer) pollOnce(ctx context.Context) (keepRunning bool) {
 		}
 		startedAt := time.Now()
 		outcome := "success"
-		err := c.process(ctx, record)
+		err := c.processTraced(ctx, record)
 		if err != nil {
 			if code, poison := application.ContractErrorCode(err); poison {
 				sum := sha256.Sum256(record.Value)
@@ -100,6 +101,13 @@ func (c *Consumer) pollOnce(ctx context.Context) (keepRunning bool) {
 		c.metrics.ObserveHandler(record.Topic, outcome, startedAt, record.Timestamp)
 	}
 	return ctx.Err() == nil
+}
+
+func (c *Consumer) processTraced(ctx context.Context, record *kgo.Record) error {
+	processCtx, finish := platformtelemetry.StartKafkaConsumer(ctx, record)
+	err := c.process(processCtx, record)
+	finish(err)
+	return err
 }
 
 func (c *Consumer) process(ctx context.Context, record *kgo.Record) error {

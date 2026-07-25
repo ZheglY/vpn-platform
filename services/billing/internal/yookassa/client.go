@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	platformtelemetry "github.com/ZheglY/vpn-platform/internal/platform/telemetry"
 	"github.com/ZheglY/vpn-platform/services/billing/internal/domain"
 )
 
@@ -38,7 +39,7 @@ func NewClient(baseURL, shopID, secretKey, returnURL string, httpClient *http.Cl
 		return nil, fmt.Errorf("invalid payment return URL")
 	}
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 10 * time.Second}
+		httpClient = &http.Client{Timeout: 10 * time.Second, Transport: platformtelemetry.WrapHTTPTransport(nil)}
 	}
 	return &Client{baseURL: parsed, shopID: shopID, secretKey: secretKey, returnURL: returnURL, http: httpClient}, nil
 }

@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/ZheglY/vpn-platform/internal/platform/telemetry"
 )
 
 func NewMutualTLSClient(certFile, keyFile string, caFiles []string, timeout time.Duration) (*http.Client, error) {
@@ -32,13 +34,13 @@ func NewMutualTLSClient(certFile, keyFile string, caFiles []string, timeout time
 
 	return &http.Client{
 		Timeout: timeout,
-		Transport: &http.Transport{
+		Transport: telemetry.WrapHTTPTransport(&http.Transport{
 			TLSClientConfig: &tls.Config{
 				MinVersion:   tls.VersionTLS13,
 				Certificates: []tls.Certificate{cert},
 				RootCAs:      rootCAs,
 			},
-		},
+		}),
 	}, nil
 }
 
@@ -55,10 +57,10 @@ func NewTLSClient(caFiles []string, timeout time.Duration) (*http.Client, error)
 	}
 	return &http.Client{
 		Timeout: timeout,
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{
+		Transport: telemetry.WrapHTTPTransport(&http.Transport{TLSClientConfig: &tls.Config{
 			MinVersion: tls.VersionTLS13,
 			RootCAs:    rootCAs,
-		}},
+		}}),
 	}, nil
 }
 

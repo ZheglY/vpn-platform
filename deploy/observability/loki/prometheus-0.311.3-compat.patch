@@ -1,0 +1,25 @@
+diff --git a/pkg/ruler/base/notifier.go b/pkg/ruler/base/notifier.go
+index c43e4a8..e95ffb6 100644
+--- a/pkg/ruler/base/notifier.go
++++ b/pkg/ruler/base/notifier.go
+@@ -31 +31 @@
+-	sdMetrics *discovery.SDMetrics
++	sdMetrics map[string]discovery.DiscovererMetrics
+diff --git a/pkg/ruler/base/storage.go b/pkg/ruler/base/storage.go
+index 09c68c3..c60023c 100644
+--- a/pkg/ruler/base/storage.go
++++ b/pkg/ruler/base/storage.go
+@@ -7,2 +6,0 @@
+-	"io"
+-	"log/slog"
+@@ -146,2 +144 @@
+-	p          parser.Parser
+-	noopLogger *slog.Logger
++	p parser.Parser
+@@ -152,2 +149 @@
+-		p:          parser.NewParser(parser.Options{}),
+-		noopLogger: slog.New(slog.NewTextHandler(io.Discard, nil)),
++		p: parser.NewParser(parser.Options{}),
+@@ -158 +154 @@
+-	return rulefmt.ParseFile(identifier, ignoreUnknownFields, nameValidationScheme, fl.p, fl.noopLogger)
++	return rulefmt.ParseFile(identifier, ignoreUnknownFields, nameValidationScheme, fl.p)

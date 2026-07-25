@@ -24,6 +24,7 @@ import (
 	"github.com/ZheglY/vpn-platform/internal/platform/logging"
 	"github.com/ZheglY/vpn-platform/internal/platform/observability"
 	platformpostgres "github.com/ZheglY/vpn-platform/internal/platform/postgres"
+	platformtelemetry "github.com/ZheglY/vpn-platform/internal/platform/telemetry"
 	"github.com/ZheglY/vpn-platform/internal/platform/version"
 	"github.com/ZheglY/vpn-platform/services/subscription/internal/application"
 	billingclient "github.com/ZheglY/vpn-platform/services/subscription/internal/billing"
@@ -55,6 +56,11 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	telemetryRuntime, err := platformtelemetry.Setup(ctx, serviceName, cfg.Environment)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = telemetryRuntime.Shutdown(context.Background()) }()
 	logger, err := logging.New(logging.Config{Environment: cfg.Environment, Level: cfg.LogLevel})
 	if err != nil {
 		return err
@@ -75,7 +81,7 @@ func run(ctx context.Context) error {
 	if err := store.RegisterSubscriptionMetrics(registry, serviceName); err != nil {
 		return err
 	}
-	internalHTTP := &http.Client{Timeout: cfg.OutboundTimeout}
+	internalHTTP := &http.Client{Timeout: cfg.OutboundTimeout, Transport: platformtelemetry.WrapHTTPTransport(nil)}
 	if cfg.InternalAuth == "mtls" {
 		internalHTTP, err = platformhttpclient.NewMutualTLSClient(cfg.ClientCertFile, cfg.ClientKeyFile, []string{cfg.ServerCAFile}, cfg.OutboundTimeout)
 		if err != nil {
@@ -129,7 +135,7 @@ func run(ctx context.Context) error {
 	mux.Handle("GET /internal/v1/users/{user_id}/subscription", internalAuth(http.HandlerFunc(api.GetSubscription)))
 	mux.Handle("GET /internal/v1/subscriptions/{subscription_id}/placement", placementAuth(http.HandlerFunc(api.GetPlacement)))
 	mux.Handle("POST /internal/v1/subscriptions/{subscription_id}/admin-revoke", adminAuth(http.HandlerFunc(api.AdminRevoke)))
-	handler := httpserver.Chain(mux, httpserver.RequestID, httpserver.LimitBody(cfg.MaxBodyBytes), httpserver.Recover(logger), httpserver.LogRequests(logger), httpMetrics.Middleware)
+	handler := httpserver.Chain(mux, httpserver.RequestID, platformtelemetry.HTTPServer, httpserver.LimitBody(cfg.MaxBodyBytes), httpserver.Recover(logger), httpserver.LogRequests(logger), httpMetrics.Middleware)
 	srv := httpserver.New(cfg.HTTP, handler)
 	srv.TLSConfig = cfg.TLS
 	logger.Info("starting service", zap.String("service", serviceName), zap.String("environment", cfg.Environment))

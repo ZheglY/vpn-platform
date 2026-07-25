@@ -20,6 +20,7 @@ import (
 	"github.com/ZheglY/vpn-platform/internal/platform/logging"
 	"github.com/ZheglY/vpn-platform/internal/platform/observability"
 	platformpostgres "github.com/ZheglY/vpn-platform/internal/platform/postgres"
+	platformtelemetry "github.com/ZheglY/vpn-platform/internal/platform/telemetry"
 	"github.com/ZheglY/vpn-platform/internal/platform/version"
 	"github.com/ZheglY/vpn-platform/services/identity/internal/httpapi"
 	identitypostgres "github.com/ZheglY/vpn-platform/services/identity/internal/postgres"
@@ -52,6 +53,12 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	telemetryRuntime, err := platformtelemetry.Setup(ctx, serviceName, appCfg.Environment)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = telemetryRuntime.Shutdown(context.Background()) }()
 
 	logger, err := logging.New(logging.Config{
 		Environment: appCfg.Environment,
@@ -94,6 +101,7 @@ func run(ctx context.Context) error {
 	handler := httpserver.Chain(
 		mux,
 		httpserver.RequestID,
+		platformtelemetry.HTTPServer,
 		httpserver.LimitBody(appCfg.MaxBodyBytes),
 		httpserver.Recover(logger),
 		httpserver.LogRequests(logger),

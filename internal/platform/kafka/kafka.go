@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kgo"
+
+	"github.com/ZheglY/vpn-platform/internal/platform/telemetry"
 )
 
 type Envelope struct {
@@ -30,6 +32,7 @@ func NewClient(brokers []string, clientID string, opts ...kgo.Opt) (*kgo.Client,
 	allOpts := []kgo.Opt{
 		kgo.SeedBrokers(brokers...),
 		kgo.ClientID(clientID),
+		kgo.WithHooks(telemetry.KafkaHook{}),
 	}
 	allOpts = append(allOpts, opts...)
 	client, err := kgo.NewClient(allOpts...)

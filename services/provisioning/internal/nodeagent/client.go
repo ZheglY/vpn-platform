@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ZheglY/vpn-platform/internal/platform/requestid"
+	platformtelemetry "github.com/ZheglY/vpn-platform/internal/platform/telemetry"
 	"github.com/ZheglY/vpn-platform/services/provisioning/internal/domain"
 )
 
@@ -24,7 +25,11 @@ type Client struct {
 }
 
 func NewClient(base *http.Client, timeout time.Duration) (*Client, error) {
-	transport, ok := base.Transport.(*http.Transport)
+	baseTransport := base.Transport
+	if unwrapper, ok := baseTransport.(interface{ Unwrap() http.RoundTripper }); ok {
+		baseTransport = unwrapper.Unwrap()
+	}
+	transport, ok := baseTransport.(*http.Transport)
 	if !ok || transport.TLSClientConfig == nil {
 		return nil, fmt.Errorf("node-agent client requires a TLS transport")
 	}
@@ -114,5 +119,5 @@ func (c *Client) clientForNode(expectedSPIFFEID string) *http.Client {
 		return nil
 	}
 	transport.TLSClientConfig = tlsConfig
-	return &http.Client{Transport: transport, Timeout: c.timeout}
+	return &http.Client{Transport: platformtelemetry.WrapHTTPTransport(transport), Timeout: c.timeout}
 }

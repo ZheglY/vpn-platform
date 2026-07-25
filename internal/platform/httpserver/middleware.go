@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ZheglY/vpn-platform/internal/platform/httperror"
+	"github.com/ZheglY/vpn-platform/internal/platform/logging"
 	"github.com/ZheglY/vpn-platform/internal/platform/requestid"
 )
 
@@ -50,6 +51,7 @@ func Recover(logger *zap.Logger) Middleware {
 			defer func() {
 				if recovered := recover(); recovered != nil {
 					logger.Error("http handler panic",
+						logging.Context(r.Context()),
 						zap.String("request_id", requestid.FromRequest(r)),
 						zap.String("panic_type", fmt.Sprintf("%T", recovered)),
 						zap.ByteString("stack", debug.Stack()),
@@ -70,6 +72,7 @@ func LogRequests(logger *zap.Logger) Middleware {
 			next.ServeHTTP(rec, r)
 
 			fields := []zap.Field{
+				logging.Context(r.Context()),
 				zap.String("request_id", requestid.FromRequest(r)),
 				zap.String("method", r.Method),
 				zap.Int("status", rec.status),

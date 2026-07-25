@@ -20,6 +20,7 @@ import (
 	"github.com/ZheglY/vpn-platform/internal/platform/logging"
 	"github.com/ZheglY/vpn-platform/internal/platform/observability"
 	platformredis "github.com/ZheglY/vpn-platform/internal/platform/redis"
+	platformtelemetry "github.com/ZheglY/vpn-platform/internal/platform/telemetry"
 	"github.com/ZheglY/vpn-platform/internal/platform/version"
 	billingclient "github.com/ZheglY/vpn-platform/services/telegram-bot/internal/billing"
 	"github.com/ZheglY/vpn-platform/services/telegram-bot/internal/bot"
@@ -57,6 +58,12 @@ func run(ctx context.Context) error {
 		return err
 	}
 
+	telemetryRuntime, err := platformtelemetry.Setup(ctx, serviceName, appCfg.Environment)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = telemetryRuntime.Shutdown(context.Background()) }()
+
 	logger, err := logging.New(logging.Config{
 		Environment: appCfg.Environment,
 		Level:       appCfg.LogLevel,
@@ -73,7 +80,7 @@ func run(ctx context.Context) error {
 		_ = redisClient.Close()
 	}()
 
-	identityHTTPClient := &http.Client{Timeout: appCfg.OutboundTimeout}
+	identityHTTPClient := &http.Client{Timeout: appCfg.OutboundTimeout, Transport: platformtelemetry.WrapHTTPTransport(nil)}
 	if appCfg.IdentityAuthMode == "mtls" {
 		identityHTTPClient, err = platformhttpclient.NewMutualTLSClient(
 			appCfg.IdentityClientCertFile,
@@ -140,6 +147,7 @@ func run(ctx context.Context) error {
 	internalHandler := httpserver.Chain(
 		internalMux,
 		httpserver.RequestID,
+		platformtelemetry.HTTPServer,
 		httpserver.LimitBody(appCfg.MaxBodyBytes),
 		httpserver.Recover(logger),
 		httpserver.LogRequests(logger),
@@ -149,6 +157,7 @@ func run(ctx context.Context) error {
 	handler := httpserver.Chain(
 		mux,
 		httpserver.RequestID,
+		platformtelemetry.HTTPServer,
 		httpserver.LimitBody(appCfg.MaxBodyBytes),
 		httpserver.Recover(logger),
 		httpserver.LogRequests(logger),

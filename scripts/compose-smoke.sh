@@ -63,7 +63,11 @@ docker compose "${profiles[@]}" down -v --remove-orphans
 cleanup() {
   docker rm -f "$vpn_client_name" >/dev/null 2>&1 || true
   rm -f tmp/stage6-client.json
-  docker compose "${profiles[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+  if [[ "${SMOKE_KEEP_STACK:-0}" == "1" ]]; then
+    echo 'SMOKE_KEEP_STACK=1: Compose services and volumes were preserved for diagnostics.' >&2
+  else
+    docker compose "${profiles[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+  fi
 }
 trap cleanup EXIT
 
@@ -114,7 +118,7 @@ wait_redis_processing_key() {
 
 build_services=(mtls-credentials-init identity-migrate identity-service catalog-service billing-service subscription-service access-service notification-service admin-service yookassa-api telegram-api telegram-bot)
 if [[ "$full_vpn" == "1" ]]; then build_services+=(provisioning-migrate provisioning-service node-agent-primary); fi
-if [[ "$observability" == "1" ]]; then build_services+=(prometheus grafana); fi
+if [[ "$observability" == "1" ]]; then build_services+=(prometheus grafana otel-collector tempo loki); fi
 for service in "${build_services[@]}"; do
   docker compose "${profiles[@]}" build "$service"
 done
@@ -140,7 +144,13 @@ if [[ "$full_vpn" == "1" ]]; then
   containers+=(vpn-service-provisioning-service-1 vpn-service-node-agent-primary-1 vpn-service-node-agent-failover-1)
 fi
 if [[ "$observability" == "1" ]]; then
-  containers+=(vpn-service-prometheus-1 vpn-service-grafana-1)
+  containers+=(
+    vpn-service-prometheus-1
+    vpn-service-grafana-1
+    vpn-service-otel-collector-1
+    vpn-service-tempo-1
+    vpn-service-loki-1
+  )
 fi
 
 for _ in $(seq 1 60); do
@@ -218,6 +228,40 @@ if [[ "$observability" == "1" ]]; then
     node -e 'let b="";process.stdin.on("data",d=>b+=d).on("end",()=>{if(JSON.parse(b).database!=="ok")process.exit(1)})'
   curl -fsS 'http://127.0.0.1:3000/api/search?query=VPN%20Platform%20Overview' |
     node -e 'let b="";process.stdin.on("data",d=>b+=d).on("end",()=>{if(!JSON.parse(b).some(x=>x.uid==="vpn-platform-overview"))process.exit(1)})'
+  for datasource_uid in tempo loki; do
+    curl -fsS "http://127.0.0.1:3000/api/datasources/uid/${datasource_uid}" |
+      node -e 'let b="";const want=process.argv[1];process.stdin.on("data",d=>b+=d).on("end",()=>{if(JSON.parse(b).uid!==want)process.exit(1)})' "$datasource_uid"
+  done
+
+  trace_id='4bf92f3577b34da6a3ce929d0e0e4736'
+  trace_parent="00-${trace_id}-00f067aa0ba902b7-01"
+  privacy_sentinel='stage8-private-url-value'
+  go run ./tools/mtlsprobe/cmd/mtlsprobe \
+    GET "https://127.0.0.1:8080/version?probe=${privacy_sentinel}" \
+    secrets/dev-mtls/identity-health.crt secrets/dev-mtls/identity-health.key secrets/dev-mtls/ca.crt \
+    200 traceparent "$trace_parent"
+  loki_query='%7Bservice_name%3D%22identity-service%22%7D%20%7C%3D%20%22http%20request%22'
+  tempo_json=''
+  loki_json=''
+  for _ in $(seq 1 30); do
+    tempo_json="$(curl -fsS "http://127.0.0.1:3000/api/datasources/proxy/uid/tempo/api/traces/${trace_id}" || true)"
+    loki_json="$(curl -fsS "http://127.0.0.1:3000/api/datasources/proxy/uid/loki/loki/api/v1/query_range?query=${loki_query}&limit=100&direction=backward" || true)"
+    if [[ "$tempo_json" == *"GET /version"* && "$loki_json" == *"$trace_id"* ]]; then break; fi
+    sleep 2
+  done
+  if [[ "$tempo_json" != *"GET /version"* ]]; then
+    echo 'known W3C trace did not reach Tempo' >&2
+    exit 1
+  fi
+  if [[ "$loki_json" != *"$trace_id"* || "$loki_json" != *"http request"* ]]; then
+    echo 'trace-correlated structured log did not reach Loki' >&2
+    exit 1
+  fi
+  if [[ "$tempo_json" == *"$privacy_sentinel"* || "$loki_json" == *"$privacy_sentinel"* ||
+        "$tempo_json" == *'/version?probe='* || "$loki_json" == *'/version?probe='* ]]; then
+    echo 'telemetry backend leaked raw URL data' >&2
+    exit 1
+  fi
 fi
 
 if [[ "$full_vpn" != "1" ]]; then

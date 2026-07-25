@@ -29,6 +29,7 @@ import (
 	"github.com/ZheglY/vpn-platform/internal/platform/logging"
 	"github.com/ZheglY/vpn-platform/internal/platform/observability"
 	platformpostgres "github.com/ZheglY/vpn-platform/internal/platform/postgres"
+	platformtelemetry "github.com/ZheglY/vpn-platform/internal/platform/telemetry"
 	"github.com/ZheglY/vpn-platform/internal/platform/version"
 	accessclient "github.com/ZheglY/vpn-platform/services/provisioning/internal/access"
 	"github.com/ZheglY/vpn-platform/services/provisioning/internal/application"
@@ -76,6 +77,11 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	telemetryRuntime, err := platformtelemetry.Setup(ctx, serviceName, cfg.Environment)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = telemetryRuntime.Shutdown(context.Background()) }()
 	logger, err := logging.New(logging.Config{Environment: cfg.Environment, Level: cfg.LogLevel})
 	if err != nil {
 		return err
@@ -154,7 +160,7 @@ func run(ctx context.Context) error {
 	mux.Handle("GET /version", version.Handler(version.New(serviceName, buildVersion, buildCommit, buildDate)))
 	mux.Handle("GET /metrics", observability.MTLSHandler(registry, cfg.TrustDomain, cfg.Environment))
 	mux.Handle("GET /internal/v1/credentials/{credential_id}/support-status", adminAuth(http.HandlerFunc(api.GetCredentialSupportSnapshot)))
-	handler := httpserver.Chain(mux, httpserver.RequestID, httpserver.LimitBody(cfg.MaxBodyBytes), httpserver.Recover(logger), httpserver.LogRequests(logger), httpMetrics.Middleware)
+	handler := httpserver.Chain(mux, httpserver.RequestID, platformtelemetry.HTTPServer, httpserver.LimitBody(cfg.MaxBodyBytes), httpserver.Recover(logger), httpserver.LogRequests(logger), httpMetrics.Middleware)
 	srv := httpserver.New(cfg.HTTP, handler)
 	srv.TLSConfig = cfg.TLS
 	logger.Info("starting service", zap.String("service", serviceName), zap.String("environment", cfg.Environment))
@@ -234,6 +240,11 @@ func runReplay(ctx context.Context, args []string) error {
 	if err != nil || offset < 0 {
 		return fmt.Errorf("invalid DLQ offset")
 	}
+	telemetryRuntime, err := platformtelemetry.Setup(ctx, serviceName, config.String("APP_ENV", "local"))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = telemetryRuntime.Shutdown(context.Background()) }()
 	databaseURL, err := config.RequiredString("DATABASE_URL")
 	if err != nil {
 		return err

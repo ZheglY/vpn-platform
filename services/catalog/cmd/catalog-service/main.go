@@ -21,6 +21,7 @@ import (
 	"github.com/ZheglY/vpn-platform/internal/platform/logging"
 	"github.com/ZheglY/vpn-platform/internal/platform/observability"
 	platformpostgres "github.com/ZheglY/vpn-platform/internal/platform/postgres"
+	platformtelemetry "github.com/ZheglY/vpn-platform/internal/platform/telemetry"
 	"github.com/ZheglY/vpn-platform/internal/platform/version"
 	"github.com/ZheglY/vpn-platform/services/catalog/internal/domain"
 	"github.com/ZheglY/vpn-platform/services/catalog/internal/httpapi"
@@ -58,6 +59,11 @@ func run(ctx context.Context, seedOnly bool) error {
 		defer store.Close()
 		return store.SeedPlan(ctx, cfg.SeedPlan, "telegram")
 	}
+	telemetryRuntime, err := platformtelemetry.Setup(ctx, serviceName, cfg.Environment)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = telemetryRuntime.Shutdown(context.Background()) }()
 	logger, err := logging.New(logging.Config{Environment: cfg.Environment, Level: cfg.LogLevel})
 	if err != nil {
 		return err
@@ -82,7 +88,7 @@ func run(ctx context.Context, seedOnly bool) error {
 	mux.Handle("GET /metrics", observability.MTLSHandler(registry, cfg.MTLSTrustDomain, cfg.MTLSNamespace))
 	mux.HandleFunc("GET /v1/plans", api.ListPlans)
 	mux.Handle("GET /internal/v1/plans/{plan_id}", internalAuth(http.HandlerFunc(api.GetPlan)))
-	handler := httpserver.Chain(mux, httpserver.RequestID, httpserver.LimitBody(cfg.MaxBodyBytes), httpserver.Recover(logger), httpserver.LogRequests(logger), httpMetrics.Middleware)
+	handler := httpserver.Chain(mux, httpserver.RequestID, platformtelemetry.HTTPServer, httpserver.LimitBody(cfg.MaxBodyBytes), httpserver.Recover(logger), httpserver.LogRequests(logger), httpMetrics.Middleware)
 	srv := httpserver.New(cfg.HTTP, handler)
 	srv.TLSConfig = cfg.TLS
 	logger.Info("starting service", zap.String("service", serviceName), zap.String("environment", cfg.Environment))

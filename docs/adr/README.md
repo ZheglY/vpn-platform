@@ -32,3 +32,4 @@ ADRs are immutable decision records. If a decision changes after implementation 
 | [0026](0026-stage7-admin-mtls-rbac-actions-and-audit.md) | Stage 7 admin mTLS, RBAC, actions, and audit | Accepted for Stage 7 implementation |
 | [0027](0027-stage8-observability-metrics-and-local-stack.md) | Stage 8 observability metrics and local stack | Accepted for Stage 8 implementation |
 | [0028](0028-stage8-bounded-operational-metrics.md) | Stage 8 bounded operational metrics | Accepted for Stage 8 implementation |
+| [0029](0029-stage8-trace-context-and-log-pipeline.md) | Stage 8 trace context and log pipeline | Accepted for Stage 8 implementation |

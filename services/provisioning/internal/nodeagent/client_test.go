@@ -15,7 +15,11 @@ func TestClientPinsExactNodeSPIFFEIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	expected := "spiffe://vpn-service/ns/local/sa/node-agent-primary"
-	verify := client.clientForNode(expected).Transport.(*http.Transport).TLSClientConfig.VerifyConnection
+	transport := client.clientForNode(expected).Transport
+	if unwrapper, ok := transport.(interface{ Unwrap() http.RoundTripper }); ok {
+		transport = unwrapper.Unwrap()
+	}
+	verify := transport.(*http.Transport).TLSClientConfig.VerifyConnection
 	if err := verify(verifiedNodeState(expected)); err != nil {
 		t.Fatalf("matching identity rejected: %v", err)
 	}

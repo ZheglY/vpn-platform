@@ -5,6 +5,7 @@ ARG GRAFANA_VERSION=13.1.1
 ARG GRAFANA_COMMIT=a9cee6e1724a455676bb6c05eef7fc54aa4b19f4
 ARG GRAFANA_SOURCE_SHA256=722f7374891d375f0900dbee6e638d8b692edeba5d2353dd1d9315a3372cf78c
 ARG GRAFANA_GRPC_VERSION=v1.82.1
+ARG GRAFANA_KIN_OPENAPI_VERSION=v0.144.0
 ARG TEMPO_VERSION=v1.5.1-0.20260427112133-525d1bab07e0
 
 FROM golang:${GO_VERSION}-alpine@${GO_BUILDER_DIGEST} AS build
@@ -12,6 +13,7 @@ ARG GRAFANA_VERSION
 ARG GRAFANA_COMMIT
 ARG GRAFANA_SOURCE_SHA256
 ARG GRAFANA_GRPC_VERSION
+ARG GRAFANA_KIN_OPENAPI_VERSION
 ARG TEMPO_VERSION
 WORKDIR /src/grafana
 RUN wget -q -O /tmp/grafana.tar.gz "https://github.com/grafana/grafana/archive/${GRAFANA_COMMIT}.tar.gz" \
@@ -24,7 +26,8 @@ RUN go mod download "github.com/grafana/tempo@${TEMPO_VERSION}" \
     && cp -R "${tempo_dir}/pkg/tempopb" /tmp/tempo-proto/pkg/tempopb \
     && printf 'module github.com/grafana/tempo\n\ngo 1.26.5\n' > /tmp/tempo-proto/go.mod \
     && go mod edit -replace=github.com/grafana/tempo=/tmp/tempo-proto \
-    && go mod edit -require="google.golang.org/grpc@${GRAFANA_GRPC_VERSION}"
+    && go mod edit -require="google.golang.org/grpc@${GRAFANA_GRPC_VERSION}" \
+    && go mod edit -require="github.com/getkin/kin-openapi@${GRAFANA_KIN_OPENAPI_VERSION}"
 RUN go mod download \
     && go mod verify
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false \

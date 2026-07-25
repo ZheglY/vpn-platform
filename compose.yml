@@ -1,5 +1,12 @@
 name: vpn-service
 
+x-otel-environment: &otel-environment
+  OTEL_EXPORTER_OTLP_ENDPOINT: https://otel-collector:4318
+  OTEL_EXPORTER_OTLP_CERTIFICATE: /run/mtls/ca.crt
+  OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE: /run/mtls/otel-client.crt
+  OTEL_EXPORTER_OTLP_CLIENT_KEY: /run/mtls/otel-client.key
+  OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-0.1}
+
 services:
   postgres:
     image: postgres:18-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
@@ -136,6 +143,7 @@ services:
       - mtls-admin:/runtime/admin
       - mtls-telegram:/runtime/telegram
       - mtls-observability:/runtime/observability
+      - mtls-collector:/runtime/collector
     read_only: true
     tmpfs:
       - /tmp
@@ -172,6 +180,7 @@ services:
       - mtls-admin:/runtime/admin:ro
       - mtls-telegram:/runtime/telegram:ro
       - mtls-observability:/runtime/observability:ro
+      - mtls-collector:/runtime/collector:ro
     read_only: true
     cap_drop:
       - ALL
@@ -288,6 +297,7 @@ services:
         GO_VERSION: "1.26.5"
     profiles: ["app"]
     environment:
+      <<: *otel-environment
       APP_ENV: local
       LOG_LEVEL: info
       HTTP_ADDR: ":8080"
@@ -364,6 +374,7 @@ services:
         GO_VERSION: "1.26.5"
     profiles: ["app"]
     environment:
+      <<: *otel-environment
       APP_ENV: local
       LOG_LEVEL: info
       HTTP_ADDR: ":8083"
@@ -431,6 +442,7 @@ services:
         GO_VERSION: "1.26.5"
     profiles: ["app"]
     environment:
+      <<: *otel-environment
       APP_ENV: local
       LOG_LEVEL: info
       HTTP_ADDR: ":8084"
@@ -503,6 +515,7 @@ services:
         GO_VERSION: "1.26.5"
     profiles: ["app"]
     environment:
+      <<: *otel-environment
       APP_ENV: local
       LOG_LEVEL: info
       HTTP_ADDR: ":8086"
@@ -567,6 +580,7 @@ services:
         GO_VERSION: "1.26.5"
     profiles: ["app"]
     environment:
+      <<: *otel-environment
       APP_ENV: local
       LOG_LEVEL: info
       HTTP_ADDR: ":8087"
@@ -659,6 +673,7 @@ services:
         GO_VERSION: "1.26.5"
     profiles: ["vpn"]
     environment:
+      <<: *otel-environment
       APP_ENV: local
       LOG_LEVEL: info
       HTTP_ADDR: ":8088"
@@ -724,6 +739,7 @@ services:
         GO_VERSION: "1.26.5"
     profiles: ["vpn"]
     environment:
+      <<: *otel-environment
       APP_ENV: local
       LOG_LEVEL: info
       NODE_ID: 61000000-0000-4000-8000-000000000001
@@ -775,6 +791,7 @@ services:
         GO_VERSION: "1.26.5"
     profiles: ["vpn"]
     environment:
+      <<: *otel-environment
       APP_ENV: local
       LOG_LEVEL: info
       NODE_ID: 61000000-0000-4000-8000-000000000002
@@ -844,6 +861,7 @@ services:
         GO_VERSION: "1.26.5"
     profiles: ["app"]
     environment:
+      <<: *otel-environment
       APP_ENV: local
       LOG_LEVEL: info
       HTTP_ADDR: ":8091"
@@ -943,6 +961,7 @@ services:
         GO_VERSION: "1.26.5"
     profiles: ["app"]
     environment:
+      <<: *otel-environment
       APP_ENV: local
       LOG_LEVEL: info
       HTTP_ADDR: ":8092"
@@ -1008,6 +1027,7 @@ services:
         GO_VERSION: "1.26.5"
     profiles: ["app"]
     environment:
+      <<: *otel-environment
       APP_ENV: local
       LOG_LEVEL: info
       HTTP_ADDR: ":8081"
@@ -1053,6 +1073,95 @@ services:
     networks:
       - backend
 
+  tempo:
+    image: vpn-service/tempo:local
+    build:
+      context: .
+      dockerfile: deploy/observability/tempo/Dockerfile
+    profiles: ["obs"]
+    command:
+      - -config.file=/etc/tempo/tempo.yml
+    volumes:
+      - ./deploy/observability/tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+      - tempo-data:/var/tempo
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "/bin/httphealth", "http://localhost:3200/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - observability
+
+  loki:
+    image: vpn-service/loki:local
+    build:
+      context: .
+      dockerfile: deploy/observability/loki/Dockerfile
+    profiles: ["obs"]
+    command:
+      - -config.file=/etc/loki/loki.yml
+    volumes:
+      - ./deploy/observability/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki-data:/var/loki
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "/bin/httphealth", "http://localhost:3100/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - observability
+
+  otel-collector:
+    image: vpn-service/otel-collector:local
+    build:
+      context: .
+      dockerfile: deploy/observability/otel-collector/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["obs"]
+    command:
+      - --config=/etc/otelcol/config.yml
+    volumes:
+      - ./deploy/observability/otel-collector/config.yml:/etc/otelcol/config.yml:ro
+      - mtls-collector:/run/mtls:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "/bin/httphealth", "http://localhost:13133/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    depends_on:
+      mtls-credentials-verify:
+        condition: service_completed_successfully
+      tempo:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    networks:
+      - backend
+      - node-management
+      - observability
+
   prometheus:
     image: vpn-service/prometheus:local
     build:
@@ -1090,6 +1199,7 @@ services:
     networks:
       - backend
       - node-management
+      - observability
 
   grafana:
     image: vpn-service/grafana:local
@@ -1112,6 +1222,7 @@ services:
       - "127.0.0.1:${GRAFANA_HTTP_PORT:-3000}:3000"
     volumes:
       - ./deploy/observability/grafana/provisioning/datasources/prometheus.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro
+      - ./deploy/observability/grafana/provisioning/datasources/telemetry.yml:/etc/grafana/provisioning/datasources/telemetry.yml:ro
       - ./deploy/observability/grafana/provisioning/dashboards/platform.yml:/etc/grafana/provisioning/dashboards/platform.yml:ro
       - ./deploy/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
@@ -1130,8 +1241,15 @@ services:
     depends_on:
       prometheus:
         condition: service_healthy
+      tempo:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+      otel-collector:
+        condition: service_healthy
     networks:
       - backend
+      - observability
 
 networks:
   backend:
@@ -1141,6 +1259,9 @@ networks:
     internal: true
   vpn-data:
     driver: bridge
+  observability:
+    driver: bridge
+    internal: true
 
 volumes:
   postgres-data:
@@ -1157,6 +1278,7 @@ volumes:
   mtls-admin:
   mtls-telegram:
   mtls-observability:
+  mtls-collector:
   xray-provisioning:
   xray-node-primary:
   xray-node-failover:
@@ -1167,3 +1289,5 @@ volumes:
   node-failover-xray:
   prometheus-data:
   grafana-data:
+  tempo-data:
+  loki-data:
