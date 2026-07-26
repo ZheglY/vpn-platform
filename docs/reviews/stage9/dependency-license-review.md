@@ -1,9 +1,9 @@
 # Stage 9 Dependency and License Review
 
-Review date: 2026-07-26  
-Review baseline: `76f5624e664c556c3ec598055524319eab0af1f3`  
-Review owner: Platform / Security  
-Legal status: technical inventory only; not legal advice  
+Review date: 2026-07-26
+Review baseline: `76f5624e664c556c3ec598055524319eab0af1f3`
+Review owner: Platform / Security
+Legal status: technical inventory only; not legal advice
 Publication decision: **NO-GO**
 
 ## Result

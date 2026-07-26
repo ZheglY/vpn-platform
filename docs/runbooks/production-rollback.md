@@ -1,6 +1,6 @@
 # Production Rollback and Recovery
 
-Status: design complete; critical staging drill not yet passed  
+Status: design complete; critical staging drill not yet passed
 Production decision: **NO-GO**
 
 ## Principles

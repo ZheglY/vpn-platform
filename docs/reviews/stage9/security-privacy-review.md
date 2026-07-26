@@ -1,8 +1,8 @@
 # Stage 9 Security and Privacy Review
 
-Review date: 2026-07-26  
-Review baseline: `76f5624e664c556c3ec598055524319eab0af1f3`  
-Review owner: Security / Privacy  
+Review date: 2026-07-26
+Review baseline: `76f5624e664c556c3ec598055524319eab0af1f3`
+Review owner: Security / Privacy
 Environment: repository and local/disposable test topology only
 
 ## Result

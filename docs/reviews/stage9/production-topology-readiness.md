@@ -1,8 +1,8 @@
 # Stage 9 Production Topology Readiness
 
-Review date: 2026-07-26  
-Review owner: Platform / Operations / Security  
-Status: **NO-GO; topology options documented, no provider selected**  
+Review date: 2026-07-26
+Review owner: Platform / Operations / Security
+Status: **NO-GO; topology options documented, no provider selected**
 Scope: design review only; no production resource, DNS record, credential,
 registry artifact, database, or VPS was created
 

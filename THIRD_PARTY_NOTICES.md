@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-Status: incomplete review artifact; not approved for publication  
+Status: incomplete review artifact; not approved for publication
 Reviewed: 2026-07-26
 
 This repository builds software that incorporates or redistributes third-party

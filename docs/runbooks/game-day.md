@@ -1,7 +1,7 @@
 # Production Readiness Game Day
 
-Status: approved only for local/disposable environments  
-Production-like staging: not yet available  
+Status: approved only for local/disposable environments
+Production-like staging: not yet available
 Production execution: prohibited
 
 ## Safety boundary

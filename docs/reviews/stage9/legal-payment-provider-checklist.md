@@ -1,10 +1,10 @@
 # Stage 9 Legal, Payment, Privacy, and Provider Checklist
 
-Review date: 2026-07-26  
+Review date: 2026-07-26
 Next scheduled review: 2026-08-26, or immediately after any jurisdiction,
-provider, product, or data-use change  
-Owner of final launch decision: Product owner  
-Legal status: working checklist only; **not legal advice**  
+provider, product, or data-use change
+Owner of final launch decision: Product owner
+Legal status: working checklist only; **not legal advice**
 Decision: **NO-GO for real sales and real customer records**
 
 ## Operating restriction

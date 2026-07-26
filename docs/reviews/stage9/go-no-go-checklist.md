@@ -1,8 +1,8 @@
 # Stage 9 Go/No-Go Checklist
 
-Review date: 2026-07-26  
-Next full review: 2026-08-26  
-Decision owner: Product owner  
+Review date: 2026-07-26
+Next full review: 2026-08-26
+Decision owner: Product owner
 Decision: **NO-GO**
 
 The machine-readable source is `go-no-go.json`. A blocking gate passes only with

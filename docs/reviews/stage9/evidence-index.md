@@ -1,7 +1,7 @@
 # Stage 9 Evidence Index
 
-Review owner: Platform / Security  
-Evidence date: 2026-07-26  
+Review owner: Platform / Security
+Evidence date: 2026-07-26
 Behavioral/drill source commit:
 `f4c7d1eb500944b80d6b8749e69a8427468dbd2d`
 Final review-control verification commit:

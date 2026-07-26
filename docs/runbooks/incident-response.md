@@ -1,6 +1,6 @@
 # Incident Response
 
-Status: Stage 9 draft for local/disposable exercises  
+Status: Stage 9 draft for local/disposable exercises
 Production owner, contacts, paging system, legal matrix, and providers: blocked
 
 This runbook coordinates technical containment and recovery. It does not
