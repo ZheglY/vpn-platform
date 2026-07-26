@@ -2,9 +2,9 @@
 
 ## Current Approval
 
-Approved milestone: Stage 8 - Observability, hardening, and deployment.
+Approved milestone: Stage 9 - Production readiness review.
 
-Stage 7 was explicitly accepted by the product owner on 2026-07-23 with the instruction to begin Stage 8. Stage 9 is not approved. Stage 8 may add observability, operational hardening, reproducible deployment assets, drills, and release controls. It must not connect production VPS instances, deploy production VPN infrastructure, configure real alert receivers, or use production credentials without a separate explicit approval.
+Stage 8 was explicitly accepted by the product owner on 2026-07-26 after the acceptance-review remediation in commit `4ab8dff621c27c8766efaf3ecf5217dbaea77383`, with the instruction to execute Stage 9. Stage 9 may perform production-readiness reviews, local/disposable game-day exercises, and evidence generation only. It must not connect production VPS instances, publish production images, deploy production infrastructure, configure real alert receivers, or use production credentials, databases, DNS, providers, or users without separate explicit approval.
 
 ## Stage 0 Plan
 
@@ -321,7 +321,7 @@ Verification completed on 2026-07-23:
 
 Depends on working services. Adds dashboards, alerts, runbooks, backup/restore drill, node hardening, secret rotation, privacy retention jobs, SBOM, and signing.
 
-Status: in progress on `codex/stage8-observability-hardening`. Slices 1-10 are implemented for review. The slice 4-6 acceptance findings are remediated with a durable successful-payment denominator, PostgreSQL-clocked partial retention reports, exported-snapshot backup inspection, exact empty-target restore preflight, and forced-failure secret cleanup. Slices 7-10 add disposable Debian node hardening, bounded secret rotation, load/failure recovery, and release SBOM/keyless provenance controls. Stage 8 is not accepted and Stage 9 remains blocked pending the complete verification and product-owner review.
+Status: accepted by the product owner on 2026-07-26 after final acceptance-review remediation and complete verification on `codex/stage8-observability-hardening` at commit `4ab8dff621c27c8766efaf3ecf5217dbaea77383`.
 
 Implementation plan:
 

@@ -107,7 +107,7 @@ This Definition of Done applies to every implementation task after Stage 0. Stag
 
 ## Stage 8 Specific
 
-- Stage 7 is accepted and Stage 8 work remains split into reviewable slices; no real VPS, production credential, alert receiver, or user traffic is touched without a separate approval.
+- Stage 8 was accepted by the product owner on 2026-07-26 after all ten slices, acceptance-review remediation, and required verification completed; no real VPS, production credential, alert receiver, registry publication, deployment, or user traffic was touched.
 - Metrics, traces, logs, dashboards, alerts, and diagnostics comply with ADR 0013. Labels are bounded and contain no raw paths, user/payment/subscription/credential/event/request/correlation IDs, Telegram/provider payload data, VPN material, or browsing metadata.
 - Every observability ingress is authenticated and private for its environment. Local loopback-only anonymous Grafana configuration is never reused as a production authentication policy.
 - Runtime private keys are staged into least-privilege named volumes with owner-only modes and are read under each actual container UID on native Linux before service startup; no runtime service depends on host bind-mount ownership translation.
@@ -125,5 +125,5 @@ This Definition of Done applies to every implementation task after Stage 0. Stag
 - mTLS, provider-client, Access encryption/HMAC, and REALITY rotations have bounded overlap/retirement/rollback procedures and secret-free executable drills. No real credential is used.
 - Bounded HTTPS-only load and failure injection cover exact submission limits, subscription latency/error budgets, Kafka replay without duplicate entitlement, PostgreSQL liveness/readiness recovery, real failover VPN traffic after primary loss, Xray rollback, and Provisioning reconciliation. Every drill uses a unique Compose namespace and proves ordinary local volumes are preserved.
 - The complete custom-image release inventory builds from a clean commit, emits SPDX 2.3 SBOMs and retained Trivy reports, passes digest-pinned HIGH/CRITICAL scans, binds every SPDX container subject to its immutable image ID, verifies the exact checksummed artifact set, and has a manual least-privilege keyless provenance workflow. Registry publication and deployment remain Stage 9 gates.
-- Stage 8 slices 1-10 are implemented for review. Stage 8 is not accepted and Stage 9 remains blocked until the full verification evidence and final diff review pass.
+- Stage 8 slices 1-10 and their acceptance-review remediation are accepted. Stage 9 is separately approved as a production-readiness review only and does not authorize launch.
 - `make verify`, relevant Compose/VPN/observability smoke suites, security scans, configuration validation, and a final privacy/concurrency/operations review pass before Stage 8 is presented for acceptance.
