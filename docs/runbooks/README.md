@@ -18,6 +18,9 @@ Implemented local and sandbox runbooks are listed below. Production operations s
 - [Bounded load and resilience drills](resilience.md)
 - [Release images, SBOMs, scans, and keyless provenance](release.md)
 - [Support and abuse](support-abuse.md)
+- [Incident response](incident-response.md)
+- [Production-readiness game day](game-day.md)
+- [Production rollback and disaster recovery](production-rollback.md)
 
 Required before production:
 

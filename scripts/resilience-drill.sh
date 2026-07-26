@@ -149,5 +149,12 @@ docker compose "${profiles[@]}" start postgres
 wait_until 'PostgreSQL did not recover' docker compose "${profiles[@]}" exec -T postgres pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 wait_until 'Access did not recover after PostgreSQL outage' docker compose "${profiles[@]}" exec -T access-service /access-service healthcheck
 
+docker compose "${profiles[@]}" stop prometheus grafana otel-collector tempo loki
+business_live_status="$(curl -sS -o /dev/null -w '%{http_code}' --cacert secrets/dev-mtls/ca.crt https://127.0.0.1:8087/livez)"
+business_ready_status="$(curl -sS -o /dev/null -w '%{http_code}' --cacert secrets/dev-mtls/ca.crt https://127.0.0.1:8087/readyz)"
+public_status="$(curl -sS -o /dev/null -w '%{http_code}' --cacert secrets/dev-mtls/ca.crt https://127.0.0.1:8087/s/resilience-observability-outage)"
+[[ "$business_live_status" == 200 && "$business_ready_status" == 200 && "$public_status" == 404 ]]
+docker compose "${profiles[@]}" start tempo loki otel-collector prometheus grafana
+
 go test -mod=readonly ./services/node-agent/internal/xray -run 'Reload|SystemdManager'
 go test -mod=readonly ./services/provisioning/internal/application -run 'Reconcile|Failover'

@@ -127,3 +127,38 @@ This Definition of Done applies to every implementation task after Stage 0. Stag
 - The complete custom-image release inventory builds from a clean commit, emits SPDX 2.3 SBOMs and retained Trivy reports, passes digest-pinned HIGH/CRITICAL scans, binds every SPDX container subject to its immutable image ID, verifies the exact checksummed artifact set, and has a manual least-privilege keyless provenance workflow. Registry publication and deployment remain Stage 9 gates.
 - Stage 8 slices 1-10 and their acceptance-review remediation are accepted. Stage 9 is separately approved as a production-readiness review only and does not authorize launch.
 - `make verify`, relevant Compose/VPN/observability smoke suites, security scans, configuration validation, and a final privacy/concurrency/operations review pass before Stage 8 is presented for acceptance.
+
+## Stage 9 Specific
+
+- Stage 9 is a review/evidence milestone and does not authorize production,
+  provider credentials, customer data, public DNS, registry publication, VPS
+  enrollment, image deployment, or real traffic.
+- The system inventory covers every service, database, HTTP/Kafka contract,
+  ingress, mTLS/management/observability interface, network, volume, release
+  image, workflow, and open production dependency.
+- Architecture/code and security/privacy reviews contain evidence, severity,
+  impact, owner, due date, status, and regression/gate references. No P0/P1 may
+  remain open. Unaccepted P2 production findings remain blocking.
+- The 19-image license inventory and machine-readable policy fail closed.
+  Unknown/unapproved licenses, incomplete notices/source offers, AGPL/MPL/Redis
+  counsel review, and the repository distribution license block publication.
+- Legal/payment/privacy/provider decisions are never guessed. Every row has an
+  allowed status, owner, dated evidence, next review, and launch-blocking flag.
+- Production topology options and trade-offs are documented without selecting
+  a provider or adding Kubernetes. Missing DNS/edge, HA/PITR, Kafka ACL, secret
+  manager, PKI, backup, alert, registry, capacity, VPS, on-call, and configuration
+  ownership decisions remain NO-GO.
+- All 12 game-day scenarios record preconditions, fault, blast radius, abort,
+  metrics/alerts, business behavior, recovery, rollback, actual result, budget,
+  evidence, and residual risk. Unavailable real HA, PKI revocation, alert, or
+  rollback evidence is not simulated as success.
+- Rollback uses accepted immutable digests, N/N-1 compatibility,
+  expand/migrate/contract, forward-only migrations, owner reconciliation,
+  last-known-good, safe trust/key overlap, and isolated restore. No automatic
+  database downgrade or mutable-tag rebuild is allowed.
+- The machine-readable go/no-go gate cannot report GO while any hard gate is
+  open. `make production-readiness` validates review consistency but is not a
+  deployment authorization.
+- Required local verification, smoke, restore, node, rotation, resilience, and
+  release-bundle commands are commit-bound in the evidence index with aggregate
+  secret-free results. Heavy generated artifacts remain ignored/checksummed.

@@ -2,7 +2,12 @@
 
 Production-grade portfolio project for selling prepaid VPN subscriptions through a Telegram bot and delivering Happ-compatible subscription URLs backed by Xray-core nodes.
 
-Current milestone: Stage 8 observability, hardening, and deployment. Stage 7 is accepted. Stage 8 slices 1-10 are implemented for review, including protected telemetry, durable SLI/SLO alerts, retention/recovery, node hardening, rotation, resilience, and release provenance. Stage 8 is not yet accepted; Stage 9 has not been approved.
+Current milestone: Stage 9 production-readiness review. Stage 8 was accepted by
+the product owner on 2026-07-26. Stage 9 reviews architecture, security/privacy,
+dependencies/licenses, legal/payment/provider requirements, production topology,
+game-day recovery, and rollback without authorizing a production deployment.
+The current production decision is `NO-GO` while external and staging hard gates
+remain open.
 
 ## What Exists Now
 
@@ -31,6 +36,9 @@ Current milestone: Stage 8 observability, hardening, and deployment. Stage 7 is 
 - Goose migration runner tool.
 - OpenAPI/AsyncAPI contract linting.
 - Makefile and CI verification workflow, including Go vulnerability checks, secret scan, image build, and image scan.
+- Stage 9 review artifacts with a machine-readable fail-closed go/no-go decision,
+  exact 19-image license policy, incident/game-day/rollback runbooks, and
+  evidence freshness rules.
 
 No real payments, refund initiation, production VPS enrollment, WireGuard deployment, or real user traffic exist yet. The `vpn` profile is local-only and uses generated development keys.
 
@@ -46,6 +54,7 @@ No real payments, refund initiation, production VPS enrollment, WireGuard deploy
 ```powershell
 npm install
 make verify
+make production-readiness
 ```
 
 ## Local Compose
@@ -82,6 +91,13 @@ Catalog, billing, subscription, and access listen on `https://localhost:8083`, `
 Maintenance commands are isolated behind the `maintenance` profile. Retention defaults to dry-run and must follow [the retention runbook](docs/runbooks/data-retention.md). `make backup-restore-drill` creates disposable local encryption material, restores all eight owner databases into an empty PostgreSQL instance, validates integrity and ownership, then removes the artifacts and volumes; see [the backup runbook](docs/runbooks/backup-restore.md).
 
 `make node-hardening-test`, `make secret-rotation-drill`, and `make resilience-drill` exercise the remaining local Stage 8 operational controls. `make release-bundle` requires a clean commit, builds the complete release inventory, binds every SPDX/Trivy report to an immutable image ID, and verifies the exact checksummed artifact set; the manual `release-attest` workflow adds repository-bound keyless provenance without publishing or deploying images.
+
+`make production-readiness` validates that every required Stage 9 review,
+runbook, hard gate, owner, evidence reference, and license decision agrees. A
+green review validation can still report `NO-GO`; it means the blockers are
+represented honestly, not that production is authorized. The stricter
+`make license-publication-gate RELEASE_OUTPUT_DIR=<bundle>` remains blocked
+until counsel/product decisions and final SBOM obligations are approved.
 
 `make vpn-smoke` generates local-only keys on D and runs the full Stage 6 acceptance path: Access command outbox, Kafka, Provisioning, authenticated material and placement reads, two node-agents with the integrity-checked Xray-core `26.3.27` security rebuild, sequenced outcome consumption, one-time Happ profile issuance, real VLESS + REALITY traffic, refund-driven revoke, and proof that traffic no longer passes afterward.
 

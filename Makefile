@@ -6,7 +6,7 @@ TRIVY_IMAGE ?= aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a
 export GOVULNCHECK_VERSION
 export GITLEAKS_VERSION
 
-.PHONY: fmt fmt-check tidy-check test race vet lint vuln secret-scan filesystem-secret-scan npm-audit contracts openapi asyncapi docker-build image-scan compose-config compose-smoke vpn-smoke stage7-smoke observability-validate observability-smoke backup-restore-drill backup-cleanup-test node-hardening-test secret-rotation-drill resilience-drill release-bundle compose-up compose-down diff-check verify
+.PHONY: fmt fmt-check tidy-check test race vet lint vuln secret-scan filesystem-secret-scan npm-audit contracts openapi asyncapi license-review-check license-publication-gate production-readiness docker-build image-scan compose-config compose-smoke vpn-smoke stage7-smoke observability-validate observability-smoke backup-restore-drill backup-cleanup-test node-hardening-test secret-rotation-drill resilience-drill release-bundle compose-up compose-down diff-check verify
 
 fmt:
 	go fmt ./...
@@ -86,6 +86,18 @@ asyncapi:
 
 contracts: openapi asyncapi
 	npm run lint:events
+
+license-review-check:
+	node scripts/validate-license-policy.mjs
+
+license-publication-gate:
+ifndef RELEASE_OUTPUT_DIR
+	$(error RELEASE_OUTPUT_DIR is required)
+endif
+	node scripts/validate-license-policy.mjs --publication --output="$(RELEASE_OUTPUT_DIR)"
+
+production-readiness: license-review-check
+	node scripts/validate-production-readiness.mjs
 
 docker-build:
 	docker build -f tools/credentialstage/Dockerfile -t vpn-service/credentialstage:local .
@@ -227,4 +239,4 @@ compose-down:
 diff-check:
 	git diff --exit-code
 
-verify: fmt-check tidy-check vet test race lint vuln secret-scan filesystem-secret-scan npm-audit contracts observability-validate docker-build image-scan compose-config diff-check
+verify: fmt-check tidy-check vet test race lint vuln secret-scan filesystem-secret-scan npm-audit contracts production-readiness observability-validate docker-build image-scan compose-config diff-check

@@ -1,0 +1,269 @@
+{
+  "format_version": 1,
+  "reviewed_at": "2026-07-26",
+  "next_review_at": "2026-08-26",
+  "decision": "NO-GO",
+  "decision_owner": "Product owner",
+  "gates": [
+    {
+      "id": "BASE-01",
+      "requirement": "Stage 8 accepted",
+      "owner": "Product owner",
+      "evidence": "PLANS.md and commit 76f5624e664c556c3ec598055524319eab0af1f3",
+      "status": "passed",
+      "severity": "P1",
+      "review_date": "2026-07-26",
+      "blocking": true
+    },
+    {
+      "id": "ARCH-01",
+      "requirement": "No open P0 or P1 architecture/code findings",
+      "owner": "Architecture",
+      "evidence": "docs/reviews/stage9/architecture-code-review.md",
+      "status": "passed",
+      "severity": "P1",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "ARCH-02",
+      "requirement": "Architecture/code review complete",
+      "owner": "Architecture",
+      "evidence": "docs/reviews/stage9/architecture-code-review.md",
+      "status": "passed",
+      "severity": "P1",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "ARCH-03",
+      "requirement": "Deferred P2 findings accepted or closed",
+      "owner": "Product owner / Platform",
+      "evidence": "ACR-001 and ACR-002 have no accepted production deferral",
+      "status": "blocked",
+      "severity": "P2",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "SEC-01",
+      "requirement": "Security/privacy review complete and threat model current",
+      "owner": "Security / Privacy",
+      "evidence": "docs/reviews/stage9/security-privacy-review.md and docs/threat-model.md",
+      "status": "passed",
+      "severity": "P1",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "LIC-01",
+      "requirement": "License inventory complete",
+      "owner": "Platform / Security",
+      "evidence": "docs/reviews/stage9/dependency-license-review.md and deploy/release/license-policy.json",
+      "status": "passed",
+      "severity": "P1",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "LIC-02",
+      "requirement": "No unknown/prohibited license or unmet distribution obligation",
+      "owner": "Legal / Release approver",
+      "evidence": "LIC-01 through LIC-06 remain unresolved; publication policy is NO-GO",
+      "status": "blocked",
+      "severity": "P1",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "LEGAL-01",
+      "requirement": "Professional legal review complete",
+      "owner": "Product owner / Legal",
+      "evidence": "docs/reviews/stage9/legal-payment-provider-checklist.md",
+      "status": "blocked",
+      "severity": "P1",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "PAY-01",
+      "requirement": "YooKassa production agreement and product requirements resolved",
+      "owner": "Finance / Legal",
+      "evidence": "PAY-01 and PAY-02 are unresolved; sandbox only",
+      "status": "blocked",
+      "severity": "P1",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "PAY-02",
+      "requirement": "Refund, cancellation, receipt, tax and buyer-field policy resolved",
+      "owner": "Finance / Tax counsel / Product owner",
+      "evidence": "PAY-03 through PAY-09 are unresolved",
+      "status": "blocked",
+      "severity": "P1",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "VPS-01",
+      "requirement": "VPS provider and VPN/proxy/exit-traffic AUP approved",
+      "owner": "Operations / Legal",
+      "evidence": "VPS-01 and VPS-02 are unresolved; no provider selected",
+      "status": "blocked",
+      "severity": "P1",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "PKI-01",
+      "requirement": "Production PKI approved and revocation tested",
+      "owner": "Security / Operations",
+      "evidence": "SPR-001, SPR-007 and GD-07/GD-08",
+      "status": "blocked",
+      "severity": "P1",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "SECRET-01",
+      "requirement": "Production secret custody and rotation approved",
+      "owner": "Security / Operations",
+      "evidence": "SPR-004 and INF-SECRET-01",
+      "status": "blocked",
+      "severity": "P1",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "DB-01",
+      "requirement": "PostgreSQL HA/PITR and least-privilege roles verified",
+      "owner": "DBA / Platform",
+      "evidence": "ACR-001, INF-DB-01 and GD-03",
+      "status": "blocked",
+      "severity": "P1",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "KAFKA-01",
+      "requirement": "Production Kafka quorum, ACL and recovery verified",
+      "owner": "Platform",
+      "evidence": "Local replay passes but INF-KAFKA-01 production topology is unresolved",
+      "status": "blocked",
+      "severity": "P1",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "BACKUP-01",
+      "requirement": "Encrypted off-host immutable backup configured",
+      "owner": "DBA / Security",
+      "evidence": "INF-BACKUP-01 is unresolved",
+      "status": "blocked",
+      "severity": "P1",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "RESTORE-01",
+      "requirement": "All eight owner databases restored with integrity and ownership checks",
+      "owner": "DBA / Platform",
+      "evidence": "make backup-restore-drill; final Stage 9 rerun pending",
+      "status": "pending",
+      "severity": "P1",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "GAME-01",
+      "requirement": "Incident game day passed",
+      "owner": "Operations / Security",
+      "evidence": "GD-03, GD-07, GD-08 and GD-11 remain staging blockers",
+      "status": "blocked",
+      "severity": "P1",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "ALERT-01",
+      "requirement": "Real alert receiver and escalation tested",
+      "owner": "SRE",
+      "evidence": "SPR-006 and OPS-ALERT-01; local receiver is inert",
+      "status": "blocked",
+      "severity": "P1",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "EDGE-01",
+      "requirement": "Domains, DNS, TLS, edge and bearer-path redaction approved",
+      "owner": "Platform / Security",
+      "evidence": "SPR-002 and INF-DNS-01 through INF-EDGE-01",
+      "status": "blocked",
+      "severity": "P1",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "REGISTRY-01",
+      "requirement": "Registry publication, immutable digest and verification approved",
+      "owner": "Platform / Security",
+      "evidence": "INF-REG-01; no registry selected",
+      "status": "blocked",
+      "severity": "P1",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "PROVENANCE-01",
+      "requirement": "Final release provenance verified for publishable image digests",
+      "owner": "Release approver / Security",
+      "evidence": "Local release metadata exists; publication/attestation and license approval are blocked",
+      "status": "blocked",
+      "severity": "P1",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "CAPACITY-01",
+      "requirement": "Control-plane and per-region VPN reserve approved",
+      "owner": "Platform / Operations / Finance",
+      "evidence": "INF-CAP-01; no production load/region/provider selected",
+      "status": "blocked",
+      "severity": "P1",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "OPERATIONS-01",
+      "requirement": "Abuse, support, breach and lawful-request processes assigned",
+      "owner": "Product owner / Legal / Support",
+      "evidence": "OPS-LEGAL-01 through OPS-LEGAL-06 are unresolved",
+      "status": "blocked",
+      "severity": "P1",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "ROLLBACK-01",
+      "requirement": "Critical N/N-1 rollback and disaster recovery drill passed",
+      "owner": "Platform / Operations",
+      "evidence": "ACR-002, GD-11 and docs/runbooks/production-rollback.md",
+      "status": "blocked",
+      "severity": "P1",
+      "review_date": "2026-08-26",
+      "blocking": true
+    },
+    {
+      "id": "CI-01",
+      "requirement": "All required local CI, security, smoke, restore, node, rotation, resilience and release checks green",
+      "owner": "Platform / Security",
+      "evidence": "docs/reviews/stage9/evidence-index.md; final run pending",
+      "status": "pending",
+      "severity": "P1",
+      "review_date": "2026-08-02",
+      "blocking": true
+    }
+  ]
+}

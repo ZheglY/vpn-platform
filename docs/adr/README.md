@@ -41,3 +41,4 @@ ADRs are immutable decision records. If a decision changes after implementation 
 | [0035](0035-stage8-secret-rotation.md) | Stage 8 secret rotation | Accepted for Stage 8 implementation |
 | [0036](0036-stage8-resilience-budgets-and-failure-drills.md) | Stage 8 resilience budgets and failure drills | Accepted for Stage 8 implementation |
 | [0037](0037-stage8-release-sbom-and-provenance.md) | Stage 8 release SBOM and provenance | Accepted for Stage 8 implementation |
+| [0038](0038-stage9-production-readiness-evidence.md) | Stage 9 production-readiness evidence and fail-closed gates | Accepted for Stage 9 review |

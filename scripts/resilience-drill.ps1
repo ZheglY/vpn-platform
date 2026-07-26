@@ -140,6 +140,17 @@ try {
     Wait-Command { docker compose @profiles exec -T postgres pg_isready -U $env:POSTGRES_USER -d $env:POSTGRES_DB *> $null } "PostgreSQL did not recover"
     Wait-Command { docker compose @profiles exec -T access-service /access-service healthcheck *> $null } "Access did not recover after PostgreSQL outage"
 
+    docker compose @profiles stop prometheus grafana otel-collector tempo loki
+    if ($LASTEXITCODE -ne 0) { throw "stop observability backend fault injection failed" }
+    $businessLiveStatus = & curl.exe -sS -o NUL -w "%{http_code}" --cacert "secrets/dev-mtls/ca.crt" --ssl-no-revoke "https://127.0.0.1:8087/livez"
+    $businessReadyStatus = & curl.exe -sS -o NUL -w "%{http_code}" --cacert "secrets/dev-mtls/ca.crt" --ssl-no-revoke "https://127.0.0.1:8087/readyz"
+    $publicStatus = & curl.exe -sS -o NUL -w "%{http_code}" --cacert "secrets/dev-mtls/ca.crt" --ssl-no-revoke "https://127.0.0.1:8087/s/resilience-observability-outage"
+    if ($businessLiveStatus -ne "200" -or $businessReadyStatus -ne "200" -or $publicStatus -ne "404") {
+        throw "observability outage interrupted business HTTP processing"
+    }
+    docker compose @profiles start tempo loki otel-collector prometheus grafana
+    if ($LASTEXITCODE -ne 0) { throw "restart observability backend fault injection failed" }
+
     go test -mod=readonly ./services/node-agent/internal/xray -run "Reload|SystemdManager"
     if ($LASTEXITCODE -ne 0) { throw "Xray reload failure recovery tests failed" }
     go test -mod=readonly ./services/provisioning/internal/application -run "Reconcile|Failover"
