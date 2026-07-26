@@ -36,7 +36,7 @@ promoted to production/staging evidence.
 | CAPACITY-01 | reserve and scaling approved | Platform / Operations / Finance | INF-CAP-01 | blocked | P1 | 2026-08-26 | yes |
 | OPERATIONS-01 | abuse/support/lawful-request owners assigned | Product owner / Legal / Support | OPS-LEGAL-01..06 | blocked | P1 | 2026-08-26 | yes |
 | ROLLBACK-01 | critical rollback/DR drill passed | Platform / Operations | ACR-002, GD-11, rollback runbook | blocked | P1 | 2026-08-26 | yes |
-| CI-01 | all required local gates green | Platform / Security | EV-01 through EV-12 at `f4c7d1e...` | passed | P1 | 2026-08-02 | yes |
+| CI-01 | all required local gates green | Platform / Security | EV-02 through EV-11 at `f4c7d1e...`; EV-01/EV-12 at `12fef12...` | passed | P1 | 2026-08-02 | yes |
 
 ## Decision rationale
 

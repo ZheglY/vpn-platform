@@ -259,7 +259,7 @@
       "id": "CI-01",
       "requirement": "All required local CI, security, smoke, restore, node, rotation, resilience and release checks green",
       "owner": "Platform / Security",
-      "evidence": "EV-01 through EV-12 passed at f4c7d1eb500944b80d6b8749e69a8427468dbd2d; production-only gates remain separately blocked",
+      "evidence": "EV-02 through EV-11 passed at f4c7d1eb500944b80d6b8749e69a8427468dbd2d; EV-01 and EV-12 passed at 12fef12063b657639fd4d4ef377bba29c4b1633e; production-only gates remain separately blocked",
       "status": "passed",
       "severity": "P1",
       "review_date": "2026-08-02",
