@@ -2,13 +2,13 @@
 
 Report date: 2026-07-26  
 Execution owner: Platform / Operations  
-Source commit: pending final Stage 9 evidence run  
+Source commit: `f4c7d1eb500944b80d6b8749e69a8427468dbd2d`
 Environment: local/disposable Docker Compose only  
 Overall result: **incomplete; production decision NO-GO**
 
 No real provider, VPS, credential, DNS, registry, database, customer record, or
 traffic was used. Commands produce aggregate output only; heavy generated
-artifacts remain ignored and will be checksum-indexed after the final run.
+artifacts remain ignored and are checksum-indexed by the release bundle.
 
 ## GD-01 - YooKassa timeout and ambiguous result
 
@@ -26,7 +26,8 @@ artifacts remain ignored and will be checksum-indexed after the final run.
   succeeded payment and one entitlement effect.
 - Recovery: Billing verification worker re-reads provider truth.
 - Rollback: delete disposable project only; never delete a real payment.
-- Actual result: pending final `make compose-smoke`.
+- Actual result: passed locally through `make compose-smoke`; provider-commit
+  ambiguity reconciled without a second payment or entitlement effect.
 - Budget: within bounded local retry window; exactly one payment effect.
 - Evidence: compose smoke and Billing ambiguous-result regression tests.
 - Residual risk: real provider/network and production receipt flow untested.
@@ -45,7 +46,9 @@ artifacts remain ignored and will be checksum-indexed after the final run.
   inbox/idempotency prevents a second period.
 - Recovery: restart broker and allow normal publisher/consumer retry.
 - Rollback: unique project `down -v`; verify preservation sentinel.
-- Actual result: pending final `make resilience-drill`.
+- Actual result: passed locally through `make resilience-drill`; the durable
+  outbox replayed after broker recovery and the subscription period count
+  remained unchanged.
 - Budget: outbox becomes published within 60 seconds after broker recovery.
 - Evidence: resilience script and period-count assertion.
 - Residual risk: single local broker is not production quorum recovery.
@@ -86,7 +89,8 @@ artifacts remain ignored and will be checksum-indexed after the final run.
 - Expected business behavior: SOCKS request reaches camouflage through failover.
 - Recovery: restart primary, health check, Provisioning reconciliation.
 - Rollback: remove disposable project and generated keys.
-- Actual result: pending final `make resilience-drill`.
+- Actual result: passed locally through `make resilience-drill`; real pinned
+  VLESS + REALITY traffic succeeded through the assigned failover.
 - Budget: failover request succeeds within bounded script retries.
 - Evidence: real-Xray failover assertion in resilience/compose smoke.
 - Residual risk: no provider network, regional failure, or production load.
@@ -106,7 +110,9 @@ artifacts remain ignored and will be checksum-indexed after the final run.
   works only when delivered through the intended one-time flow.
 - Recovery: issue another clean generation if the new token is suspect.
 - Rollback: never reactivate the exposed token.
-- Actual result: pending final rotation and observability smoke.
+- Actual result: passed locally through `make secret-rotation-drill` and
+  `make observability-smoke`; overlap/retirement worked, the old token remained
+  uniformly rejected, and the sentinel was absent from telemetry.
 - Budget: old token unusable immediately after committed rotation.
 - Evidence: Access credential tests, secret rotation, telemetry sentinel scan.
 - Residual risk: production edge caches/access logs not selected.
@@ -124,8 +130,9 @@ artifacts remain ignored and will be checksum-indexed after the final run.
 - Expected business behavior: no authenticated request or owner mutation.
 - Recovery: issue valid replacement and preserve identity allowlist.
 - Rollback: do not extend or bypass validation.
-- Actual result: focused test passed before the final evidence run; full rerun
-  pending.
+- Actual result: passed in the focused test and the final `make verify`; the
+  valid TLS 1.3 control request succeeded and the expired client handshake was
+  rejected before the handler.
 - Budget: expired handshake rejected immediately.
 - Evidence: `TestMutualTLSRejectsExpiredClientCertificate`.
 - Residual risk: production issuance, expiry alert, and fleet replacement blocked.
@@ -145,7 +152,9 @@ artifacts remain ignored and will be checksum-indexed after the final run.
   when health expires.
 - Recovery: approved reissue and re-enrollment, then reconciliation.
 - Rollback: never trust an expired or unverified leaf.
-- Actual result: partial local proof; production-like node expiry not executed.
+- Actual result: partial local proof passed in `make verify` and
+  `make node-hardening-test`; production-like node expiry/re-enrollment was not
+  executed.
 - Budget: immediate rejection; replacement RTO not approved.
 - Evidence: TLS expiry and provisioning node-certificate tests.
 - Residual risk: production revocation/reenrollment is a hard NO-GO.
@@ -165,7 +174,8 @@ artifacts remain ignored and will be checksum-indexed after the final run.
 - Recovery: investigate audit, revoke certificate, issue replacement only after
   custody review.
 - Rollback: re-enable only after Security approval; never reuse compromised key.
-- Actual result: integration test added; final PostgreSQL rerun pending.
+- Actual result: local PostgreSQL integration test passed in `make verify`; a
+  disabled principal lost access on the next request.
 - Budget: database disable affects the next request.
 - Evidence: `TestIntegrationDisabledAdminPrincipalLosesAccessImmediately`.
 - Residual risk: CA revocation/session drain and replacement are untested.
@@ -183,7 +193,8 @@ artifacts remain ignored and will be checksum-indexed after the final run.
   node is removed if rollback fails.
 - Recovery: fixed helper restores last-known-good and reports sanitized failure.
 - Rollback: host role/config rollback only after validation.
-- Actual result: pending final resilience and node-hardening drills.
+- Actual result: passed locally through `make resilience-drill` and
+  `make node-hardening-test`; invalid state did not replace last-known-good.
 - Budget: bounded consistency context completes before request returns.
 - Evidence: systemd manager tests and disposable Ansible test.
 - Residual risk: provider host/kernel variance.
@@ -201,7 +212,10 @@ artifacts remain ignored and will be checksum-indexed after the final run.
 - Expected business behavior: all public table counts and relation owners match.
 - Recovery: stream decrypt into single-transaction restore.
 - Rollback: destroy isolated cluster, identities, artifacts and volumes.
-- Actual result: pending final `make backup-restore-drill`.
+- Actual result: passed locally through `make backup-cleanup-test` and
+  `make backup-restore-drill`: eight encrypted artifacts restored with matching
+  checksums, table row counts, and relation owners. Observed RPO was 13.843
+  seconds and RTO was 52.057 seconds.
 - Budget: local RPO <= 24 hours and RTO <= 30 minutes.
 - Evidence: backup metadata/checksum and aggregate comparison output.
 - Residual risk: off-host immutable storage, PITR and production custody blocked.
@@ -241,13 +255,15 @@ artifacts remain ignored and will be checksum-indexed after the final run.
   processing continues.
 - Recovery: restart backends and re-run observability smoke.
 - Rollback: unique project cleanup.
-- Actual result: scenario added to resilience drill; final execution pending.
+- Actual result: passed locally through `make resilience-drill`; Access remained
+  live and ready, the public invalid-token request remained a uniform 404, and
+  the telemetry stack recovered after restart.
 - Budget: business checks remain successful throughout the fault.
 - Evidence: resilience script assertions.
 - Residual risk: no real out-of-band alert or durable production telemetry store.
 
 ## Current decision
 
-The report cannot pass while GD-03 and GD-11 are unexecuted and GD-07/GD-08 lack
-production-like PKI revocation. Local results will be updated after the final
-commit-bound run; those blockers still require approved staging.
+The locally safe scenarios passed, but the report cannot pass overall while
+GD-03 and GD-11 are unexecuted and GD-07/GD-08 lack production-like PKI
+revocation. Those blockers require approved production-like staging.

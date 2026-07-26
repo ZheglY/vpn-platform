@@ -97,8 +97,8 @@
     },
     {
       "name": "otel-collector",
-      "status": "approved",
-      "reason": "Apache-2.0 source build includes Collector and contrib LICENSE files; final SBOM remains subject to the publication gate."
+      "status": "blocked",
+      "reason": "Apache-2.0 Collector/contrib licenses are present, but the image also includes repository-owned httphealth code with no approved distribution license."
     },
     {
       "name": "tempo",

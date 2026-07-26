@@ -425,7 +425,7 @@ Tenth-slice acceptance:
 
 Depends on previous milestones. Performs architecture, security, legal/payment, license, incident, backup, and rollback reviews before any real launch.
 
-Status: in progress on `codex/stage9-production-readiness`, based on the accepted Stage 8 commit `76f5624e664c556c3ec598055524319eab0af1f3`.
+Status: implementation and local evidence complete; ready for review on `codex/stage9-production-readiness`. The evidence run is bound to `f4c7d1eb500944b80d6b8749e69a8427468dbd2d`, based on the accepted Stage 8 commit `76f5624e664c556c3ec598055524319eab0af1f3`. The production decision is `NO-GO` because the explicitly external legal, provider, license, PKI, HA/PITR, custody, alerting, registry, capacity, and production-like game-day gates remain blocked.
 
 Stage 9 is a review and local/disposable evidence milestone. It does not authorize production deployment, registry publication, real credentials, real domains, production databases, production VPS enrollment, provider calls, or customer traffic. The expected decision is `NO-GO` while any hard legal, provider, PKI, HA/PITR, alerting, custody, registry, or staging game-day gate remains unresolved.
 

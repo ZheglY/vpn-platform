@@ -87,6 +87,43 @@ const markdownDecision = fs.readFileSync(
 if (!markdownDecision.includes(`Decision: **${decision.decision}**`)) {
   fail("Markdown and machine-readable decisions disagree");
 }
+const markdownGates = new Map();
+for (const line of markdownDecision.split(/\r?\n/)) {
+  const columns = line.split("|").slice(1, -1).map((value) => value.trim());
+  if (columns.length !== 8 || !/^[A-Z]+-\d+$/.test(columns[0])) {
+    continue;
+  }
+  const id = columns[0];
+  if (markdownGates.has(id)) {
+    fail(`duplicate Markdown gate ${id}`);
+    continue;
+  }
+  if (!["yes", "no"].includes(columns[7])) {
+    fail(`Markdown gate ${id} has invalid blocking value`);
+  }
+  markdownGates.set(id, {
+    status: columns[4],
+    severity: columns[5],
+    blocking: columns[7] === "yes",
+  });
+}
+for (const gate of decision.gates ?? []) {
+  const markdownGate = markdownGates.get(gate.id);
+  if (!markdownGate) {
+    fail(`Markdown checklist is missing gate ${gate.id}`);
+    continue;
+  }
+  if (markdownGate.status !== gate.status ||
+      markdownGate.severity !== gate.severity ||
+      markdownGate.blocking !== gate.blocking) {
+    fail(`Markdown checklist disagrees with gate ${gate.id}`);
+  }
+}
+for (const id of markdownGates.keys()) {
+  if (!seen.has(id)) {
+    fail(`Markdown checklist has unknown gate ${id}`);
+  }
+}
 const licensePolicy = JSON.parse(
   fs.readFileSync(path.join(root, "deploy", "release", "license-policy.json"), "utf8"),
 );

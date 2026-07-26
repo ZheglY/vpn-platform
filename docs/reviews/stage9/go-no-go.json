@@ -169,8 +169,8 @@
       "id": "RESTORE-01",
       "requirement": "All eight owner databases restored with integrity and ownership checks",
       "owner": "DBA / Platform",
-      "evidence": "make backup-restore-drill; final Stage 9 rerun pending",
-      "status": "pending",
+      "evidence": "EV-07: eight encrypted databases restored at f4c7d1eb500944b80d6b8749e69a8427468dbd2d; checksum, row-count and owner checks passed",
+      "status": "passed",
       "severity": "P1",
       "review_date": "2026-08-26",
       "blocking": true
@@ -259,8 +259,8 @@
       "id": "CI-01",
       "requirement": "All required local CI, security, smoke, restore, node, rotation, resilience and release checks green",
       "owner": "Platform / Security",
-      "evidence": "docs/reviews/stage9/evidence-index.md; final run pending",
-      "status": "pending",
+      "evidence": "EV-01 through EV-12 passed at f4c7d1eb500944b80d6b8749e69a8427468dbd2d; production-only gates remain separately blocked",
+      "status": "passed",
       "severity": "P1",
       "review_date": "2026-08-02",
       "blocking": true

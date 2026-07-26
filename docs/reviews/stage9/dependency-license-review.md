@@ -70,7 +70,7 @@ publication until reviewed.
 | admin-cli | repository commit | repository code + Go graph | same | SPDX/scan | blocked |
 | prometheus | 3.13.1 at `73ff57c...` | Apache-2.0 | retain LICENSE/NOTICE and modification/source metadata | LICENSE and NOTICE copied; pinned source; SPDX/scan | approved technically |
 | grafana | 13.1.1 at `a9cee6e...` | AGPL-3.0 upstream image/security rebuild | network/distribution and corresponding-source obligations require counsel; bundled UI assets inherit upstream inventory | upstream base + pinned source; SPDX/scan | requires_counsel |
-| otel-collector | 0.157.0 at `4908404...` | Apache-2.0 | retain Collector/contrib licenses and notices | both LICENSE files copied; SPDX/scan | approved technically |
+| otel-collector | 0.157.0 at `4908404...` plus repository-owned `httphealth` | Apache-2.0 upstream; repository license unresolved | retain Collector/contrib licenses and notices; approve repository-code distribution | both upstream LICENSE files copied; SPDX/scan | blocked |
 | tempo | 2.10.5 at `991ce39...` | AGPL-3.0 | modified security rebuild and network use require counsel and corresponding-source procedure | LICENSE/LICENSING copied; source SHA; SPDX/scan/VEX | requires_counsel |
 | loki | 3.7.2 at `7486c4a...` | AGPL-3.0 | modified security rebuild and network use require counsel and corresponding-source procedure | LICENSE/LICENSING copied; source SHA; SPDX/scan | requires_counsel |
 

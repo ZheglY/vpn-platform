@@ -27,7 +27,7 @@ promoted to production/staging evidence.
 | DB-01 | DB HA/PITR and least privilege verified | DBA / Platform | ACR-001, INF-DB-01, GD-03 | blocked | P1 | 2026-08-26 | yes |
 | KAFKA-01 | production Kafka recovery/ACL verified | Platform | local replay only; INF-KAFKA-01 open | blocked | P1 | 2026-08-26 | yes |
 | BACKUP-01 | off-host encrypted immutable backup configured | DBA / Security | INF-BACKUP-01 | blocked | P1 | 2026-08-26 | yes |
-| RESTORE-01 | all eight databases restored and verified | DBA / Platform | final local drill pending | pending | P1 | 2026-08-26 | yes |
+| RESTORE-01 | all eight databases restored and verified | DBA / Platform | EV-07: 8 encrypted restores, checksum/count/owner match | passed | P1 | 2026-08-26 | yes |
 | GAME-01 | required incident game day passed | Operations / Security | game-day report | blocked | P1 | 2026-08-26 | yes |
 | ALERT-01 | real receiver and escalation tested | SRE | SPR-006, OPS-ALERT-01 | blocked | P1 | 2026-08-26 | yes |
 | EDGE-01 | domains/DNS/TLS/edge approved | Platform / Security | INF-DNS/TLS/EDGE | blocked | P1 | 2026-08-26 | yes |
@@ -36,7 +36,7 @@ promoted to production/staging evidence.
 | CAPACITY-01 | reserve and scaling approved | Platform / Operations / Finance | INF-CAP-01 | blocked | P1 | 2026-08-26 | yes |
 | OPERATIONS-01 | abuse/support/lawful-request owners assigned | Product owner / Legal / Support | OPS-LEGAL-01..06 | blocked | P1 | 2026-08-26 | yes |
 | ROLLBACK-01 | critical rollback/DR drill passed | Platform / Operations | ACR-002, GD-11, rollback runbook | blocked | P1 | 2026-08-26 | yes |
-| CI-01 | all required local gates green | Platform / Security | evidence index | pending | P1 | 2026-08-02 | yes |
+| CI-01 | all required local gates green | Platform / Security | EV-01 through EV-12 at `f4c7d1e...` | passed | P1 | 2026-08-02 | yes |
 
 ## Decision rationale
 
