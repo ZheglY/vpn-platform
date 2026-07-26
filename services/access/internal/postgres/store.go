@@ -13,16 +13,12 @@ import (
 	"github.com/ZheglY/vpn-platform/internal/platform/cryptoutil"
 	platformkafka "github.com/ZheglY/vpn-platform/internal/platform/kafka"
 	platformpostgres "github.com/ZheglY/vpn-platform/internal/platform/postgres"
+	"github.com/ZheglY/vpn-platform/services/access/internal/credential"
 	"github.com/ZheglY/vpn-platform/services/access/internal/domain"
 )
 
-type PaymentProvisioningObserver interface {
-	ObservePaymentToProvisioning(time.Duration)
-}
-
 type Store struct {
-	pool                        *pgxpool.Pool
-	paymentProvisioningObserver PaymentProvisioningObserver
+	pool *pgxpool.Pool
 }
 
 func Open(ctx context.Context, dsn string, options ...platformpostgres.Option) (*Store, error) {
@@ -36,8 +32,38 @@ func Open(ctx context.Context, dsn string, options ...platformpostgres.Option) (
 func (s *Store) Close()                         { s.pool.Close() }
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 
-func (s *Store) SetPaymentProvisioningObserver(observer PaymentProvisioningObserver) {
-	s.paymentProvisioningObserver = observer
+func (s *Store) ApplyPaymentSucceeded(ctx context.Context, meta domain.EventMeta, event domain.PaymentSucceeded) error {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin payment SLI event: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	inserted, err := insertInbox(ctx, tx, meta)
+	if err != nil {
+		return err
+	}
+	if !inserted {
+		return tx.Commit(ctx)
+	}
+	tag, err := tx.Exec(ctx, `
+INSERT INTO payment_access_sli (
+    payment_id, user_id, paid_at, payment_event_id, created_at, updated_at
+) VALUES ($1,$2,$3,$4,clock_timestamp(),clock_timestamp())
+ON CONFLICT (payment_id) DO UPDATE
+SET paid_at = EXCLUDED.paid_at,
+    payment_event_id = EXCLUDED.payment_event_id,
+    updated_at = clock_timestamp()
+WHERE payment_access_sli.user_id = EXCLUDED.user_id
+  AND (payment_access_sli.paid_at IS NULL OR payment_access_sli.paid_at = EXCLUDED.paid_at)
+  AND payment_access_sli.payment_event_id IS NULL`,
+		event.PaymentID, event.UserID, event.PaidAt.UTC(), meta.EventID)
+	if err != nil {
+		return fmt.Errorf("project payment SLI start: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return domain.ErrDurableStateConflict
+	}
+	return commit(ctx, tx, "payment SLI event")
 }
 
 func (s *Store) ApplyPeriod(ctx context.Context, meta domain.EventMeta, event domain.PeriodEvent, seed domain.CredentialSeed) error {
@@ -83,11 +109,10 @@ INSERT INTO access_credentials (
 		if err := insertOperationOutbox(ctx, tx, meta, now, "access.provision.request.v1", seed.OperationID, seed.CredentialID, 1); err != nil {
 			return err
 		}
-		if err := commit(ctx, tx, "period event"); err != nil {
+		if err := completePaymentAccessSLI(ctx, tx, meta, event, "activation"); err != nil {
 			return err
 		}
-		s.observePaymentProvisioning(meta, event, now)
-		return nil
+		return commit(ctx, tx, "period event")
 	}
 	if err != nil {
 		return fmt.Errorf("select current access credential: %w", err)
@@ -129,13 +154,37 @@ WHERE credential_id = $1 AND status = 'active'`, credentialID, event.GraceEndsAt
 			return fmt.Errorf("extend active token: %w", err)
 		}
 	}
+	if err := completePaymentAccessSLI(ctx, tx, meta, event, "extension"); err != nil {
+		return err
+	}
 	return commit(ctx, tx, "period event")
 }
 
-func (s *Store) observePaymentProvisioning(meta domain.EventMeta, event domain.PeriodEvent, startedAt time.Time) {
-	if meta.EventType == "subscription.activated.v1" && s.paymentProvisioningObserver != nil {
-		s.paymentProvisioningObserver.ObservePaymentToProvisioning(startedAt.Sub(event.PeriodStart))
+func completePaymentAccessSLI(ctx context.Context, tx pgx.Tx, meta domain.EventMeta, event domain.PeriodEvent, kind string) error {
+	if meta.EventType != "subscription.activated.v1" && meta.EventType != "subscription.extended.v1" {
+		return domain.ErrDurableStateConflict
 	}
+	tag, err := tx.Exec(ctx, `
+INSERT INTO payment_access_sli (
+    payment_id, user_id, paid_at, subscription_id, fulfillment_kind,
+    fulfillment_event_id, fulfilled_at, created_at, updated_at
+) VALUES ($1,$2,NULL,$3,$4,$5,clock_timestamp(),clock_timestamp(),clock_timestamp())
+ON CONFLICT (payment_id) DO UPDATE
+SET subscription_id = EXCLUDED.subscription_id,
+    fulfillment_kind = EXCLUDED.fulfillment_kind,
+    fulfillment_event_id = EXCLUDED.fulfillment_event_id,
+    fulfilled_at = EXCLUDED.fulfilled_at,
+    updated_at = clock_timestamp()
+WHERE payment_access_sli.user_id = EXCLUDED.user_id
+  AND payment_access_sli.fulfillment_event_id IS NULL`,
+		event.SourcePaymentID, event.UserID, event.SubscriptionID, kind, meta.EventID)
+	if err != nil {
+		return fmt.Errorf("project payment SLI fulfillment: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return domain.ErrDurableStateConflict
+	}
+	return nil
 }
 
 func (s *Store) ApplyGrace(ctx context.Context, meta domain.EventMeta, event domain.GraceEvent) error {
@@ -514,8 +563,11 @@ FOR UPDATE`, subscriptionID).Scan(&credentialID, &status, &expiresAt, &now)
 		rotatedFrom = previousTokenID
 	}
 	if _, err := tx.Exec(ctx, `
-INSERT INTO subscription_tokens (id, credential_id, token_lookup_hmac, status, expires_at, rotated_from, created_at)
-VALUES ($1,$2,$3,'active',$4,$5,$6)`, seed.TokenID, credentialID, seed.LookupHMAC, expiresAt, rotatedFrom, now); err != nil {
+INSERT INTO subscription_tokens (
+    id, credential_id, token_lookup_hmac, token_hmac_key_version,
+    status, expires_at, rotated_from, created_at
+)
+VALUES ($1,$2,$3,$4,'active',$5,$6,$7)`, seed.TokenID, credentialID, seed.LookupHMAC, seed.LookupHMACVersion, expiresAt, rotatedFrom, now); err != nil {
 		return fmt.Errorf("insert subscription token: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -635,15 +687,18 @@ INSERT INTO admin_recovery_requests (
 	return domain.AdminRecoveryResult{CredentialID: input.CredentialID, OperationID: input.OperationID, DesiredRevision: desiredRevision, Status: domain.StatusProvisioning}, nil
 }
 
-func (s *Store) GetProfileByTokenHMAC(ctx context.Context, lookup []byte) (domain.ProfileRecord, error) {
+func (s *Store) GetProfileByTokenHMACs(ctx context.Context, lookups [][]byte) (domain.ProfileRecord, error) {
+	if len(lookups) == 0 || len(lookups) > credential.MaxTokenHMACKeys {
+		return domain.ProfileRecord{}, domain.ErrNotFound
+	}
 	var record domain.ProfileRecord
 	var tokenID string
 	err := s.pool.QueryRow(ctx, `
 SELECT t.id, c.id, c.vless_uuid_ciphertext, c.encryption_key_version, c.entitlement_expires_at
 FROM subscription_tokens t JOIN access_credentials c ON c.id = t.credential_id
-WHERE t.token_lookup_hmac = $1 AND t.status = 'active'
+WHERE t.token_lookup_hmac = ANY($1::bytea[]) AND t.status = 'active'
   AND t.expires_at > now() AND c.entitlement_expires_at > now()
-  AND c.status IN ('active', 'degraded')`, lookup).Scan(&tokenID, &record.CredentialID, &record.Ciphertext, &record.KeyVersion, &record.EntitlementExpiresAt)
+  AND c.status IN ('active', 'degraded')`, lookups).Scan(&tokenID, &record.CredentialID, &record.Ciphertext, &record.KeyVersion, &record.EntitlementExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ProfileRecord{}, domain.ErrNotFound
 	}

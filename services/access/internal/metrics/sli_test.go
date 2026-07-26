@@ -1,40 +1,63 @@
 package metrics
 
 import (
-	"strings"
+	"context"
+	"errors"
 	"testing"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/common/expfmt"
 )
 
-func TestPaymentProvisioningBoundsElapsedTime(t *testing.T) {
-	t.Parallel()
-	registry := prometheus.NewRegistry()
-	metric := NewPaymentProvisioning(registry)
-	metric.ObservePaymentToProvisioning(-time.Second)
-	metric.ObservePaymentToProvisioning(60 * 24 * time.Hour)
+type paymentAccessSourceFunc func(context.Context) (PaymentAccessSnapshot, error)
 
+func (f paymentAccessSourceFunc) PaymentAccessSnapshot(ctx context.Context) (PaymentAccessSnapshot, error) {
+	return f(ctx)
+}
+
+func TestPaymentAccessCollectorExportsDurableCounters(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	if err := RegisterPaymentAccessSLI(registry, paymentAccessSourceFunc(func(context.Context) (PaymentAccessSnapshot, error) {
+		return PaymentAccessSnapshot{Started: 7, Bad: 2}, nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if got := gatheredMetric(t, registry, "vpn_access_payment_access_fulfillment_started_total"); got != 7 {
+		t.Fatalf("started = %v, want 7", got)
+	}
+	if got := gatheredMetric(t, registry, "vpn_access_payment_access_fulfillment_bad_total"); got != 2 {
+		t.Fatalf("bad = %v, want 2", got)
+	}
+}
+
+func TestPaymentAccessCollectorFailsClosed(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	if err := RegisterPaymentAccessSLI(registry, paymentAccessSourceFunc(func(context.Context) (PaymentAccessSnapshot, error) {
+		return PaymentAccessSnapshot{}, errors.New("unavailable")
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if got := gatheredMetric(t, registry, "vpn_access_payment_access_fulfillment_snapshot_success"); got != 0 {
+		t.Fatalf("snapshot success = %v, want 0", got)
+	}
+}
+
+func gatheredMetric(t *testing.T, registry *prometheus.Registry, name string) float64 {
+	t.Helper()
 	families, err := registry.Gather()
 	if err != nil {
 		t.Fatal(err)
 	}
-	var output strings.Builder
-	encoder := expfmt.NewEncoder(&output, expfmt.NewFormat(expfmt.TypeTextPlain))
 	for _, family := range families {
-		if err := encoder.Encode(family); err != nil {
-			t.Fatal(err)
+		if family.GetName() != name || len(family.Metric) != 1 {
+			continue
+		}
+		if family.Metric[0].Counter != nil {
+			return family.Metric[0].Counter.GetValue()
+		}
+		if family.Metric[0].Gauge != nil {
+			return family.Metric[0].Gauge.GetValue()
 		}
 	}
-	serialized := output.String()
-	for _, expected := range []string{
-		"vpn_access_payment_to_provisioning_seconds_count 2",
-		`vpn_access_payment_to_provisioning_seconds_bucket{le="1"}`,
-		`vpn_access_payment_to_provisioning_seconds_bucket{le="900"}`,
-	} {
-		if !strings.Contains(serialized, expected) {
-			t.Fatalf("metric output is missing %q:\n%s", expected, serialized)
-		}
-	}
+	t.Fatalf("metric %s not found", name)
+	return 0
 }

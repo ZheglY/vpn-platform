@@ -23,6 +23,7 @@ import (
 	platformtelemetry "github.com/ZheglY/vpn-platform/internal/platform/telemetry"
 	"github.com/ZheglY/vpn-platform/internal/platform/version"
 	"github.com/ZheglY/vpn-platform/services/node-agent/internal/application"
+	"github.com/ZheglY/vpn-platform/services/node-agent/internal/domain"
 	"github.com/ZheglY/vpn-platform/services/node-agent/internal/httpapi"
 	nodemetrics "github.com/ZheglY/vpn-platform/services/node-agent/internal/metrics"
 	"github.com/ZheglY/vpn-platform/services/node-agent/internal/state"
@@ -75,11 +76,26 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	manager, err := xray.NewManager(xray.ManagerConfig{
-		BinaryPath: cfg.xrayBinary, ConfigDirectory: cfg.xrayConfigDirectory,
-		ValidateTimeout: cfg.validateTimeout, ReloadTimeout: cfg.reloadTimeout, StartupGrace: cfg.startupGrace,
-		Render: xray.RenderConfig{ListenAddress: cfg.vpnListenAddress, ListenPort: cfg.vpnListenPort, RealityTarget: cfg.realityTarget, ServerNames: cfg.realityServerNames, RealityPrivateKey: privateKey, ShortIDs: cfg.realityShortIDs},
-	}, nodeMetrics)
+	renderConfig := xray.RenderConfig{
+		ListenAddress: cfg.vpnListenAddress, ListenPort: cfg.vpnListenPort,
+		RealityTarget: cfg.realityTarget, ServerNames: cfg.realityServerNames,
+		RealityPrivateKey: privateKey, ShortIDs: cfg.realityShortIDs,
+	}
+	var manager domain.XrayManager
+	if cfg.xrayManagerMode == "systemd" {
+		manager, err = xray.NewSystemdManager(xray.SystemdManagerConfig{
+			BinaryPath: cfg.xrayBinary, ConfigDirectory: cfg.xrayConfigDirectory,
+			ControlCommand: cfg.xrayControlCommand, ControlArgs: cfg.xrayControlArgs,
+			ValidateTimeout: cfg.validateTimeout, ReloadTimeout: cfg.reloadTimeout,
+			StartupGrace: cfg.startupGrace, Render: renderConfig,
+		}, nodeMetrics)
+	} else {
+		manager, err = xray.NewManager(xray.ManagerConfig{
+			BinaryPath: cfg.xrayBinary, ConfigDirectory: cfg.xrayConfigDirectory,
+			ValidateTimeout: cfg.validateTimeout, ReloadTimeout: cfg.reloadTimeout,
+			StartupGrace: cfg.startupGrace, Render: renderConfig,
+		}, nodeMetrics)
+	}
 	if err != nil {
 		return err
 	}
@@ -120,6 +136,8 @@ func run(ctx context.Context) error {
 type appConfig struct {
 	environment, logLevel, nodeID, trustDomain, namespace, healthCallerIdentity string
 	stateDirectory, xrayBinary, xrayConfigDirectory                             string
+	xrayManagerMode, xrayControlCommand                                         string
+	xrayControlArgs                                                             []string
 	realityPrivateKeyFile, realityTarget, vpnListenAddress                      string
 	realityServerNames, realityShortIDs                                         []string
 	vpnListenPort, operationJournalLimit                                        int
@@ -183,9 +201,17 @@ func loadConfig() (appConfig, error) {
 		environment: environment, logLevel: config.String("LOG_LEVEL", "info"), nodeID: required("NODE_ID"),
 		trustDomain: config.String("MTLS_TRUST_DOMAIN", "vpn-service"), namespace: config.String("MTLS_NAMESPACE", environment), healthCallerIdentity: required("NODE_HEALTH_CALLER_IDENTITY"),
 		stateDirectory: required("NODE_STATE_DIRECTORY"), xrayBinary: required("XRAY_BINARY"), xrayConfigDirectory: required("XRAY_CONFIG_DIRECTORY"),
+		xrayManagerMode:       config.String("XRAY_MANAGER_MODE", "process"),
 		realityPrivateKeyFile: required("XRAY_REALITY_PRIVATE_KEY_FILE"), realityTarget: required("XRAY_REALITY_TARGET"), vpnListenAddress: config.String("XRAY_LISTEN_ADDRESS", "0.0.0.0"),
 		realityServerNames: serverNames, realityShortIDs: shortIDs, vpnListenPort: vpnPort, operationJournalLimit: journalLimit,
 		validateTimeout: validateTimeout, reloadTimeout: reloadTimeout, startupGrace: startupGrace, maxBodyBytes: int64(maxBody), http: httpCfg, tls: tlsCfg,
+	}
+	if result.xrayManagerMode != "process" && result.xrayManagerMode != "systemd" {
+		fields = config.Append(fields, "XRAY_MANAGER_MODE", fmt.Errorf("must be process or systemd"))
+	}
+	if result.xrayManagerMode == "systemd" {
+		result.xrayControlCommand = required("XRAY_CONTROL_COMMAND")
+		result.xrayControlArgs = splitCSV(config.String("XRAY_CONTROL_ARGS", ""))
 	}
 	if result.trustDomain == "" || result.namespace == "" {
 		fields = config.Append(fields, "MTLS_IDENTITY", fmt.Errorf("trust domain and namespace are required"))

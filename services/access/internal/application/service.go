@@ -57,6 +57,18 @@ func NewService(store domain.Store, keyring *credential.Keyring, hasher *credent
 
 func (s *Service) ProcessEvent(ctx context.Context, meta domain.EventMeta, data json.RawMessage) error {
 	switch meta.EventType {
+	case "billing.payment.succeeded.v1":
+		var event domain.PaymentSucceeded
+		if err := strictDecode(data, &event); err != nil {
+			return ContractError("invalid_event_data", err)
+		}
+		if event.PaymentID != meta.AggregateID || meta.PartitionKey != "user:"+event.UserID ||
+			!validUUIDs(event.PaymentID, event.OrderID, event.UserID, event.PlanID) ||
+			event.AmountMinor < 1 || event.Currency == "" || event.PaidAt.IsZero() ||
+			!event.PaidAt.Equal(meta.OccurredAt) {
+			return ContractError("event_invariant_failed", domain.ErrDurableStateConflict)
+		}
+		return s.store.ApplyPaymentSucceeded(ctx, meta, event)
 	case "subscription.activated.v1", "subscription.extended.v1":
 		var event domain.PeriodEvent
 		if err := strictDecode(data, &event); err != nil {
@@ -142,7 +154,7 @@ func (s *Service) IssueSubscriptionURL(ctx context.Context, subscriptionID, idem
 	}
 	requestDigest := sha256.Sum256([]byte(operation + "\n" + subscriptionID))
 	seed := domain.TokenSeed{
-		TokenID: tokenID, LookupHMAC: s.hasher.Sum(token), IdempotencyKey: idempotencyKey,
+		TokenID: tokenID, LookupHMAC: s.hasher.Sum(token), LookupHMACVersion: s.hasher.ActiveVersion(), IdempotencyKey: idempotencyKey,
 		RequestSHA256: hex.EncodeToString(requestDigest[:]),
 	}
 	if err := s.store.IssueToken(ctx, subscriptionID, operation, seed); err != nil {
@@ -169,7 +181,7 @@ func (s *Service) GetProfile(ctx context.Context, token string) (Profile, error)
 	if err != nil || len(decoded) != 32 {
 		return Profile{}, domain.ErrNotFound
 	}
-	record, err := s.store.GetProfileByTokenHMAC(ctx, s.hasher.Sum(token))
+	record, err := s.store.GetProfileByTokenHMACs(ctx, s.hasher.Candidates(token))
 	if err != nil {
 		return Profile{}, err
 	}

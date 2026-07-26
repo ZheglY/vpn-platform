@@ -6,7 +6,24 @@ import (
 	"time"
 
 	"github.com/ZheglY/vpn-platform/internal/platform/observability"
+	accessmetrics "github.com/ZheglY/vpn-platform/services/access/internal/metrics"
 )
+
+func (s *Store) PaymentAccessSnapshot(ctx context.Context) (accessmetrics.PaymentAccessSnapshot, error) {
+	var snapshot accessmetrics.PaymentAccessSnapshot
+	err := s.pool.QueryRow(ctx, `
+SELECT count(*)::bigint,
+       count(*) FILTER (
+           WHERE fulfilled_at > paid_at + interval '60 seconds'
+              OR (fulfilled_at IS NULL AND clock_timestamp() >= paid_at + interval '60 seconds')
+       )::bigint
+FROM payment_access_sli
+WHERE payment_event_id IS NOT NULL`).Scan(&snapshot.Started, &snapshot.Bad)
+	if err != nil {
+		return accessmetrics.PaymentAccessSnapshot{}, fmt.Errorf("query durable payment access SLI: %w", err)
+	}
+	return snapshot, nil
+}
 
 func BacklogSeries() []observability.BacklogKey {
 	return []observability.BacklogKey{

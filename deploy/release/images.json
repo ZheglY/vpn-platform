@@ -1,0 +1,97 @@
+{
+  "format_version": 1,
+  "source_repository": "https://github.com/ZheglY/vpn-platform",
+  "toolchain": {
+    "syft_image": "anchore/syft:v1.44.0@sha256:86fde6445b483d902fe011dd9f68c4987dd94e07da1e9edc004e3c2422650de6",
+    "trivy_image": "aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f"
+  },
+  "excluded_dockerfiles": [
+    {
+      "path": "tools/fake-telegram/Dockerfile",
+      "reason": "local-smoke-only"
+    },
+    {
+      "path": "tools/fake-yookassa/Dockerfile",
+      "reason": "local-smoke-only"
+    }
+  ],
+  "images": [
+    {
+      "name": "credentialstage",
+      "dockerfile": "tools/credentialstage/Dockerfile"
+    },
+    {
+      "name": "migrate",
+      "dockerfile": "tools/migrate/Dockerfile"
+    },
+    {
+      "name": "backupctl",
+      "dockerfile": "tools/backupctl/Dockerfile"
+    },
+    {
+      "name": "identity-service",
+      "dockerfile": "services/identity/Dockerfile"
+    },
+    {
+      "name": "catalog-service",
+      "dockerfile": "services/catalog/Dockerfile"
+    },
+    {
+      "name": "billing-service",
+      "dockerfile": "services/billing/Dockerfile"
+    },
+    {
+      "name": "subscription-service",
+      "dockerfile": "services/subscription/Dockerfile"
+    },
+    {
+      "name": "access-service",
+      "dockerfile": "services/access/Dockerfile"
+    },
+    {
+      "name": "provisioning-service",
+      "dockerfile": "services/provisioning/Dockerfile"
+    },
+    {
+      "name": "node-agent",
+      "dockerfile": "services/node-agent/Dockerfile"
+    },
+    {
+      "name": "telegram-bot",
+      "dockerfile": "services/telegram-bot/Dockerfile"
+    },
+    {
+      "name": "notification-service",
+      "dockerfile": "services/notification/Dockerfile"
+    },
+    {
+      "name": "admin-service",
+      "dockerfile": "services/admin/Dockerfile"
+    },
+    {
+      "name": "admin-cli",
+      "dockerfile": "services/admin/Dockerfile.cli"
+    },
+    {
+      "name": "prometheus",
+      "dockerfile": "deploy/observability/prometheus/Dockerfile"
+    },
+    {
+      "name": "grafana",
+      "dockerfile": "deploy/observability/grafana/Dockerfile"
+    },
+    {
+      "name": "otel-collector",
+      "dockerfile": "deploy/observability/otel-collector/Dockerfile"
+    },
+    {
+      "name": "tempo",
+      "dockerfile": "deploy/observability/tempo/Dockerfile",
+      "vex": "deploy/observability/tempo/tempo.openvex.json"
+    },
+    {
+      "name": "loki",
+      "dockerfile": "deploy/observability/loki/Dockerfile"
+    }
+  ]
+}

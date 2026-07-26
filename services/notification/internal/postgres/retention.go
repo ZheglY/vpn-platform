@@ -8,6 +8,14 @@ import (
 	"github.com/ZheglY/vpn-platform/internal/platform/retention"
 )
 
+func (s *Store) RetentionClock(ctx context.Context) (time.Time, error) {
+	var now time.Time
+	if err := s.pool.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+		return time.Time{}, fmt.Errorf("read notification retention clock: %w", err)
+	}
+	return now.UTC(), nil
+}
+
 func (s *Store) RetentionDatasets(keepFor time.Duration) []retention.Dataset {
 	return []retention.Dataset{{
 		Name:    "replayed_dead_letters",

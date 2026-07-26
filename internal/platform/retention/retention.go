@@ -33,10 +33,17 @@ type DatasetReport struct {
 type Report struct {
 	Owner       string          `json:"owner"`
 	DryRun      bool            `json:"dry_run"`
+	Status      string          `json:"status"`
 	GeneratedAt time.Time       `json:"generated_at"`
 	BatchSize   int             `json:"batch_size"`
 	MaxDelete   int             `json:"max_delete"`
 	Datasets    []DatasetReport `json:"datasets"`
+	Failure     *FailureReport  `json:"failure,omitempty"`
+}
+
+type FailureReport struct {
+	Dataset string `json:"dataset"`
+	Stage   string `json:"stage"`
 }
 
 type Settings struct {
@@ -59,7 +66,7 @@ func Run(ctx context.Context, owner string, now time.Time, settings Settings, da
 		return Report{}, fmt.Errorf("retention max delete must be between batch size and 100000")
 	}
 	report := Report{
-		Owner: owner, DryRun: settings.DryRun, GeneratedAt: now.UTC(),
+		Owner: owner, DryRun: settings.DryRun, Status: "completed", GeneratedAt: now.UTC(),
 		BatchSize: settings.BatchSize, MaxDelete: settings.MaxDelete,
 		Datasets: make([]DatasetReport, 0, len(datasets)),
 	}
@@ -72,13 +79,19 @@ func Run(ctx context.Context, owner string, now time.Time, settings Settings, da
 			return Report{}, fmt.Errorf("retention dataset is duplicated")
 		}
 		seen[dataset.Name] = struct{}{}
+	}
+	for _, dataset := range datasets {
 		cutoff := now.UTC().Add(-dataset.KeepFor)
 		eligibility, err := dataset.Preview(ctx, cutoff)
 		if err != nil {
-			return Report{}, fmt.Errorf("preview retention dataset %s: %w", dataset.Name, err)
+			report.Status = "failed"
+			report.Failure = &FailureReport{Dataset: dataset.Name, Stage: "preview"}
+			return report, fmt.Errorf("preview retention dataset %s: %w", dataset.Name, err)
 		}
 		if eligibility.Eligible < 0 || eligibility.Protected < 0 {
-			return Report{}, fmt.Errorf("retention dataset returned invalid counts")
+			report.Status = "failed"
+			report.Failure = &FailureReport{Dataset: dataset.Name, Stage: "preview_result"}
+			return report, fmt.Errorf("retention dataset returned invalid counts")
 		}
 		item := DatasetReport{
 			Dataset: dataset.Name, Cutoff: cutoff,
@@ -90,10 +103,18 @@ func Run(ctx context.Context, owner string, now time.Time, settings Settings, da
 				limit := min(settings.BatchSize, settings.MaxDelete-int(item.Deleted))
 				deleted, err := dataset.DeleteBatch(ctx, cutoff, limit)
 				if err != nil {
-					return Report{}, fmt.Errorf("delete retention dataset %s: %w", dataset.Name, err)
+					item.RemainingEstimate = max(eligibility.Eligible-item.Deleted, 0)
+					report.Datasets = append(report.Datasets, item)
+					report.Status = "failed"
+					report.Failure = &FailureReport{Dataset: dataset.Name, Stage: "delete"}
+					return report, fmt.Errorf("delete retention dataset %s: %w", dataset.Name, err)
 				}
 				if deleted < 0 || deleted > int64(limit) {
-					return Report{}, fmt.Errorf("retention dataset exceeded its deletion bound")
+					item.RemainingEstimate = max(eligibility.Eligible-item.Deleted, 0)
+					report.Datasets = append(report.Datasets, item)
+					report.Status = "failed"
+					report.Failure = &FailureReport{Dataset: dataset.Name, Stage: "delete_result"}
+					return report, fmt.Errorf("retention dataset exceeded its deletion bound")
 				}
 				item.Deleted += deleted
 				if deleted < int64(limit) {

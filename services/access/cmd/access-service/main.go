@@ -82,12 +82,14 @@ func run(ctx context.Context) error {
 	if err := observability.RegisterStateMetrics(registry, serviceName, store, accesspostgres.StateSeries()); err != nil {
 		return err
 	}
-	store.SetPaymentProvisioningObserver(accessmetrics.NewPaymentProvisioning(registry))
+	if err := accessmetrics.RegisterPaymentAccessSLI(registry, store); err != nil {
+		return err
+	}
 	keyring, err := credential.NewKeyring(cfg.CredentialKeyVersion, cfg.CredentialKeys)
 	if err != nil {
 		return err
 	}
-	hasher, err := credential.NewTokenHasher(cfg.TokenHMACKey)
+	hasher, err := credential.NewTokenHasherKeyring(cfg.TokenHMACKeyVersion, cfg.TokenHMACKeys)
 	if err != nil {
 		return err
 	}
@@ -105,6 +107,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 	kafkaMetrics, err := platformkafka.NewMetrics(registry, serviceName, []string{
+		"billing.payment.succeeded.v1",
 		"subscription.activated.v1", "subscription.extended.v1", "subscription.grace.started.v1", "subscription.expired.v1", "subscription.revoked.v1",
 		"access.provision.succeeded.v1", "access.provision.failed.v1", "access.revoke.succeeded.v1", "access.revoke.failed.v1",
 		"access.provision.request.v1", "access.revoke.request.v1", "access.ready.v1", "access.provisioning.failed.v1", "access.revoked.v1",
@@ -115,6 +118,7 @@ func run(ctx context.Context) error {
 	kafkaClient, err := platformkafka.NewClient(cfg.KafkaBrokers, serviceName,
 		kgo.ConsumerGroup(cfg.ConsumerGroup),
 		kgo.ConsumeTopics(
+			"billing.payment.succeeded.v1",
 			"subscription.activated.v1", "subscription.extended.v1", "subscription.grace.started.v1", "subscription.expired.v1", "subscription.revoked.v1",
 			"access.provision.succeeded.v1", "access.provision.failed.v1", "access.revoke.succeeded.v1", "access.revoke.failed.v1",
 		),
@@ -175,7 +179,8 @@ type appConfig struct {
 	MTLSNamespace        string
 	CredentialKeyVersion int
 	CredentialKeys       map[int][]byte
-	TokenHMACKey         []byte
+	TokenHMACKeyVersion  int
+	TokenHMACKeys        map[int][]byte
 	RedisAddr            string
 	RedisPassword        string
 	RedisDB              int
@@ -236,10 +241,23 @@ func loadConfig() (appConfig, error) {
 	}
 	credentialKeys, err := credential.DecodeKeySet(required("ACCESS_CREDENTIAL_KEYS"))
 	fields = config.Append(fields, "ACCESS_CREDENTIAL_KEYS", err)
-	tokenKey, err := credential.DecodeKey(required("ACCESS_TOKEN_HMAC_KEY_BASE64"))
-	fields = config.Append(fields, "ACCESS_TOKEN_HMAC_KEY_BASE64", err)
-	if activeKey := credentialKeys[keyVersion]; len(activeKey) == credential.KeyBytes && len(tokenKey) == credential.KeyBytes && string(activeKey) == string(tokenKey) {
-		fields = config.Append(fields, "ACCESS_TOKEN_HMAC_KEY_BASE64", fmt.Errorf("must differ from credential encryption key"))
+	tokenKeyVersion, err := config.Int("ACCESS_TOKEN_HMAC_KEY_VERSION", 1)
+	fields = config.Append(fields, "ACCESS_TOKEN_HMAC_KEY_VERSION", err)
+	tokenKeySet := strings.TrimSpace(os.Getenv("ACCESS_TOKEN_HMAC_KEYS"))
+	if tokenKeySet == "" {
+		tokenKeySet = "1:" + required("ACCESS_TOKEN_HMAC_KEY_BASE64")
+	}
+	tokenKeys, err := credential.DecodeKeySet(tokenKeySet)
+	fields = config.Append(fields, "ACCESS_TOKEN_HMAC_KEYS", err)
+	if _, ok := tokenKeys[tokenKeyVersion]; !ok {
+		fields = config.Append(fields, "ACCESS_TOKEN_HMAC_KEY_VERSION", fmt.Errorf("active key version is missing"))
+	}
+	for _, tokenKey := range tokenKeys {
+		for _, encryptionKey := range credentialKeys {
+			if len(encryptionKey) == credential.KeyBytes && string(encryptionKey) == string(tokenKey) {
+				fields = config.Append(fields, "ACCESS_TOKEN_HMAC_KEYS", fmt.Errorf("must differ from every credential encryption key"))
+			}
+		}
 	}
 	redisAddr := required("REDIS_ADDR")
 	redisPassword := required("REDIS_PASSWORD")
@@ -304,7 +322,8 @@ func loadConfig() (appConfig, error) {
 		Environment: environment, LogLevel: config.String("LOG_LEVEL", "info"), DatabaseURL: databaseURL,
 		KafkaBrokers: brokers, ConsumerGroup: consumerGroup, InternalAuth: authMode,
 		MTLSTrustDomain: config.String("MTLS_TRUST_DOMAIN", "vpn-service"), MTLSNamespace: config.String("MTLS_NAMESPACE", environment),
-		CredentialKeyVersion: keyVersion, CredentialKeys: credentialKeys, TokenHMACKey: tokenKey,
+		CredentialKeyVersion: keyVersion, CredentialKeys: credentialKeys,
+		TokenHMACKeyVersion: tokenKeyVersion, TokenHMACKeys: tokenKeys,
 		RedisAddr: redisAddr, RedisPassword: redisPassword, RedisDB: redisDB, IPRateLimit: ipRateLimit, TokenRateLimit: tokenRateLimit, RateLimitWindow: rateWindow,
 		PublicBaseURL: publicBaseURL, ProfileTitle: profileTitle, SupportURL: supportURL, ProfileUpdateHours: updateHours,
 		WorkerPollInterval: poll, WorkerRetryDelay: retry, WorkerLease: lease, MaxBodyBytes: int64(maxBody), HTTP: httpCfg, TLS: tlsCfg,

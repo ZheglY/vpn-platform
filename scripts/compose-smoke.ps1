@@ -38,9 +38,11 @@ Set-DefaultEnv "GOTMPDIR" "D:\Work\Projects\dev\go-work\tmp"
 Set-DefaultEnv "TEMP" "D:\Work\Projects\dev\tmp"
 Set-DefaultEnv "TMP" "D:\Work\Projects\dev\tmp"
 $fullVPN = [Environment]::GetEnvironmentVariable("VPN_SMOKE_FULL_CONTROL_PLANE") -eq "1"
+$testVPNFailover = [Environment]::GetEnvironmentVariable("VPN_SMOKE_TEST_FAILOVER") -eq "1"
 $stage7Extended = [Environment]::GetEnvironmentVariable("STAGE7_EXTENDED_SMOKE") -eq "1"
 $observability = [Environment]::GetEnvironmentVariable("OBSERVABILITY_SMOKE") -eq "1"
 if ($stage7Extended -and !$fullVPN) { throw "Stage 7 extended smoke requires the full VPN control plane" }
+if ($testVPNFailover -and !$fullVPN) { throw "VPN failover smoke requires the full VPN control plane" }
 $profiles = @("--profile", "core", "--profile", "app")
 if ($fullVPN) { $profiles += @("--profile", "vpn") }
 if ($observability) { $profiles += @("--profile", "obs") }
@@ -710,6 +712,49 @@ try {
             Start-Sleep -Milliseconds 500
         }
         if ("$vpnBody" -notmatch "local camouflage endpoint") { throw "full-control-plane VLESS + REALITY request failed" }
+
+        if ($testVPNFailover) {
+            docker compose stop node-agent-primary | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "stop primary node fault injection failed" }
+            docker rm -f $vpnClientName | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "stop primary-route Xray client failed" }
+
+            $clientConfig = Get-Content -Raw "secrets/dev-xray/smoke-client-failover.json" | ConvertFrom-Json
+            $clientConfig.outbounds[0].settings.id = $vpnCredentialUUID
+            [System.IO.File]::WriteAllText($vpnClientConfig, ($clientConfig | ConvertTo-Json -Depth 12), [System.Text.UTF8Encoding]::new($false))
+            docker run --rm -v "$($vpnClientConfig):/etc/xray/client.json:ro" $vpnClientImage run -test -config /etc/xray/client.json | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "generated failover Xray client configuration is invalid" }
+            docker run -d --name $vpnClientName --network vpn-service_vpn-data -p "127.0.0.1:11080:1080" -v "$($vpnClientConfig):/etc/xray/client.json:ro" $vpnClientImage run -config /etc/xray/client.json | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "start failover Xray client failed" }
+
+            $failoverBody = ""
+            foreach ($attempt in 1..40) {
+                $failoverBody = & curl.exe -sS --socks5-hostname 127.0.0.1:11080 --connect-timeout 2 --max-time 5 http://camouflage.local/ 2>$null
+                if ($LASTEXITCODE -eq 0 -and "$failoverBody" -match "local camouflage endpoint") { break }
+                Start-Sleep -Milliseconds 500
+            }
+            if ("$failoverBody" -notmatch "local camouflage endpoint") { throw "VPN traffic did not survive primary node loss" }
+
+            docker compose start node-agent-primary | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "restart primary node fault injection failed" }
+            $primaryRecovered = $false
+            foreach ($attempt in 1..120) {
+                $previousErrorActionPreference = $ErrorActionPreference
+                try {
+                    $ErrorActionPreference = "SilentlyContinue"
+                    docker compose exec -T node-agent-primary /node-agent healthcheck *> $null
+                    $healthcheckExitCode = $LASTEXITCODE
+                } finally {
+                    $ErrorActionPreference = $previousErrorActionPreference
+                }
+                if ($healthcheckExitCode -eq 0) {
+                    $primaryRecovered = $true
+                    break
+                }
+                Start-Sleep -Milliseconds 500
+            }
+            if (!$primaryRecovered) { throw "primary node did not recover after failover drill" }
+        }
 
         Invoke-MTLSProbe @("GET", "https://127.0.0.1:18443/internal/v1/credentials/$accessCredentialID", "secrets/dev-mtls/identity-health.crt", "secrets/dev-mtls/identity-health.key", "secrets/dev-mtls/ca.crt", "403") | Out-Null
 

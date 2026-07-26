@@ -13,6 +13,10 @@ Implemented local and sandbox runbooks are listed below. Production operations s
 - [Prometheus, Grafana, metrics privacy, and HTTP alerts](observability.md)
 - [Owner-local data retention and legal holds](data-retention.md)
 - [Encrypted database backup and clean restore](backup-restore.md)
+- [VPN node host hardening and rollback](vpn-node-hardening.md)
+- [mTLS, provider, Access, and REALITY secret rotation](secret-rotation.md)
+- [Bounded load and resilience drills](resilience.md)
+- [Release images, SBOMs, scans, and keyless provenance](release.md)
 - [Support and abuse](support-abuse.md)
 
 Required before production:
@@ -24,7 +28,7 @@ Required before production:
 - Expired mTLS certificate. See [development mTLS](dev-mtls.md) for the local certificate profile.
 - Production node heartbeat alert routing. Local scrape diagnosis is covered by the observability and provisioning runbooks.
 - Production capacity alert routing. Local diagnosis is covered by the provisioning runbook.
-- Production Xray/systemd ownership. Local rollback is covered by the provisioning runbook.
+- Production Xray/systemd ownership. Local host-state validation and rollback are covered by the node-hardening runbook.
 - Leaked subscription token. See [access delivery](access-delivery.md).
 - Production backup/restore monitoring, storage, and key custody. The local encrypted drill is covered by the backup runbook.
 - Support and abuse intake.

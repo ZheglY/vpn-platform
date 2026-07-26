@@ -321,7 +321,7 @@ Verification completed on 2026-07-23:
 
 Depends on working services. Adds dashboards, alerts, runbooks, backup/restore drill, node hardening, secret rotation, privacy retention jobs, SBOM, and signing.
 
-Status: in progress on `codex/stage8-observability-hardening`. Slices 1-3 implement privacy-safe metrics, W3C HTTP/Kafka trace context, and the protected Collector/Tempo/Loki pipeline. Slice 4 implements explicit SLI/SLO budget alerts and an inert Alertmanager baseline. Slice 5 implements owner-local bounded retention and Billing legal holds. Slice 6 implements streaming encrypted backups and an eight-database clean restore drill. Stage 8 is not complete and Stage 9 remains blocked.
+Status: in progress on `codex/stage8-observability-hardening`. Slices 1-10 are implemented for review. The slice 4-6 acceptance findings are remediated with a durable successful-payment denominator, PostgreSQL-clocked partial retention reports, exported-snapshot backup inspection, exact empty-target restore preflight, and forced-failure secret cleanup. Slices 7-10 add disposable Debian node hardening, bounded secret rotation, load/failure recovery, and release SBOM/keyless provenance controls. Stage 8 is not accepted and Stage 9 remains blocked pending the complete verification and product-owner review.
 
 Implementation plan:
 
@@ -367,7 +367,7 @@ Third-slice acceptance:
 Fourth-slice acceptance:
 
 - Control API and public subscription availability have explicit eligible/bad-event recording rules for 99.9% and 99.95% monthly objectives.
-- Initial activation records one identifier-free payment-period-start to committed provisioning-command duration; replay, extension, and rollback do not double-count.
+- Every successful payment enters an owner-local durable denominator keyed for idempotency; only aggregate identifier-free measurements are exported. Committed initial provisioning or extension fulfillment is recorded transactionally, while replay and rollback do not double-count.
 - Fast 1h/5m and slow 6h/30m budget-burn alerts cover both availability objectives and the 99% under-60-second asynchronous objective. p95 warnings cover 300 ms control API and 200 ms subscription rendering targets.
 - `promtool` tests cover healthy and budget-burning states. Alertmanager configuration and templates pass `amtool` with inert receivers and no credentials or production delivery claim.
 - ADR 0030 and the observability runbook define SLI semantics, operator response, limitations, and the production escalation blocker.
@@ -387,6 +387,39 @@ Sixth-slice acceptance:
 - The disposable drill backs up and restores all eight owner databases, compares exact public-table row counts and relation owners, enforces local RPO <= 24 hours and RTO <= 30 minutes, and removes temporary keys, artifacts, and volumes.
 - Unit tests cover key mode, connection-secret handling, comparison failure, and safe identifiers. The backup image is license-complete and included in build and HIGH/CRITICAL scan gates.
 - ADR 0032 and the backup runbook explicitly leave production scheduling, off-host immutable storage, key custody, HA/PITR, and approved recovery targets unresolved.
+
+Acceptance-review remediation for slices 4-6:
+
+- Every successful Billing payment enters an Access-owned durable denominator. Committed initial provisioning or extension fulfills the row; unfinished rows become bad after 60 seconds by PostgreSQL time. Restart, replay, rollback, and lifecycle-before-payment delivery have regression coverage.
+- Prometheus error ratios normalize an absent `5xx` series to zero. Fast/slow burn and both p95 warning paths have `promtool` tests.
+- Retention uses the owning PostgreSQL clock and preserves completed aggregate progress plus a bounded dataset/stage when a later dataset fails.
+- Backup source inspection and `pg_dump` use the exact same exported repeatable-read snapshot. Restore verifies the URL and actual database, rejects every non-empty target before `pg_restore`, and never uses `--clean`.
+- Forced failure after key generation must remove the age identity and drill directory. Cleanup errors fail, and an ignored-filesystem scan detects private-key artifacts.
+
+Seventh-slice acceptance:
+
+- A Debian 12 Ansible role configures nftables default deny, WireGuard-only node management, SSH/sysctl hardening, separate non-root node-agent and Xray identities, restricted credential modes, and hardened systemd units.
+- node-agent production mode uses a fixed reload/status helper, atomic current/last-known-good state, and health-confirmed rollback without arbitrary shell input or unrestricted sudo.
+- A digest-pinned disposable target converges twice with zero second-pass changes and asserts identities, modes, firewall, WireGuard, sudoers, and unit restrictions. Real VPS enrollment remains blocked.
+
+Eighth-slice acceptance:
+
+- mTLS rotation proves old/new trust overlap, leaf cutover, old retirement, and rollback under TLS 1.3.
+- Access encryption and HMAC use independent versioned keyrings with at most four read generations and one explicit active writer. Token lookup survives overlap/rollback without plaintext storage or unbounded work.
+- Telegram/YooKassa client safety, Xray last-known-good recovery, and distinct REALITY generations have secret-free tests. Real provider/VPS rotation remains an approved operator procedure.
+
+Ninth-slice acceptance:
+
+- The bounded load probe cannot emit its target URL, exceeds neither duration/rate/sample limits, and produces aggregate p50/p95/p99/error evidence with explicit budgets.
+- Kafka outage/replay republishes durable work without a second subscription period; PostgreSQL outage preserves liveness, fails readiness, and recovers.
+- Active primary-node loss is proven by real VLESS + REALITY traffic through the separately provisioned failover. Reload failure and Provisioning reconciliation retain last-known-good and generation fencing.
+
+Tenth-slice acceptance:
+
+- One fixed release inventory classifies every custom production runtime/tool Dockerfile and builds each included image from a clean full commit with commit-addressed tags and OCI source/revision/version/date labels.
+- Digest-pinned Syft creates nonempty SPDX 2.3 SBOMs. Digest-pinned Trivy applies the zero HIGH/CRITICAL gate, with only the existing exact Tempo VEX exception, and its JSON result is retained.
+- `releasectl` proves the custom Dockerfile inventory is complete, validates the SPDX container subject and Trivy artifact against each immutable image ID, binds report digests, manifest, exact artifact set, and SHA-256 checksums, and rejects tampering.
+- A manual `release-signing` workflow uses commit-pinned Actions and least-privilege GitHub OIDC attestation, verifies provenance before upload, and has no registry or deployment permission. Production publication/deployment remains Stage 9.
 
 ### Stage 9 - Production readiness review
 

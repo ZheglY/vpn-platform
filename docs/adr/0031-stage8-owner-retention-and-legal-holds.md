@@ -6,6 +6,9 @@
 - Security impact: High
 - Contract impact: maintenance commands and owner-local schema only
 - Extends: ADR 0003, ADR 0013, and ADR 0026
+- Superseded in part by: ADR 0033
+
+> Historical note: ADR 0033 adds PostgreSQL-authoritative invocation time and partial aggregate reports on later dataset failure.
 
 ## Context
 

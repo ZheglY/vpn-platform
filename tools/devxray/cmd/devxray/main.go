@@ -96,10 +96,10 @@ func run(outDir string) error {
 	if err := writeFile(filepath.Join(outDir, "nodes.json"), append(contents, '\n'), 0o600); err != nil {
 		return err
 	}
-	return writeSmokeFixtures(outDir, publicKeys["primary"])
+	return writeSmokeFixtures(outDir, publicKeys)
 }
 
-func writeSmokeFixtures(outDir, primaryPublicKey string) error {
+func writeSmokeFixtures(outDir string, publicKeys map[string]string) error {
 	clientID, err := cryptoutil.RandomUUID()
 	if err != nil {
 		return fmt.Errorf("generate smoke VLESS UUID: %w", err)
@@ -107,22 +107,29 @@ func writeSmokeFixtures(outDir, primaryPublicKey string) error {
 	const credentialID = "62000000-0000-4000-8000-000000000090"
 	present := map[string]any{"operation_id": "63000000-0000-4000-8000-000000000090", "credential_id": credentialID, "desired_revision": 1, "state": "present", "protocol": "vless_reality", "vless_client_uuid": clientID}
 	absent := map[string]any{"operation_id": "63000000-0000-4000-8000-000000000091", "credential_id": credentialID, "desired_revision": 2, "state": "absent"}
-	client := map[string]any{
-		"log":      map[string]any{"access": "none", "dnsLog": false, "loglevel": "warning"},
-		"inbounds": []any{map[string]any{"listen": "0.0.0.0", "port": 1080, "protocol": "socks", "settings": map[string]any{"udp": false}}},
-		"outbounds": []any{map[string]any{
-			"protocol": "vless",
-			"settings": map[string]any{
-				"address":    "node-agent-primary",
-				"port":       443,
-				"id":         clientID,
-				"encryption": "none",
-				"flow":       "xtls-rprx-vision",
-			},
-			"streamSettings": map[string]any{"network": "raw", "security": "reality", "realitySettings": map[string]any{"serverName": "camouflage.local", "fingerprint": "chrome", "password": primaryPublicKey, "shortId": "0123456789abcdef", "spiderX": "/"}},
-		}},
+	client := func(address, publicKey, shortID string) map[string]any {
+		return map[string]any{
+			"log":      map[string]any{"access": "none", "dnsLog": false, "loglevel": "warning"},
+			"inbounds": []any{map[string]any{"listen": "0.0.0.0", "port": 1080, "protocol": "socks", "settings": map[string]any{"udp": false}}},
+			"outbounds": []any{map[string]any{
+				"protocol": "vless",
+				"settings": map[string]any{
+					"address":    address,
+					"port":       443,
+					"id":         clientID,
+					"encryption": "none",
+					"flow":       "xtls-rprx-vision",
+				},
+				"streamSettings": map[string]any{"network": "raw", "security": "reality", "realitySettings": map[string]any{"serverName": "camouflage.local", "fingerprint": "chrome", "password": publicKey, "shortId": shortID, "spiderX": "/"}},
+			}},
+		}
 	}
-	for name, value := range map[string]any{"smoke-present.json": present, "smoke-absent.json": absent, "smoke-client.json": client} {
+	for name, value := range map[string]any{
+		"smoke-present.json":         present,
+		"smoke-absent.json":          absent,
+		"smoke-client.json":          client("node-agent-primary", publicKeys["primary"], "0123456789abcdef"),
+		"smoke-client-failover.json": client("node-agent-failover", publicKeys["failover"], "fedcba9876543210"),
+	} {
 		contents, err := json.MarshalIndent(value, "", "  ")
 		if err != nil {
 			return fmt.Errorf("encode %s: %w", name, err)

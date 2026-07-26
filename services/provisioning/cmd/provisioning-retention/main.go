@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -38,9 +39,10 @@ func run() error {
 		return err
 	}
 	defer store.Close()
-	report, err := retention.Run(ctx, "provisioning_service", time.Now().UTC(), settings, store.RetentionDatasets(keepFor)...)
+	now, err := store.RetentionClock(ctx)
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(os.Stdout).Encode(report)
+	report, runErr := retention.Run(ctx, "provisioning_service", now, settings, store.RetentionDatasets(keepFor)...)
+	return errors.Join(runErr, json.NewEncoder(os.Stdout).Encode(report))
 }

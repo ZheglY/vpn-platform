@@ -1,10 +1,10 @@
 asyncapi: 3.1.0
 info:
   title: VPN Subscription Platform Events
-  version: 0.7.0-stage7
+  version: 0.8.0-stage8
   description: >
-    Stage 7 event contract. Notification-service consumes normalized, ordered,
-    secret-free user facts while existing provisioning contracts remain stable.
+    Stage 8 event contract. Access additionally consumes the existing successful-payment
+    fact for an owner-local durable SLI while user-notification and provisioning contracts remain stable.
 defaultContentType: application/json
 channels:
   billing.payment.succeeded.v1:
@@ -133,6 +133,12 @@ operations:
       $ref: '#/channels/billing.payment.succeeded.v1'
     summary: subscription-service consumes payment success through a durable inbox.
     x-contract-status: implemented-stage4
+  observeBillingPaymentSucceededForAccessSLI:
+    action: receive
+    channel:
+      $ref: '#/channels/billing.payment.succeeded.v1'
+    summary: access-service projects successful-payment workflow starts into its owner-local durable SLI state.
+    x-contract-status: implemented-stage8
   consumeBillingRefundSucceeded:
     action: receive
     channel:
@@ -250,9 +256,9 @@ components:
       x-contract-status: implemented-stage3
       x-json-schema: schemas/billing.payment.succeeded.v1.schema.json
       x-partition-key: user:{user_id}
-      x-consumers: [subscription-service]
-      x-retry: durable outbox retry with exponential backoff capped at five minutes
-      x-dlq-policy: Stage 3 never discards an unpublished payment event; exhausted or poison records remain visible in the outbox for operator reconciliation. A Kafka DLQ is deferred until a consumer exists.
+      x-consumers: [subscription-service, access-service]
+      x-retry: producer outbox and each consumer retry transient failures without discarding or acknowledging the record
+      x-dlq-policy: consumers persist payload-free poison-record metadata before committing the offset; unpublished producer records remain visible in the Billing outbox
     BillingPaymentCanceledV1:
       name: billing.payment.canceled.v1
       payload:

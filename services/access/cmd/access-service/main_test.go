@@ -25,8 +25,31 @@ func TestLoadConfigAllowsLocalHTTPOnlyInLocalMode(t *testing.T) {
 func TestLoadConfigRejectsReusedEncryptionAndHMACKey(t *testing.T) {
 	setRequiredConfig(t)
 	t.Setenv("ACCESS_TOKEN_HMAC_KEY_BASE64", testCredentialKey)
-	if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), "ACCESS_TOKEN_HMAC_KEY_BASE64") {
+	if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), "ACCESS_TOKEN_HMAC_KEYS") {
 		t.Fatalf("reused key error = %v", err)
+	}
+}
+
+func TestLoadConfigRejectsHMACKeyReusedFromInactiveEncryptionVersion(t *testing.T) {
+	setRequiredConfig(t)
+	t.Setenv("ACCESS_CREDENTIAL_KEY_VERSION", "2")
+	t.Setenv("ACCESS_CREDENTIAL_KEYS", "1:"+testCredentialKey+",2:"+testTokenKey)
+	t.Setenv("ACCESS_TOKEN_HMAC_KEY_BASE64", testCredentialKey)
+	if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), "ACCESS_TOKEN_HMAC_KEYS") {
+		t.Fatalf("inactive reused key error = %v", err)
+	}
+}
+
+func TestLoadConfigAcceptsBoundedHMACOverlap(t *testing.T) {
+	setRequiredConfig(t)
+	t.Setenv("ACCESS_TOKEN_HMAC_KEY_VERSION", "2")
+	t.Setenv("ACCESS_TOKEN_HMAC_KEYS", "1:"+testTokenKey+",2:YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXowMTIzNDU=")
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TokenHMACKeyVersion != 2 || len(cfg.TokenHMACKeys) != 2 {
+		t.Fatalf("HMAC overlap config = version %d, keys %d", cfg.TokenHMACKeyVersion, len(cfg.TokenHMACKeys))
 	}
 }
 

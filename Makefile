@@ -6,7 +6,7 @@ TRIVY_IMAGE ?= aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a
 export GOVULNCHECK_VERSION
 export GITLEAKS_VERSION
 
-.PHONY: fmt fmt-check tidy-check test race vet lint vuln secret-scan npm-audit contracts openapi asyncapi docker-build image-scan compose-config compose-smoke vpn-smoke stage7-smoke observability-validate observability-smoke backup-restore-drill compose-up compose-down diff-check verify
+.PHONY: fmt fmt-check tidy-check test race vet lint vuln secret-scan filesystem-secret-scan npm-audit contracts openapi asyncapi docker-build image-scan compose-config compose-smoke vpn-smoke stage7-smoke observability-validate observability-smoke backup-restore-drill backup-cleanup-test node-hardening-test secret-rotation-drill resilience-drill release-bundle compose-up compose-down diff-check verify
 
 fmt:
 	go fmt ./...
@@ -57,6 +57,13 @@ else
 	else \
 		go run github.com/zricethezav/gitleaks/v8@$(GITLEAKS_VERSION) detect --source . --no-git --redact --no-banner --no-color --log-level warn; \
 	fi
+endif
+
+filesystem-secret-scan:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/filesystem-secret-scan.ps1
+else
+	bash scripts/filesystem-secret-scan.sh
 endif
 
 npm-audit:
@@ -171,6 +178,41 @@ else
 	bash scripts/backup-restore-drill.sh
 endif
 
+backup-cleanup-test:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/backup-cleanup-test.ps1
+else
+	bash scripts/backup-cleanup-test.sh
+endif
+
+node-hardening-test:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/node-hardening-test.ps1
+else
+	bash scripts/node-hardening-test.sh
+endif
+
+secret-rotation-drill:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/secret-rotation-drill.ps1
+else
+	bash scripts/secret-rotation-drill.sh
+endif
+
+resilience-drill:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/resilience-drill.ps1
+else
+	bash scripts/resilience-drill.sh
+endif
+
+release-bundle:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-bundle.ps1
+else
+	bash scripts/release-bundle.sh
+endif
+
 compose-up:
 ifeq ($(OS),Windows_NT)
 	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-mtls.ps1
@@ -185,4 +227,4 @@ compose-down:
 diff-check:
 	git diff --exit-code
 
-verify: fmt-check tidy-check vet test race lint vuln secret-scan npm-audit contracts observability-validate docker-build image-scan compose-config diff-check
+verify: fmt-check tidy-check vet test race lint vuln secret-scan filesystem-secret-scan npm-audit contracts observability-validate docker-build image-scan compose-config diff-check

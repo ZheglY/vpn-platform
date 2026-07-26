@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+  reload)
+    exec /bin/systemctl restart xray.service
+    ;;
+  status)
+    exec /bin/systemctl is-active --quiet xray.service
+    ;;
+  *)
+    exit 64
+    ;;
+esac

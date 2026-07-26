@@ -141,9 +141,9 @@ Alerts:
 - `VPNControlAPIP95LatencySLOMiss` and `VPNSubscriptionEndpointP95LatencySLOMiss`
 
 1. Confirm both windows are present. Fast burn requires 1 hour and 5 minutes above 14.4 times budget; slow burn requires 6 hours and 30 minutes above 6 times budget.
-2. Check request or activation volume. Empty traffic is suppressed; very low nonzero volume still needs human interpretation.
+2. Check request or successful-payment volume. Empty traffic is suppressed; very low nonzero volume still needs human interpretation.
 3. For control API or subscription availability, inspect bounded service/route/status metrics and dependency alerts. Never add a raw URL, bearer token, user, payment, or subscription identifier to the query.
-4. For payment-to-provisioning, check Subscription consumer delay, Access inbox/outbox state, PostgreSQL saturation, and Kafka observations. The SLI ends when Access commits the initial durable provisioning command; it does not prove node application or Telegram delivery.
+4. For payment-to-provisioning, compare the Access durable started/bad projection, Billing-event consumer lag, Subscription lifecycle delay, Access inbox/outbox state, PostgreSQL saturation, and Kafka observations. The denominator begins from `billing.payment.succeeded.v1`; fulfillment is a committed initial provisioning command or committed extension. Still-pending rows become bad after 60 seconds using PostgreSQL time. The SLI does not prove node application or Telegram delivery.
 5. Treat critical fast burn as an immediate incident candidate. Treat warning slow burn as sustained budget erosion requiring an owner and corrective action.
 6. The local Alertmanager receivers are intentionally inert. Production paging requires an approved receiver, secret injection, escalation owner, and delivery test; do not claim that a local alert reached a person.
 

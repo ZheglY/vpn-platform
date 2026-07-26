@@ -64,6 +64,23 @@ tests:
               description: "The newest handled record on an allowlisted topic is more than two minutes old."
               runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#kafka-and-durable-backlog"
 
+  - name: durable payment SLI snapshot remains unavailable
+    interval: 1m
+    input_series:
+      - series: 'vpn_access_payment_access_fulfillment_snapshot_success{service="access-service"}'
+        values: '0+0x7'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: VPNOperationalSnapshotFailed
+        exp_alerts:
+          - exp_labels:
+              service: access-service
+              severity: warning
+            exp_annotations:
+              summary: "Operational metrics snapshot failed for access-service"
+              description: "An owner-local bounded metrics query has failed for five minutes."
+              runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#metrics-snapshot-failure"
+
   - name: subscription scheduler remains delayed
     interval: 1m
     input_series:

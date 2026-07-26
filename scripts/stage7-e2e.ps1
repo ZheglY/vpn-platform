@@ -6,6 +6,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$goImage = "golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2"
 
 function Invoke-ScalarSQL([string]$database, [string]$sql) {
     $value = docker compose exec -T postgres psql --username="$env:POSTGRES_USER" --dbname $database -tAc $sql
@@ -136,7 +138,14 @@ if ($Phase -eq "BeforeRevoke") {
     $provisioningJSON = $provisioning | ConvertTo-Json -Compress -Depth 8
     if ($provisioningJSON -match 'subscription_url|vless_client_uuid|vless://|management_url|private_key') { throw "admin provisioning output exposed secret material" }
 
-    go run ./tools/mtlsprobe/cmd/mtlsprobe GET https://127.0.0.1:8092/admin/v1/health secrets/dev-mtls/identity-health.crt secrets/dev-mtls/identity-health.key secrets/dev-mtls/ca.crt 403 | Out-Null
+    & docker run --rm `
+        --add-host "admin-service.local:host-gateway" `
+        -v "$($repo):/src" `
+        -v "vpn-service-go-mod-cache:/go/pkg/mod" `
+        -v "vpn-service-go-build-cache:/root/.cache/go-build" `
+        -w /src `
+        $goImage `
+        go run ./tools/mtlsprobe/cmd/mtlsprobe GET https://admin-service.local:8092/admin/v1/health secrets/dev-mtls/identity-health.crt secrets/dev-mtls/identity-health.key secrets/dev-mtls/ca.crt 403 | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "non-admin SPIFFE certificate was not rejected with 403" }
     $audit = Invoke-Admin "admin-support-local" "audit" @("--limit", "20")
     $auditJSON = $audit | ConvertTo-Json -Compress -Depth 8

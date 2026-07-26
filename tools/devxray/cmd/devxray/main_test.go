@@ -34,7 +34,7 @@ func TestRunGeneratesDistinctNodeKeysAndSeed(t *testing.T) {
 		t.Fatalf("node seed is invalid: %+v, %v", seeds, err)
 	}
 	if runtime.GOOS != "windows" {
-		for _, name := range []string{"primary.key", "failover.key", "camouflage.key", "nodes.json", "smoke-present.json", "smoke-absent.json", "smoke-client.json"} {
+		for _, name := range []string{"primary.key", "failover.key", "camouflage.key", "nodes.json", "smoke-present.json", "smoke-absent.json", "smoke-client.json", "smoke-client-failover.json"} {
 			info, err := os.Stat(filepath.Join(directory, name))
 			if err != nil || info.Mode().Perm() != 0o600 {
 				t.Fatalf("%s permissions = %v, %v", name, info.Mode().Perm(), err)

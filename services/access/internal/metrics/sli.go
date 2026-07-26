@@ -1,34 +1,69 @@
 package metrics
 
 import (
+	"context"
+	"fmt"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-const maxPaymentProvisioningLatency = 30 * 24 * time.Hour
-
-type PaymentProvisioning struct {
-	latency prometheus.Histogram
+type PaymentAccessSnapshot struct {
+	Started int64
+	Bad     int64
 }
 
-func NewPaymentProvisioning(registerer prometheus.Registerer) *PaymentProvisioning {
-	metric := prometheus.NewHistogram(prometheus.HistogramOpts{
-		Namespace: "vpn_access",
-		Name:      "payment_to_provisioning_seconds",
-		Help:      "Elapsed time from an initial successful payment period start to the durable provisioning command.",
-		Buckets:   []float64{1, 2, 5, 10, 20, 30, 45, 60, 90, 120, 300, 900},
+type PaymentAccessSource interface {
+	PaymentAccessSnapshot(context.Context) (PaymentAccessSnapshot, error)
+}
+
+type paymentAccessCollector struct {
+	source     PaymentAccessSource
+	started    *prometheus.Desc
+	bad        *prometheus.Desc
+	snapshotOK *prometheus.Desc
+}
+
+func RegisterPaymentAccessSLI(registerer prometheus.Registerer, source PaymentAccessSource) error {
+	if registerer == nil || source == nil {
+		return fmt.Errorf("payment access SLI registerer and source are required")
+	}
+	return registerer.Register(&paymentAccessCollector{
+		source: source,
+		started: prometheus.NewDesc(
+			"vpn_access_payment_access_fulfillment_started_total",
+			"Durable successful-payment workflow starts observed from the billing event stream.",
+			nil, prometheus.Labels{"service": "access-service"},
+		),
+		bad: prometheus.NewDesc(
+			"vpn_access_payment_access_fulfillment_bad_total",
+			"Durable payment workflows fulfilled after sixty seconds or still unfinished after the deadline.",
+			nil, prometheus.Labels{"service": "access-service"},
+		),
+		snapshotOK: prometheus.NewDesc(
+			"vpn_access_payment_access_fulfillment_snapshot_success",
+			"Whether the latest durable payment workflow snapshot succeeded.",
+			nil, prometheus.Labels{"service": "access-service"},
+		),
 	})
-	registerer.MustRegister(metric)
-	return &PaymentProvisioning{latency: metric}
 }
 
-func (m *PaymentProvisioning) ObservePaymentToProvisioning(elapsed time.Duration) {
-	if elapsed < 0 {
-		elapsed = 0
+func (c *paymentAccessCollector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- c.started
+	ch <- c.bad
+	ch <- c.snapshotOK
+}
+
+func (c *paymentAccessCollector) Collect(ch chan<- prometheus.Metric) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	snapshot, err := c.source.PaymentAccessSnapshot(ctx)
+	success := 1.0
+	if err != nil || snapshot.Started < 0 || snapshot.Bad < 0 || snapshot.Bad > snapshot.Started {
+		success = 0
+		snapshot = PaymentAccessSnapshot{}
 	}
-	if elapsed > maxPaymentProvisioningLatency {
-		elapsed = maxPaymentProvisioningLatency
-	}
-	m.latency.Observe(elapsed.Seconds())
+	ch <- prometheus.MustNewConstMetric(c.started, prometheus.CounterValue, float64(snapshot.Started))
+	ch <- prometheus.MustNewConstMetric(c.bad, prometheus.CounterValue, float64(snapshot.Bad))
+	ch <- prometheus.MustNewConstMetric(c.snapshotOK, prometheus.GaugeValue, success)
 }

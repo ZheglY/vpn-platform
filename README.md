@@ -2,7 +2,7 @@
 
 Production-grade portfolio project for selling prepaid VPN subscriptions through a Telegram bot and delivering Happ-compatible subscription URLs backed by Xray-core nodes.
 
-Current milestone: Stage 8 observability, hardening, and deployment. Stage 7 is accepted. The first six Stage 8 slices add protected privacy-safe telemetry, SLI/SLO budget alerts, owner-local retention, and encrypted database recovery drills. Stage 8 is still in progress; Stage 9 has not been approved.
+Current milestone: Stage 8 observability, hardening, and deployment. Stage 7 is accepted. Stage 8 slices 1-10 are implemented for review, including protected telemetry, durable SLI/SLO alerts, retention/recovery, node hardening, rotation, resilience, and release provenance. Stage 8 is not yet accepted; Stage 9 has not been approved.
 
 ## What Exists Now
 
@@ -20,9 +20,13 @@ Current milestone: Stage 8 observability, hardening, and deployment. Stage 7 is 
 - `admin-service` and Go `admin-cli` with administrator mTLS identities, default-deny RBAC, fenced recoverable owner attempts, idempotent typed mutations, safe reads, and append-only audit.
 - Local Compose stack with isolated service databases, Kafka, Redis, fake external APIs, and an optional two-node VLESS + REALITY data plane.
 - Optional `obs` Compose profile with integrity-pinned security rebuilds of Prometheus 3.13.1, Grafana 13.1.1, Tempo 2.10.5, and Loki 3.7.2; a minimal OpenTelemetry Collector 0.157.0; provisioned read-only data sources/dashboard; explicit 8/11-target inventories; operational alerts; TLS 1.3 mTLS scraping; and TLS 1.3 mTLS OTLP ingress.
-- SLI recording rules and multi-window burn alerts for control API availability, the public Happ subscription endpoint, and initial payment-to-provisioning delay, plus an inert credential-free Alertmanager validation baseline.
+- SLI recording rules and multi-window burn alerts for control API availability, the public Happ subscription endpoint, and durable successful-payment fulfillment, plus an inert credential-free Alertmanager validation baseline.
 - Owner-scoped, dry-run-first retention commands with bounded deletion, replay protection, Billing legal holds, and separate Admin audit deletion authority.
-- Streaming age-encrypted PostgreSQL backups and an eight-database clean restore drill that verifies ciphertext integrity, table row counts, relation ownership, and local recovery targets.
+- Streaming age-encrypted PostgreSQL backups whose source inspection shares an exported MVCC snapshot, plus an eight-database exact-empty-target restore drill with integrity, ownership, recovery, and cleanup evidence.
+- A Debian 12 Ansible node baseline with WireGuard-only management, nftables default deny, separate non-root node-agent/Xray systemd units, restricted credentials, and last-known-good rollback.
+- Secret-free mTLS, provider-client, Access encryption/HMAC, and REALITY overlap/rollback drills.
+- Bounded load and Kafka/PostgreSQL/node/Xray failure drills, including real VPN traffic through failover after primary loss.
+- A complete classified custom-image inventory with SPDX SBOMs, retained digest-pinned vulnerability reports, exact tamper-evident checksums, and a manual least-privilege GitHub OIDC provenance workflow.
 - Linux-safe credential init/verifier containers that stage allowlisted keys into per-owner named volumes with `0400`/`0440` modes before non-root services start.
 - Goose migration runner tool.
 - OpenAPI/AsyncAPI contract linting.
@@ -76,6 +80,8 @@ Catalog, billing, subscription, and access listen on `https://localhost:8083`, `
 `make observability-validate` checks both Prometheus inventories, SLO and operational rules, Alertmanager, Collector/Tempo/Loki configuration, the exact Tempo LTS OpenVEX correction, image licenses, staged-key readability under real container UIDs, and Grafana provisioning. `make observability-smoke` verifies all eight always-on targets, bounded owner snapshots, a known W3C trace in Tempo, a trace-correlated log in Loki, and telemetry redaction. `make stage7-smoke` enables `vpn` plus `obs` and verifies the complete 11-target inventory, Provisioning capacity snapshots, and both Xray health series on the full VPN path. Local Prometheus and Grafana listen on `127.0.0.1:9090` and `127.0.0.1:3000`; Collector, Tempo, and Loki have no host ports.
 
 Maintenance commands are isolated behind the `maintenance` profile. Retention defaults to dry-run and must follow [the retention runbook](docs/runbooks/data-retention.md). `make backup-restore-drill` creates disposable local encryption material, restores all eight owner databases into an empty PostgreSQL instance, validates integrity and ownership, then removes the artifacts and volumes; see [the backup runbook](docs/runbooks/backup-restore.md).
+
+`make node-hardening-test`, `make secret-rotation-drill`, and `make resilience-drill` exercise the remaining local Stage 8 operational controls. `make release-bundle` requires a clean commit, builds the complete release inventory, binds every SPDX/Trivy report to an immutable image ID, and verifies the exact checksummed artifact set; the manual `release-attest` workflow adds repository-bound keyless provenance without publishing or deploying images.
 
 `make vpn-smoke` generates local-only keys on D and runs the full Stage 6 acceptance path: Access command outbox, Kafka, Provisioning, authenticated material and placement reads, two node-agents with the integrity-checked Xray-core `26.3.27` security rebuild, sequenced outcome consumption, one-time Happ profile issuance, real VLESS + REALITY traffic, refund-driven revoke, and proof that traffic no longer passes afterward.
 

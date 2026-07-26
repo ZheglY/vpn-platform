@@ -159,6 +159,7 @@ type envelopeRule struct {
 }
 
 var envelopeRules = map[string]envelopeRule{
+	"billing.payment.succeeded.v1":  {"billing-service", "payment", "user:"},
 	"subscription.activated.v1":     {"subscription-service", "subscription", "user:"},
 	"subscription.extended.v1":      {"subscription-service", "subscription", "user:"},
 	"subscription.grace.started.v1": {"subscription-service", "subscription", "user:"},

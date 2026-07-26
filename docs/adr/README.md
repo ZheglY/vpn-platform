@@ -36,3 +36,8 @@ ADRs are immutable decision records. If a decision changes after implementation 
 | [0030](0030-stage8-sli-slo-and-alert-routing.md) | Stage 8 SLI, SLO, and alert routing | Accepted for Stage 8 implementation |
 | [0031](0031-stage8-owner-retention-and-legal-holds.md) | Stage 8 owner retention and legal holds | Accepted for Stage 8 implementation |
 | [0032](0032-stage8-encrypted-backup-and-restore.md) | Stage 8 encrypted backup and restore | Accepted for Stage 8 implementation |
+| [0033](0033-stage8-durable-sli-retention-and-restore-corrections.md) | Stage 8 durable SLI, retention, and restore corrections | Accepted for Stage 8 implementation |
+| [0034](0034-stage8-vpn-node-host-hardening.md) | Stage 8 VPN node host hardening | Accepted for Stage 8 implementation |
+| [0035](0035-stage8-secret-rotation.md) | Stage 8 secret rotation | Accepted for Stage 8 implementation |
+| [0036](0036-stage8-resilience-budgets-and-failure-drills.md) | Stage 8 resilience budgets and failure drills | Accepted for Stage 8 implementation |
+| [0037](0037-stage8-release-sbom-and-provenance.md) | Stage 8 release SBOM and provenance | Accepted for Stage 8 implementation |

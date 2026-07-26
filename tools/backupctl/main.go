@@ -101,7 +101,8 @@ func backup(args []string) error {
 	recipientPath := flags.String("recipient", "", "")
 	outputPath := flags.String("output", "", "")
 	metadataPath := flags.String("metadata", "", "")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !safeIdentifier(*database) || !safeIdentifier(*owner) || *recipientPath == "" || *outputPath == "" || *metadataPath == "" {
+	inspectionPath := flags.String("inspection", "", "")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !safeIdentifier(*database) || !safeIdentifier(*owner) || *recipientPath == "" || *outputPath == "" || *metadataPath == "" || *inspectionPath == "" {
 		return fmt.Errorf("invalid backup arguments")
 	}
 	databaseURL := os.Getenv("DATABASE_URL")
@@ -109,6 +110,41 @@ func backup(args []string) error {
 		return fmt.Errorf("database URL is required")
 	}
 	if err := requireDatabase(databaseURL, *database); err != nil {
+		return err
+	}
+	for _, path := range []string{*outputPath, *metadataPath, *inspectionPath} {
+		if _, err := os.Lstat(path); err == nil || !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("backup output already exists or cannot be inspected")
+		}
+	}
+	commandContext, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	connection, err := pgx.Connect(commandContext, databaseURL)
+	if err != nil {
+		return fmt.Errorf("connect for consistent backup")
+	}
+	defer func() {
+		_ = connection.Close(context.Background())
+	}()
+	transaction, err := connection.BeginTx(commandContext, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return fmt.Errorf("begin consistent backup")
+	}
+	transactionOpen := true
+	defer func() {
+		if transactionOpen {
+			_ = transaction.Rollback(context.Background())
+		}
+	}()
+	if _, err := transaction.Exec(commandContext, `SET LOCAL statement_timeout = '30s'`); err != nil {
+		return fmt.Errorf("bound consistent backup inspection")
+	}
+	var snapshotID string
+	if err := transaction.QueryRow(commandContext, `SELECT pg_export_snapshot()`).Scan(&snapshotID); err != nil || snapshotID == "" {
+		return fmt.Errorf("export consistent backup snapshot")
+	}
+	inspection, err := inspectSnapshot(commandContext, transaction, *database, *owner)
+	if err != nil {
 		return err
 	}
 	recipient, err := readRecipient(*recipientPath)
@@ -121,19 +157,25 @@ func backup(args []string) error {
 		return fmt.Errorf("create encrypted backup")
 	}
 	complete := false
+	metadataCreated := false
+	inspectionCreated := false
 	defer func() {
 		_ = output.Close()
 		if !complete {
 			_ = os.Remove(*outputPath)
+			if metadataCreated {
+				_ = os.Remove(*metadataPath)
+			}
+			if inspectionCreated {
+				_ = os.Remove(*inspectionPath)
+			}
 		}
 	}()
 	encrypted, err := age.Encrypt(output, recipient)
 	if err != nil {
 		return fmt.Errorf("initialize backup encryption")
 	}
-	commandContext, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel()
-	command := exec.CommandContext(commandContext, "pg_dump", "--format=custom", "--no-owner", "--no-acl")
+	command := exec.CommandContext(commandContext, "pg_dump", dumpArguments(snapshotID)...)
 	commandEnvironment, err := databaseEnvironment(databaseURL)
 	if err != nil {
 		return err
@@ -145,6 +187,10 @@ func backup(args []string) error {
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("database dump failed: %s", postgresFailureCode(commandError.String()))
 	}
+	if err := transaction.Rollback(commandContext); err != nil {
+		return fmt.Errorf("release consistent backup snapshot")
+	}
+	transactionOpen = false
 	if err := encrypted.Close(); err != nil {
 		return fmt.Errorf("finalize backup encryption")
 	}
@@ -160,18 +206,53 @@ func backup(args []string) error {
 	}
 	metadata := artifactMetadata{
 		FormatVersion: artifactVersion, Database: *database, ExpectedOwner: *owner,
-		CreatedAt: startedAt, Tool: "pg_dump-custom+age-x25519",
+		CreatedAt: inspection.InspectedAt, Tool: "pg_dump-custom+age-x25519",
 		CiphertextSHA256: digest, CiphertextBytes: size,
 		DurationMillis: time.Since(startedAt).Milliseconds(),
 	}
 	if err := writeJSONExclusive(*metadataPath, metadata, 0o600); err != nil {
 		return err
 	}
+	metadataCreated = true
+	if err := writeJSONExclusive(*inspectionPath, inspection, 0o600); err != nil {
+		return err
+	}
+	inspectionCreated = true
 	complete = true
 	return json.NewEncoder(os.Stdout).Encode(metadata)
 }
 
-func restore(args []string) (resultErr error) {
+func dumpArguments(snapshotID string) []string {
+	return []string{"--format=custom", "--no-owner", "--no-acl", "--snapshot=" + snapshotID}
+}
+
+type restoreRunner interface {
+	Run(context.Context, []string, string, string, io.Reader) error
+}
+
+type postgresRestoreRunner struct{}
+
+func (postgresRestoreRunner) Run(ctx context.Context, environment []string, database, owner string, input io.Reader) error {
+	command := exec.CommandContext(ctx, "pg_restore",
+		"--exit-on-error", "--single-transaction",
+		"--no-owner", "--no-acl", "--role="+owner,
+		"--dbname="+database)
+	command.Env = environment
+	command.Stdin = input
+	command.Stdout = io.Discard
+	var commandError bytes.Buffer
+	command.Stderr = &boundedWriter{buffer: &commandError, remaining: 4096}
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("database restore failed: %s", postgresFailureCode(commandError.String()))
+	}
+	return nil
+}
+
+func restore(args []string) error {
+	return restoreWithRunner(args, postgresRestoreRunner{})
+}
+
+func restoreWithRunner(args []string, runner restoreRunner) (resultErr error) {
 	flags := flag.NewFlagSet("restore", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	identityPath := flags.String("identity", "", "")
@@ -184,9 +265,15 @@ func restore(args []string) (resultErr error) {
 	if databaseURL == "" {
 		return fmt.Errorf("database URL is required")
 	}
+	if runner == nil {
+		return fmt.Errorf("restore runner is required")
+	}
 	var metadata artifactMetadata
 	if err := readJSON(*metadataPath, &metadata); err != nil || metadata.FormatVersion != artifactVersion || !safeIdentifier(metadata.Database) || !safeIdentifier(metadata.ExpectedOwner) {
 		return fmt.Errorf("invalid backup metadata")
+	}
+	if err := requireDatabase(databaseURL, metadata.Database); err != nil {
+		return err
 	}
 	digest, size, err := fileDigest(*inputPath)
 	if err != nil {
@@ -197,6 +284,9 @@ func restore(args []string) (resultErr error) {
 	}
 	identity, err := readIdentity(*identityPath)
 	if err != nil {
+		return err
+	}
+	if err := requireEmptyRestoreTarget(context.Background(), databaseURL, metadata.Database); err != nil {
 		return err
 	}
 	input, err := os.Open(*inputPath)
@@ -212,21 +302,54 @@ func restore(args []string) (resultErr error) {
 	}
 	commandContext, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	command := exec.CommandContext(commandContext, "pg_restore",
-		"--exit-on-error", "--single-transaction", "--clean", "--if-exists",
-		"--no-owner", "--no-acl", "--role="+metadata.ExpectedOwner,
-		"--dbname="+metadata.Database)
 	commandEnvironment, err := databaseEnvironment(databaseURL)
 	if err != nil {
 		return err
 	}
-	command.Env = commandEnvironment
-	command.Stdin = decrypted
-	command.Stdout = io.Discard
-	var commandError bytes.Buffer
-	command.Stderr = &boundedWriter{buffer: &commandError, remaining: 4096}
-	if err := command.Run(); err != nil {
-		return fmt.Errorf("database restore failed: %s", postgresFailureCode(commandError.String()))
+	return runner.Run(commandContext, commandEnvironment, metadata.Database, metadata.ExpectedOwner, decrypted)
+}
+
+func requireEmptyRestoreTarget(parent context.Context, databaseURL, expectedDatabase string) (resultErr error) {
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+	defer cancel()
+	connection, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		return fmt.Errorf("connect to restore target")
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, closeConnection(connection))
+	}()
+	var actualDatabase string
+	if err := connection.QueryRow(ctx, `SELECT current_database()`).Scan(&actualDatabase); err != nil {
+		return fmt.Errorf("verify restore target database")
+	}
+	if actualDatabase != expectedDatabase {
+		return fmt.Errorf("connected restore target does not match backup metadata")
+	}
+	var objectCount int64
+	if err := connection.QueryRow(ctx, `
+SELECT
+    (SELECT count(*)
+     FROM pg_catalog.pg_class c
+     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+       AND n.nspname NOT LIKE 'pg_toast%'
+       AND c.relkind IN ('r','p','S','v','m','f')) +
+    (SELECT count(*)
+     FROM pg_catalog.pg_proc p
+     JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+       AND n.nspname NOT LIKE 'pg_toast%') +
+    (SELECT count(*)
+     FROM pg_catalog.pg_type t
+     JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+     WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+       AND n.nspname NOT LIKE 'pg_toast%'
+       AND t.typtype IN ('c','d','e','r'))`).Scan(&objectCount); err != nil {
+		return fmt.Errorf("inspect restore target")
+	}
+	if objectCount != 0 {
+		return fmt.Errorf("restore target is not empty")
 	}
 	return nil
 }
@@ -259,40 +382,57 @@ func inspectDatabase(args []string) (resultErr error) {
 	if _, err := connection.Exec(ctx, `SET statement_timeout = '30s'`); err != nil {
 		return fmt.Errorf("bound database inspection")
 	}
-	rows, err := connection.Query(ctx, `
+	inspection, err := inspectSnapshot(ctx, connection, *database, *owner)
+	if err != nil {
+		return err
+	}
+	return writeJSONExclusive(*outputPath, inspection, 0o600)
+}
+
+type inspectionQueryer interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func inspectSnapshot(ctx context.Context, queryer inspectionQueryer, database, owner string) (databaseInspection, error) {
+	rows, err := queryer.Query(ctx, `
 SELECT tablename FROM pg_catalog.pg_tables
 WHERE schemaname = 'public'
 ORDER BY tablename`)
 	if err != nil {
-		return fmt.Errorf("list database tables")
+		return databaseInspection{}, fmt.Errorf("list database tables")
 	}
 	var tables []string
 	for rows.Next() {
 		var table string
 		if err := rows.Scan(&table); err != nil {
 			rows.Close()
-			return fmt.Errorf("scan database table")
+			return databaseInspection{}, fmt.Errorf("scan database table")
 		}
 		tables = append(tables, table)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return fmt.Errorf("iterate database tables")
+		return databaseInspection{}, fmt.Errorf("iterate database tables")
 	}
 	rows.Close()
+	var inspectedAt time.Time
+	if err := queryer.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&inspectedAt); err != nil {
+		return databaseInspection{}, fmt.Errorf("read database inspection clock")
+	}
 	inspection := databaseInspection{
-		FormatVersion: artifactVersion, Database: *database, ExpectedOwner: *owner,
-		InspectedAt: time.Now().UTC(), TableRows: make(map[string]int64, len(tables)),
+		FormatVersion: artifactVersion, Database: database, ExpectedOwner: owner,
+		InspectedAt: inspectedAt.UTC(), TableRows: make(map[string]int64, len(tables)),
 	}
 	for _, table := range tables {
 		query := `SELECT count(*) FROM ` + pgx.Identifier{"public", table}.Sanitize()
 		var count int64
-		if err := connection.QueryRow(ctx, query).Scan(&count); err != nil {
-			return fmt.Errorf("count database table")
+		if err := queryer.QueryRow(ctx, query).Scan(&count); err != nil {
+			return databaseInspection{}, fmt.Errorf("count database table")
 		}
 		inspection.TableRows[table] = count
 	}
-	ownerRows, err := connection.Query(ctx, `
+	ownerRows, err := queryer.Query(ctx, `
 SELECT c.relname
 FROM pg_catalog.pg_class c
 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -300,24 +440,24 @@ JOIN pg_catalog.pg_roles r ON r.oid = c.relowner
 WHERE n.nspname = 'public'
   AND c.relkind IN ('r','p','S','v','m','f')
   AND r.rolname <> $1
-ORDER BY c.relname`, *owner)
+ORDER BY c.relname`, owner)
 	if err != nil {
-		return fmt.Errorf("inspect database object owners")
+		return databaseInspection{}, fmt.Errorf("inspect database object owners")
 	}
 	for ownerRows.Next() {
 		var object string
 		if err := ownerRows.Scan(&object); err != nil {
 			ownerRows.Close()
-			return fmt.Errorf("scan database owner violation")
+			return databaseInspection{}, fmt.Errorf("scan database owner violation")
 		}
 		inspection.OwnerViolations = append(inspection.OwnerViolations, object)
 	}
 	if err := ownerRows.Err(); err != nil {
 		ownerRows.Close()
-		return fmt.Errorf("iterate database owner violations")
+		return databaseInspection{}, fmt.Errorf("iterate database owner violations")
 	}
 	ownerRows.Close()
-	return writeJSONExclusive(*outputPath, inspection, 0o600)
+	return inspection, nil
 }
 
 func compareInspections(args []string) error {

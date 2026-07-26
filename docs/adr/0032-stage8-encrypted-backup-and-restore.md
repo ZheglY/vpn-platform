@@ -6,6 +6,9 @@
 - Security impact: High
 - Contract impact: maintenance tooling only
 - Extends: ADR 0003 and ADR 0013
+- Superseded in part by: ADR 0033
+
+> Historical note: decisions 5-7 record the first slice. ADR 0033 removes `--clean`, requires an exact empty target, and binds inspection plus `pg_dump` to one exported snapshot.
 
 ## Context
 

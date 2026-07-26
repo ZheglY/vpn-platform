@@ -62,6 +62,7 @@ groups:
           or vpn_billing_metrics_snapshot_success == 0
           or vpn_subscription_metrics_snapshot_success == 0
           or vpn_provisioning_metrics_snapshot_success == 0
+          or vpn_access_payment_access_fulfillment_snapshot_success == 0
         for: 5m
         labels:
           severity: warning

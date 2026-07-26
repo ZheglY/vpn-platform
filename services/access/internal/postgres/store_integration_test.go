@@ -72,7 +72,7 @@ func TestIntegrationAccessLifecycleAndTokenRotation(t *testing.T) {
 	}
 
 	firstLookup := bytes.Repeat([]byte{1}, 32)
-	firstSeed := domain.TokenSeed{TokenID: "30000000-0000-4000-8000-000000000001", LookupHMAC: firstLookup, IdempotencyKey: "issue-request-0001", RequestSHA256: strings.Repeat("a", 64)}
+	firstSeed := domain.TokenSeed{TokenID: "30000000-0000-4000-8000-000000000001", LookupHMAC: firstLookup, LookupHMACVersion: 1, IdempotencyKey: "issue-request-0001", RequestSHA256: strings.Repeat("a", 64)}
 	if err := store.IssueToken(ctx, subscriptionID, "issue", firstSeed); err != nil {
 		t.Fatal(err)
 	}
@@ -80,14 +80,14 @@ func TestIntegrationAccessLifecycleAndTokenRotation(t *testing.T) {
 		t.Fatalf("issue replay = %v", err)
 	}
 	secondLookup := bytes.Repeat([]byte{2}, 32)
-	secondSeed := domain.TokenSeed{TokenID: "30000000-0000-4000-8000-000000000002", LookupHMAC: secondLookup, IdempotencyKey: "rotate-request-001", RequestSHA256: strings.Repeat("b", 64)}
+	secondSeed := domain.TokenSeed{TokenID: "30000000-0000-4000-8000-000000000002", LookupHMAC: secondLookup, LookupHMACVersion: 1, IdempotencyKey: "rotate-request-001", RequestSHA256: strings.Repeat("b", 64)}
 	if err := store.IssueToken(ctx, subscriptionID, "rotate", secondSeed); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.GetProfileByTokenHMAC(ctx, firstLookup); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := store.GetProfileByTokenHMACs(ctx, [][]byte{firstLookup}); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("rotated token lookup = %v", err)
 	}
-	profile, err := store.GetProfileByTokenHMAC(ctx, secondLookup)
+	profile, err := store.GetProfileByTokenHMACs(ctx, [][]byte{secondLookup})
 	if err != nil || len(profile.Endpoints) != 2 || profile.CredentialID != credentialID {
 		t.Fatalf("active profile = %#v, %v", profile, err)
 	}
@@ -107,7 +107,7 @@ func TestIntegrationAccessLifecycleAndTokenRotation(t *testing.T) {
 	if err := json.Unmarshal(revokeCommandPayload, &revokeCommandEnvelope); err != nil || revokeCommandEnvelope.AggregateSequence != 2 {
 		t.Fatalf("revoke command sequence = %d, %v", revokeCommandEnvelope.AggregateSequence, err)
 	}
-	if _, err := store.GetProfileByTokenHMAC(ctx, secondLookup); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := store.GetProfileByTokenHMACs(ctx, [][]byte{secondLookup}); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("revoked token lookup = %v", err)
 	}
 	status, err = store.GetAccessStatus(ctx, subscriptionID)
@@ -408,7 +408,7 @@ VALUES ($1,$2,$3,'active',1,$4,1,$5)`, item.credentialID, item.subscriptionID, i
 			defer wg.Done()
 			<-start
 			results <- store.IssueToken(ctx, subscriptionID, "issue", domain.TokenSeed{
-				TokenID: fmt.Sprintf("64000000-0000-4000-8000-%012d", 100+index), LookupHMAC: bytes.Repeat([]byte{byte(index + 1)}, 32),
+				TokenID: fmt.Sprintf("64000000-0000-4000-8000-%012d", 100+index), LookupHMAC: bytes.Repeat([]byte{byte(index + 1)}, 32), LookupHMACVersion: 1,
 				IdempotencyKey: "global-request-key", RequestSHA256: strings.Repeat(string(rune('a'+index)), 64),
 			})
 		}(index, item.subscriptionID)
@@ -520,7 +520,7 @@ func integrationStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	truncate := func(ctx context.Context) error {
-		_, err := store.pool.Exec(ctx, `TRUNCATE admin_recovery_requests, security_audit_events, outbox, consumer_dead_letters, inbox, provisioning_outcome_state, subscription_lifecycle_state, url_idempotency, subscription_tokens, access_operations, access_assignment_snapshots, access_endpoint_snapshots, access_credentials CASCADE`)
+		_, err := store.pool.Exec(ctx, `TRUNCATE payment_access_sli, admin_recovery_requests, security_audit_events, outbox, consumer_dead_letters, inbox, provisioning_outcome_state, subscription_lifecycle_state, url_idempotency, subscription_tokens, access_operations, access_assignment_snapshots, access_endpoint_snapshots, access_credentials CASCADE`)
 		return err
 	}
 	if err := truncate(context.Background()); err != nil {

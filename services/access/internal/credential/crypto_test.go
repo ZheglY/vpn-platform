@@ -33,6 +33,37 @@ func TestKeyringEncryptDecryptAndAuthentication(t *testing.T) {
 	}
 }
 
+func TestEncryptionKeyringSupportsOverlapAndRollback(t *testing.T) {
+	oldKey := bytes.Repeat([]byte{5}, KeyBytes)
+	newKey := bytes.Repeat([]byte{6}, KeyBytes)
+	oldRing, err := NewKeyring(1, map[int][]byte{1: oldKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCiphertext, oldVersion, err := oldRing.Encrypt("old-secret", bytes.Repeat([]byte{1}, oldRing.NonceSize()), "credential")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotated, err := NewKeyring(2, map[int][]byte{1: oldKey, 2: newKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plaintext, err := rotated.Decrypt(oldVersion, oldCiphertext, "credential"); err != nil || plaintext != "old-secret" {
+		t.Fatal("rotated keyring cannot decrypt old ciphertext")
+	}
+	newCiphertext, newVersion, err := rotated.Encrypt("new-secret", bytes.Repeat([]byte{2}, rotated.NonceSize()), "credential")
+	if err != nil || newVersion != 2 {
+		t.Fatal("rotated keyring did not encrypt with the active key")
+	}
+	rollback, err := NewKeyring(1, map[int][]byte{1: oldKey, 2: newKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plaintext, err := rollback.Decrypt(newVersion, newCiphertext, "credential"); err != nil || plaintext != "new-secret" {
+		t.Fatal("rollback keyring cannot decrypt ciphertext created during rotation")
+	}
+}
+
 func TestTokenHasherIsKeyedAndDeterministic(t *testing.T) {
 	first, _ := NewTokenHasher(bytes.Repeat([]byte{1}, KeyBytes))
 	second, _ := NewTokenHasher(bytes.Repeat([]byte{2}, KeyBytes))
@@ -40,6 +71,43 @@ func TestTokenHasherIsKeyedAndDeterministic(t *testing.T) {
 	if !bytes.Equal(a, first.Sum("token")) || bytes.Equal(a, second.Sum("token")) || len(a) != sha256Size {
 		t.Fatal("unexpected HMAC behavior")
 	}
+}
+
+func TestTokenHasherKeyringSupportsOverlapAndRollback(t *testing.T) {
+	oldKey := bytes.Repeat([]byte{3}, KeyBytes)
+	newKey := bytes.Repeat([]byte{4}, KeyBytes)
+	oldHasher, err := NewTokenHasherKeyring(1, map[int][]byte{1: oldKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotated, err := NewTokenHasherKeyring(2, map[int][]byte{1: oldKey, 2: newKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rollback, err := NewTokenHasherKeyring(1, map[int][]byte{1: oldKey, 2: newKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := "rotation-overlap-token"
+	oldDigest := oldHasher.Sum(token)
+	if rotated.ActiveVersion() != 2 || bytes.Equal(rotated.Sum(token), oldDigest) {
+		t.Fatal("rotation did not move writes to the new HMAC key")
+	}
+	if !containsDigest(rotated.Candidates(token), oldDigest) {
+		t.Fatal("overlap keyring cannot resolve an old token")
+	}
+	if !containsDigest(rollback.Candidates(token), rotated.Sum(token)) {
+		t.Fatal("rollback keyring cannot resolve a token issued during rotation")
+	}
+}
+
+func containsDigest(candidates [][]byte, want []byte) bool {
+	for _, candidate := range candidates {
+		if bytes.Equal(candidate, want) {
+			return true
+		}
+	}
+	return false
 }
 
 const sha256Size = 32

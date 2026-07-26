@@ -29,10 +29,15 @@ export PAYMENT_RETURN_URL="${PAYMENT_RETURN_URL:-https://example.invalid/payment
 export COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-2}"
 export COMPOSE_BAKE="${COMPOSE_BAKE:-false}"
 full_vpn="${VPN_SMOKE_FULL_CONTROL_PLANE:-0}"
+test_vpn_failover="${VPN_SMOKE_TEST_FAILOVER:-0}"
 stage7_extended="${STAGE7_EXTENDED_SMOKE:-0}"
 observability="${OBSERVABILITY_SMOKE:-0}"
 if [[ "$stage7_extended" == "1" && "$full_vpn" != "1" ]]; then
   echo 'Stage 7 extended smoke requires the full VPN control plane' >&2
+  exit 1
+fi
+if [[ "$test_vpn_failover" == "1" && "$full_vpn" != "1" ]]; then
+  echo 'VPN failover smoke requires the full VPN control plane' >&2
   exit 1
 fi
 profiles=(--profile core --profile app)
@@ -561,6 +566,26 @@ if [[ "$full_vpn" == "1" ]]; then
     sleep 0.5
   done
   if [[ "$vpn_body" != *'local camouflage endpoint'* ]]; then echo 'full-control-plane VLESS + REALITY request failed' >&2; exit 1; fi
+
+  if [[ "$test_vpn_failover" == "1" ]]; then
+    docker compose stop node-agent-primary >/dev/null
+    docker rm -f "$vpn_client_name" >/dev/null
+    sed -E 's/("id": ")[0-9a-f-]{36}(")/\1'"${vpn_credential_uuid}"'\2/' secrets/dev-xray/smoke-client-failover.json >tmp/stage6-client.json
+    docker run --rm -v "$(pwd)/tmp/stage6-client.json:/etc/xray/client.json:ro" "$vpn_client_image" run -test -config /etc/xray/client.json >/dev/null
+    docker run -d --name "$vpn_client_name" --network vpn-service_vpn-data -p 127.0.0.1:11080:1080 -v "$(pwd)/tmp/stage6-client.json:/etc/xray/client.json:ro" "$vpn_client_image" run -config /etc/xray/client.json >/dev/null
+    failover_body=''
+    for _ in $(seq 1 40); do
+      failover_body="$(curl -sS --socks5-hostname 127.0.0.1:11080 --connect-timeout 2 --max-time 5 http://camouflage.local/ 2>/dev/null || true)"
+      if [[ "$failover_body" == *'local camouflage endpoint'* ]]; then break; fi
+      sleep 0.5
+    done
+    if [[ "$failover_body" != *'local camouflage endpoint'* ]]; then
+      echo 'VPN traffic did not survive primary node loss' >&2
+      exit 1
+    fi
+    docker compose start node-agent-primary >/dev/null
+    wait_until 'primary node did not recover after failover drill' docker compose exec -T node-agent-primary /node-agent healthcheck
+  fi
 
   go run ./tools/mtlsprobe/cmd/mtlsprobe GET "https://127.0.0.1:18443/internal/v1/credentials/${access_credential_id}" secrets/dev-mtls/identity-health.crt secrets/dev-mtls/identity-health.key secrets/dev-mtls/ca.crt 403
 

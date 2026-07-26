@@ -2,6 +2,11 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
+mkdir -p "${repo}/tmp"
+if compgen -G "${repo}/tmp/backup-drill-*" >/dev/null; then
+  echo 'stale backup drill artifacts detected; cleanup is required before key generation' >&2
+  exit 1
+fi
 suffix="$(date +%s)-$$"
 project="vpn-backup-drill-${suffix}"
 artifact_dir="${repo}/tmp/backup-drill-${suffix}"
@@ -45,18 +50,36 @@ compose() {
 }
 
 cleanup() {
-  compose down -v --remove-orphans >/dev/null 2>&1 || true
+  original_status=$?
+  trap - EXIT
+  cleanup_status=0
+  if ! compose down -v --remove-orphans >/dev/null 2>&1; then
+    cleanup_status=1
+  fi
   case "$artifact_dir" in
-    "$repo"/tmp/backup-drill-*) rm -rf -- "$artifact_dir" ;;
+    "$repo"/tmp/backup-drill-*) rm -rf -- "$artifact_dir" || cleanup_status=1 ;;
+    *) cleanup_status=1 ;;
   esac
+  if [[ -e "$artifact_dir" ]]; then
+    cleanup_status=1
+  fi
+  if (( cleanup_status != 0 )); then
+    echo 'backup drill cleanup failed' >&2
+    exit 1
+  fi
+  exit "$original_status"
 }
 trap cleanup EXIT
 
-compose up -d --wait postgres
-compose up --build "${migrations[@]}"
 compose build backup-tool
 compose run --rm --no-deps backup-tool keygen \
   --identity /backups/drill.agekey --recipient /backups/drill.recipient
+if [[ "${BACKUP_DRILL_FAIL_AFTER_KEYGEN:-0}" == 1 ]]; then
+  echo 'forced failure after backup key generation' >&2
+  exit 1
+fi
+compose up -d --wait postgres
+compose up --build "${migrations[@]}"
 
 for entry in "${databases[@]}"; do
   IFS='|' read -r database owner password <<<"$entry"
@@ -65,14 +88,33 @@ for entry in "${databases[@]}"; do
     --database "$database" --owner "$owner" \
     --recipient /backups/drill.recipient \
     --output "/backups/${database}.dump.age" \
-    --metadata "/backups/${database}.metadata.json"
-  compose run --rm --no-deps backup-tool inspect \
-    --database "$database" --owner "$owner" \
-    --output "/backups/${database}.source.json"
+    --metadata "/backups/${database}.metadata.json" \
+    --inspection "/backups/${database}.source.json"
 done
 
 restore_started="$(date +%s)"
 compose up -d --wait restore-postgres
+export BACKUP_DATABASE_URL='postgres://identity_app:drill-identity@restore-postgres:5432/identity_service?sslmode=disable'
+compose exec -T -e PGPASSWORD=drill-identity restore-postgres \
+  psql -U identity_app -d identity_service -v ON_ERROR_STOP=1 \
+  -c 'CREATE TABLE restore_preflight_sentinel (id integer PRIMARY KEY)'
+if compose run --rm --no-deps backup-tool restore \
+  --identity /backups/drill.agekey \
+  --input /backups/identity_service.dump.age \
+  --metadata /backups/identity_service.metadata.json; then
+  echo 'restore unexpectedly accepted a nonempty target' >&2
+  exit 1
+fi
+sentinel="$(compose exec -T -e PGPASSWORD=drill-identity restore-postgres \
+  psql -U identity_app -d identity_service -Atqc \
+  "SELECT to_regclass('public.restore_preflight_sentinel') IS NOT NULL")"
+if [[ "$sentinel" != t ]]; then
+  echo 'restore preflight did not preserve the nonempty target' >&2
+  exit 1
+fi
+compose exec -T -e PGPASSWORD=drill-identity restore-postgres \
+  psql -U identity_app -d identity_service -v ON_ERROR_STOP=1 \
+  -c 'DROP TABLE restore_preflight_sentinel'
 for entry in "${databases[@]}"; do
   IFS='|' read -r database owner password <<<"$entry"
   export BACKUP_DATABASE_URL="postgres://${owner}:${password}@restore-postgres:5432/${database}?sslmode=disable"
@@ -113,7 +155,7 @@ const report = {
   completed_at: new Date().toISOString(),
   database_count: 8,
   encrypted_artifacts: metadata.length,
-  integrity: 'ciphertext_sha256_and_table_row_counts_match',
+  integrity: 'ciphertext_sha256_exported_snapshot_and_table_row_counts_match',
   ownership: 'all_public_relations_match_service_owner',
   rpo_target_seconds: 86400,
   observed_rpo_seconds: rpo,

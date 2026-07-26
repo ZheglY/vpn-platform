@@ -53,6 +53,16 @@ type PeriodEvent struct {
 	GraceEndsAt     time.Time `json:"grace_ends_at"`
 }
 
+type PaymentSucceeded struct {
+	PaymentID   string    `json:"payment_id"`
+	OrderID     string    `json:"order_id"`
+	UserID      string    `json:"user_id"`
+	PlanID      string    `json:"plan_id"`
+	AmountMinor int64     `json:"amount_minor"`
+	Currency    string    `json:"currency"`
+	PaidAt      time.Time `json:"paid_at"`
+}
+
 type TerminalEvent struct {
 	SubscriptionID    string    `json:"subscription_id"`
 	UserID            string    `json:"user_id"`
@@ -120,10 +130,11 @@ type CredentialSeed struct {
 }
 
 type TokenSeed struct {
-	TokenID        string
-	LookupHMAC     []byte
-	IdempotencyKey string
-	RequestSHA256  string
+	TokenID           string
+	LookupHMAC        []byte
+	LookupHMACVersion int
+	IdempotencyKey    string
+	RequestSHA256     string
 }
 
 type AccessStatus struct {
@@ -177,6 +188,7 @@ type OutboxMessage struct {
 
 type Store interface {
 	Ping(context.Context) error
+	ApplyPaymentSucceeded(context.Context, EventMeta, PaymentSucceeded) error
 	ApplyPeriod(context.Context, EventMeta, PeriodEvent, CredentialSeed) error
 	ApplyGrace(context.Context, EventMeta, GraceEvent) error
 	ApplyTerminal(context.Context, EventMeta, TerminalEvent, string) error
@@ -186,7 +198,7 @@ type Store interface {
 	IssueToken(context.Context, string, string, TokenSeed) error
 	GetAccessStatus(context.Context, string) (AccessStatus, error)
 	RecoverProvisioning(context.Context, AdminRecoveryInput) (AdminRecoveryResult, error)
-	GetProfileByTokenHMAC(context.Context, []byte) (ProfileRecord, error)
+	GetProfileByTokenHMACs(context.Context, [][]byte) (ProfileRecord, error)
 	GetProvisioningRecord(context.Context, string) (ProvisioningRecord, error)
 	RecordCredentialMaterialAccess(context.Context, string, string) error
 	RecordDeadLetter(context.Context, string, int32, int64, string, string) error

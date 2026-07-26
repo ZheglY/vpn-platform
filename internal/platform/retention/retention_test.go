@@ -56,7 +56,7 @@ func TestRunEnforcesPerRunAndBatchDeletionBounds(t *testing.T) {
 
 func TestRunRejectsStoreDeletionOverflow(t *testing.T) {
 	t.Parallel()
-	_, err := Run(context.Background(), "access_service", time.Now().UTC(), Settings{
+	report, err := Run(context.Background(), "access_service", time.Now().UTC(), Settings{
 		BatchSize: 2, MaxDelete: 2,
 	}, Dataset{
 		Name: "security_audit", KeepFor: 365 * 24 * time.Hour,
@@ -69,6 +69,10 @@ func TestRunRejectsStoreDeletionOverflow(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("Run() accepted a deletion count larger than its batch")
+	}
+	if report.Status != "failed" || len(report.Datasets) != 1 || report.Failure == nil ||
+		report.Failure.Stage != "delete_result" {
+		t.Fatalf("overflow partial report = %+v", report)
 	}
 }
 
@@ -86,5 +90,59 @@ func TestRunStopsOnDatasetError(t *testing.T) {
 	})
 	if !errors.Is(err, want) {
 		t.Fatalf("Run() error = %v, want wrapped store error", err)
+	}
+}
+
+func TestRunReturnsBoundedPartialReportAfterLaterDatasetFailure(t *testing.T) {
+	t.Parallel()
+	want := errors.New("database unavailable")
+	report, err := Run(context.Background(), "provisioning_service", time.Now().UTC(), Settings{
+		BatchSize: 2, MaxDelete: 2,
+	}, Dataset{
+		Name: "node_health_snapshots", KeepFor: 30 * 24 * time.Hour,
+		Preview: func(context.Context, time.Time) (Eligibility, error) {
+			return Eligibility{Eligible: 1}, nil
+		},
+		DeleteBatch: func(context.Context, time.Time, int) (int64, error) {
+			return 1, nil
+		},
+	}, Dataset{
+		Name: "replayed_dead_letters", KeepFor: 30 * 24 * time.Hour,
+		Preview: func(context.Context, time.Time) (Eligibility, error) {
+			return Eligibility{}, want
+		},
+		DeleteBatch: func(context.Context, time.Time, int) (int64, error) {
+			return 0, nil
+		},
+	})
+	if !errors.Is(err, want) {
+		t.Fatalf("Run() error = %v, want wrapped store error", err)
+	}
+	if report.Status != "failed" || len(report.Datasets) != 1 || report.Datasets[0].Deleted != 1 ||
+		report.Failure == nil || report.Failure.Dataset != "replayed_dead_letters" || report.Failure.Stage != "preview" {
+		t.Fatalf("partial report = %+v", report)
+	}
+}
+
+func TestRunValidatesAllDatasetsBeforeDeleting(t *testing.T) {
+	t.Parallel()
+	deleteCalls := 0
+	_, err := Run(context.Background(), "provisioning_service", time.Now().UTC(), Settings{
+		BatchSize: 1, MaxDelete: 1,
+	}, Dataset{
+		Name: "node_health_snapshots", KeepFor: time.Hour,
+		Preview: func(context.Context, time.Time) (Eligibility, error) {
+			return Eligibility{Eligible: 1}, nil
+		},
+		DeleteBatch: func(context.Context, time.Time, int) (int64, error) {
+			deleteCalls++
+			return 1, nil
+		},
+	}, Dataset{Name: "invalid", KeepFor: 0})
+	if err == nil {
+		t.Fatal("Run() accepted invalid later dataset")
+	}
+	if deleteCalls != 0 {
+		t.Fatalf("first dataset deleted before complete configuration validation: %d", deleteCalls)
 	}
 }

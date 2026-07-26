@@ -40,6 +40,8 @@ docker compose --profile maintenance run --rm admin-retention
 
 Review `eligible`, `protected`, `deleted`, and `remaining_estimate`. A preview must report `deleted: 0`.
 
+The cutoff clock comes from the owning PostgreSQL database. A later dataset failure returns a `failed` report while retaining completed dataset totals and a bounded `failure.dataset`/`failure.stage`; SQL, row identifiers, and database error text remain excluded.
+
 ## Execute
 
 After owner approval, run only the reviewed owner:

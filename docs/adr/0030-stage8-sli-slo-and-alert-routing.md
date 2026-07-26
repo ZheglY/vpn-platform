@@ -6,6 +6,9 @@
 - Security impact: Medium
 - Contract impact: operational metrics and alerts only
 - Extends: ADR 0013, ADR 0027, ADR 0028, and ADR 0029
+- Superseded in part by: ADR 0033
+
+> Historical note: decision 3 and the asynchronous wording in decisions 4-6 describe the first slice. ADR 0033 replaces them with the durable successful-payment denominator and pending-over-60 behavior.
 
 ## Context
 

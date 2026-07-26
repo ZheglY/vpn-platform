@@ -1,0 +1,164 @@
+---
+- name: Validate supported node and required deployment inputs
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == "Debian"
+      - ansible_distribution_major_version == "12"
+      - vpn_node_id | length == 36
+      - vpn_node_reality_target | length > 0
+      - vpn_node_reality_server_names | length > 0
+      - vpn_node_reality_short_ids | length > 0
+      - vpn_node_wireguard_peer_public_key | length > 0
+      - vpn_node_wireguard_peer_endpoint | length > 0
+      - vpn_node_agent_binary_source | length > 0
+      - vpn_node_xray_binary_source | length > 0
+      - vpn_node_mtls_ca_source | length > 0
+      - vpn_node_mtls_cert_source | length > 0
+      - vpn_node_mtls_key_source | length > 0
+      - vpn_node_reality_private_key_source | length > 0
+      - vpn_node_wireguard_private_key_source | length > 0
+    quiet: true
+
+- name: Create service and shared Xray groups
+  ansible.builtin.group:
+    name: "{{ item }}"
+    system: true
+  loop:
+    - vpn-node-agent
+    - xray
+    - vpn-xray
+
+- name: Create separate non-root service identities
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    group: "{{ item.group }}"
+    groups: "{{ item.groups }}"
+    system: true
+    create_home: false
+    shell: /usr/sbin/nologin
+  loop:
+    - { name: "vpn-node-agent", group: "vpn-node-agent", groups: "vpn-xray" }
+    - { name: "xray", group: "xray", groups: "vpn-xray" }
+
+- name: Create hardened node directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "/etc/vpn-node", owner: "root", group: "root", mode: "0750" }
+    - { path: "/etc/vpn-node/credentials", owner: "root", group: "root", mode: "0750" }
+    - { path: "/etc/vpn-node/credentials/node-agent", owner: "vpn-node-agent", group: "vpn-xray", mode: "0750" }
+    - { path: "/etc/vpn-node/credentials/xray", owner: "root", group: "vpn-xray", mode: "0750" }
+    - { path: "/etc/vpn-node/xray", owner: "vpn-node-agent", group: "vpn-xray", mode: "2770" }
+    - { path: "/var/lib/node-agent", owner: "vpn-node-agent", group: "vpn-xray", mode: "0700" }
+    - { path: "/usr/local/libexec", owner: "root", group: "root", mode: "0755" }
+    - { path: "/etc/systemd/system", owner: "root", group: "root", mode: "0755" }
+    - { path: "/etc/systemd/system/node-agent.service.d", owner: "root", group: "root", mode: "0755" }
+    - { path: "/etc/ssh/sshd_config.d", owner: "root", group: "root", mode: "0755" }
+    - { path: "/etc/sysctl.d", owner: "root", group: "root", mode: "0755" }
+    - { path: "/etc/nftables.d", owner: "root", group: "root", mode: "0755" }
+    - { path: "/etc/wireguard", owner: "root", group: "root", mode: "0700" }
+
+- name: Install pinned application binaries supplied by release automation
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - { src: "{{ vpn_node_agent_binary_source }}", dest: "/usr/local/bin/node-agent" }
+    - { src: "{{ vpn_node_xray_binary_source }}", dest: "/usr/local/bin/xray" }
+
+- name: Stage public mTLS trust and certificate material
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    remote_src: true
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { src: "{{ vpn_node_mtls_ca_source }}", dest: "/etc/vpn-node/credentials/node-agent/ca.pem", owner: "root", group: "vpn-node-agent", mode: "0444" }
+    - { src: "{{ vpn_node_mtls_cert_source }}", dest: "/etc/vpn-node/credentials/node-agent/tls.crt", owner: "root", group: "vpn-node-agent", mode: "0444" }
+
+- name: Stage private node credentials without output
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    remote_src: true
+    owner: root
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  no_log: true
+  loop:
+    - { src: "{{ vpn_node_mtls_key_source }}", dest: "/etc/vpn-node/credentials/node-agent/tls.key", group: "vpn-node-agent", mode: "0440" }
+    - { src: "{{ vpn_node_reality_private_key_source }}", dest: "/etc/vpn-node/credentials/xray/reality.key", group: "vpn-xray", mode: "0440" }
+
+- name: Render WireGuard management configuration without output
+  ansible.builtin.template:
+    src: wg0.conf.j2
+    dest: /etc/wireguard/wg0.conf
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Install node-agent environment
+  ansible.builtin.template:
+    src: node-agent.env.j2
+    dest: /etc/vpn-node/node-agent.env
+    owner: root
+    group: vpn-node-agent
+    mode: "0640"
+
+- name: Install system hardening and service definitions
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { src: "99-vpn-node.conf.j2", dest: "/etc/sysctl.d/99-vpn-node.conf", mode: "0644" }
+    - { src: "99-vpn-node-sshd.conf.j2", dest: "/etc/ssh/sshd_config.d/99-vpn-node.conf", mode: "0600" }
+    - { src: "nftables.conf.j2", dest: "/etc/nftables.d/vpn-node.nft", mode: "0600" }
+    - { src: "node-agent.service.j2", dest: "/etc/systemd/system/node-agent.service", mode: "0644" }
+    - { src: "xray.service.j2", dest: "/etc/systemd/system/xray.service", mode: "0644" }
+    - { src: "vpn-xray-control.j2", dest: "/usr/local/libexec/vpn-xray-control", mode: "0755" }
+    - { src: "vpn-node-agent-sudoers.j2", dest: "/etc/sudoers.d/vpn-node-agent-xray", mode: "0440" }
+
+- name: Validate hardened configuration syntax
+  ansible.builtin.command:
+    argv: "{{ item }}"
+  changed_when: false
+  loop:
+    - ["/usr/sbin/sshd", "-t"]
+    - ["/usr/sbin/nft", "-c", "-f", "/etc/nftables.d/vpn-node.nft"]
+    - ["/usr/sbin/visudo", "-cf", "/etc/sudoers.d/vpn-node-agent-xray"]
+    - ["/usr/bin/systemd-analyze", "verify", "/etc/systemd/system/node-agent.service", "/etc/systemd/system/xray.service"]
+
+- name: Apply sysctl, firewall, WireGuard, and services
+  when: vpn_node_manage_services and not vpn_node_test_mode
+  block:
+    - name: Reload systemd definitions
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+    - name: Apply node sysctl hardening
+      ansible.builtin.command: /usr/sbin/sysctl --system
+      changed_when: true
+    - name: Load node firewall policy
+      ansible.builtin.command: /usr/sbin/nft -f /etc/nftables.d/vpn-node.nft
+      changed_when: true
+    - name: Enable WireGuard and node-agent
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: true
+        state: restarted
+      loop:
+        - wg-quick@wg0.service
+        - node-agent.service
