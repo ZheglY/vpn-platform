@@ -31,8 +31,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-printf '#!/bin/sh\nexit 0\n' >"${artifact_dir}/node-agent"
-printf '#!/bin/sh\nexit 0\n' >"${artifact_dir}/xray"
+printf '#!/bin/sh\ntest -r /etc/vpn-node/credentials/node-agent/tls.key\ntest -r /etc/vpn-node/credentials/xray/reality.key\ntest -w /etc/vpn-node/xray\ntrap "exit 0" TERM INT\nwhile :; do sleep 60; done\n' >"${artifact_dir}/node-agent"
+printf '#!/bin/sh\ntest -r /etc/vpn-node/credentials/xray/reality.key\ntest -r /etc/vpn-node/xray/config.json\ntrap "exit 0" TERM INT\nwhile :; do sleep 60; done\n' >"${artifact_dir}/xray"
 printf 'local-disposable-ca\n' >"${artifact_dir}/ca.pem"
 printf 'local-disposable-cert\n' >"${artifact_dir}/tls.crt"
 head -c 32 /dev/urandom | base64 >"${artifact_dir}/tls.key"
@@ -60,10 +60,16 @@ cat >"${artifact_dir}/vars.json" <<EOF
 EOF
 
 docker build -f deploy/ansible/tests/Dockerfile -t "$image" .
-docker run -d --name "$container" --cap-add NET_ADMIN \
+docker run -d --name "$container" --privileged --cgroupns=host \
+  --tmpfs /run --tmpfs /run/lock -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
   -e ANSIBLE_CONFIG=/workspace/deploy/ansible/ansible.cfg \
   -e ANSIBLE_ROLES_PATH=/workspace/deploy/ansible/roles \
   -v "${repo}:/workspace:ro" -v "${artifact_dir}:/fixtures:ro" "$image" >/dev/null
+for _ in $(seq 1 30); do
+  if docker exec "$container" systemctl show --property=Version >/dev/null 2>&1; then break; fi
+  sleep 0.5
+done
+docker exec "$container" systemctl show --property=Version >/dev/null
 docker exec "$container" ansible-playbook --syntax-check playbooks/vpn-node.yml --extra-vars @/fixtures/vars.json
 docker exec "$container" ansible-playbook playbooks/vpn-node.yml --extra-vars @/fixtures/vars.json
 second="$(docker exec "$container" ansible-playbook playbooks/vpn-node.yml --extra-vars @/fixtures/vars.json)"

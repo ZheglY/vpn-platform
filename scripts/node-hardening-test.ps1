@@ -25,8 +25,8 @@ function New-RandomBase64([bool]$urlSafe) {
 }
 
 try {
-    Set-Content -LiteralPath (Join-Path $artifactDir "node-agent") -Value "#!/bin/sh`nexit 0`n" -Encoding ascii
-    Set-Content -LiteralPath (Join-Path $artifactDir "xray") -Value "#!/bin/sh`nexit 0`n" -Encoding ascii
+    Set-Content -LiteralPath (Join-Path $artifactDir "node-agent") -Value "#!/bin/sh`ntest -r /etc/vpn-node/credentials/node-agent/tls.key`ntest -r /etc/vpn-node/credentials/xray/reality.key`ntest -w /etc/vpn-node/xray`ntrap 'exit 0' TERM INT`nwhile :; do sleep 60; done`n" -Encoding ascii
+    Set-Content -LiteralPath (Join-Path $artifactDir "xray") -Value "#!/bin/sh`ntest -r /etc/vpn-node/credentials/xray/reality.key`ntest -r /etc/vpn-node/xray/config.json`ntrap 'exit 0' TERM INT`nwhile :; do sleep 60; done`n" -Encoding ascii
     Set-Content -LiteralPath (Join-Path $artifactDir "ca.pem") -Value "local-disposable-ca" -Encoding ascii
     Set-Content -LiteralPath (Join-Path $artifactDir "tls.crt") -Value "local-disposable-cert" -Encoding ascii
     Set-Content -LiteralPath (Join-Path $artifactDir "tls.key") -Value (New-RandomBase64 $false) -Encoding ascii
@@ -52,8 +52,14 @@ try {
     $variables | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $artifactDir "vars.json") -Encoding utf8
     & docker build -f deploy/ansible/tests/Dockerfile -t $image .
     if ($LASTEXITCODE -ne 0) { throw "build disposable Ansible host failed" }
-    $containerID = & docker run -d --name $container --cap-add NET_ADMIN -e "ANSIBLE_CONFIG=/workspace/deploy/ansible/ansible.cfg" -e "ANSIBLE_ROLES_PATH=/workspace/deploy/ansible/roles" -v "${repo}:/workspace:ro" -v "${artifactDir}:/fixtures:ro" $image
+    $containerID = & docker run -d --name $container --privileged --cgroupns=host --tmpfs /run --tmpfs /run/lock -v "/sys/fs/cgroup:/sys/fs/cgroup:rw" -e "ANSIBLE_CONFIG=/workspace/deploy/ansible/ansible.cfg" -e "ANSIBLE_ROLES_PATH=/workspace/deploy/ansible/roles" -v "${repo}:/workspace:ro" -v "${artifactDir}:/fixtures:ro" $image
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($containerID)) { throw "start disposable Ansible host failed" }
+    foreach ($attempt in 1..30) {
+        & docker exec $container systemctl show --property=Version | Out-Null
+        if ($LASTEXITCODE -eq 0) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    if ($LASTEXITCODE -ne 0) { throw "disposable systemd host did not become ready" }
     & docker exec $container ansible-playbook --syntax-check playbooks/vpn-node.yml --extra-vars "@/fixtures/vars.json"
     if ($LASTEXITCODE -ne 0) { throw "Ansible syntax check failed" }
     & docker exec $container ansible-playbook playbooks/vpn-node.yml --extra-vars "@/fixtures/vars.json"

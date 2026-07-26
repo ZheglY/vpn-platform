@@ -12,7 +12,10 @@ import (
 	"strings"
 )
 
-const KeyBytes = 32
+const (
+	KeyBytes       = 32
+	MaxKeyringKeys = 4
+)
 
 type Keyring struct {
 	activeVersion int
@@ -20,8 +23,8 @@ type Keyring struct {
 }
 
 func NewKeyring(activeVersion int, keys map[int][]byte) (*Keyring, error) {
-	if activeVersion <= 0 {
-		return nil, fmt.Errorf("active key version must be positive")
+	if activeVersion <= 0 || len(keys) == 0 || len(keys) > MaxKeyringKeys {
+		return nil, fmt.Errorf("credential encryption keyring is invalid")
 	}
 	copyKeys := make(map[int][]byte, len(keys))
 	for version, key := range keys {
@@ -90,7 +93,7 @@ func (k *Keyring) gcm(version int) (cipher.AEAD, error) {
 	return gcm, nil
 }
 
-const MaxTokenHMACKeys = 4
+const MaxTokenHMACKeys = MaxKeyringKeys
 
 type TokenHasher struct {
 	activeVersion int
@@ -159,8 +162,14 @@ func DecodeKey(value string) ([]byte, error) {
 }
 
 func DecodeKeySet(value string) (map[int][]byte, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, fmt.Errorf("at least one key is required")
+	}
 	keys := make(map[int][]byte)
 	for _, item := range strings.Split(value, ",") {
+		if len(keys) == MaxKeyringKeys {
+			return nil, fmt.Errorf("key set exceeds the maximum number of versions")
+		}
 		versionText, encoded, ok := strings.Cut(strings.TrimSpace(item), ":")
 		if !ok || versionText == "" || encoded == "" {
 			return nil, fmt.Errorf("key set entries must use version:base64")

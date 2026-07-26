@@ -14,17 +14,17 @@ Local Compose deliberately co-locates node-agent and its Xray child. A productio
 ## Decision
 
 1. The supported host baseline is Debian 12. The Ansible role refuses other distributions and configures sysctl, SSH policy, nftables, WireGuard management, users, groups, directories, credentials, and systemd units declaratively.
-2. nftables defaults to deny inbound traffic. It admits established traffic, loopback, WireGuard, the configured public Xray port, and SSH/node-agent management only from the approved source through the WireGuard interface.
-3. `vpn-node-agent` and `xray` are separate non-root identities. A narrow shared group permits Xray to read candidate/current configuration and TLS material with `0440` or stricter modes. Neither identity owns the other's executable or private credentials.
+2. The role owns only the `inet vpn_node` nftables table and never flushes the host ruleset. Its input chain defaults to deny and admits established traffic, loopback, WireGuard, the configured public Xray port, and SSH/node-agent management only from the approved source through the WireGuard interface. Provider and operator tables remain intact.
+3. `vpn-node-agent` and `xray` are separate non-root identities. Parent credential paths are traversable only by the narrow `vpn-xray` sharing group; each service keeps its own primary group and receives `vpn-xray` only as a supplementary group. This lets node-agent read its TLS and REALITY inputs and write candidate/current configuration, while Xray reads its REALITY input and generated configuration. Neither identity owns the other's executable or private credentials.
 4. Production-mode node-agent renders and validates a candidate, atomically preserves current as last-known-good, and invokes a fixed root-owned helper. The helper accepts only `reload` or `status` for the exact Xray unit. The sudoers rule grants no shell, variable command, path, or argument expansion.
 5. The Xray unit and node-agent unit use systemd sandboxing, explicit writable paths, capability removal, and restart limits. A failed reload restores last-known-good and requires it to become healthy before the operation returns.
 6. mTLS deployment supports an old/new trust bundle during rotation. Private keys are owner-readable only; certificates may be group-readable only where the runtime boundary requires it.
-7. `make node-hardening-test` applies the role twice to a digest-pinned disposable Debian container, requires zero changes on the second pass, and checks users, modes, unit restrictions, nftables policy, WireGuard, and sudoers shape. The systemd manager rollback test runs natively on Linux.
+7. `make node-hardening-test` applies the role twice to a digest-pinned systemd-enabled Debian container, requires zero changes on the second pass, and checks users, modes, unit restrictions, WireGuard, sudoers shape, and preservation of a pre-existing nftables table. It reads each private key under the actual service identity and starts both node-agent and Xray through systemd. The systemd manager rollback test also runs natively on Linux.
 
 ## Consequences
 
 - Compromise of node-agent does not directly grant the Xray service identity or arbitrary root command execution.
-- Host policy is reviewable and idempotent, while Compose keeps its process manager for deterministic local development.
+- Host policy is reviewable and idempotent without claiming ownership of unrelated host firewall policy, while Compose keeps its process manager for deterministic local development.
 - The disposable container proves generated host state but cannot prove a cloud firewall, kernel-specific behavior, provider console recovery, or real WireGuard routing.
 
 ## Rejected alternatives

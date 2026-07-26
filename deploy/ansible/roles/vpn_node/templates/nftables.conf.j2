@@ -1,5 +1,6 @@
 #!/usr/sbin/nft -f
-flush ruleset
+table inet vpn_node
+flush table inet vpn_node
 
 table inet vpn_node {
   chain input {

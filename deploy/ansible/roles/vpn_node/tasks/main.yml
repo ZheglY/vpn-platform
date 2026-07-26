@@ -48,9 +48,9 @@
     group: "{{ item.group }}"
     mode: "{{ item.mode }}"
   loop:
-    - { path: "/etc/vpn-node", owner: "root", group: "root", mode: "0750" }
-    - { path: "/etc/vpn-node/credentials", owner: "root", group: "root", mode: "0750" }
-    - { path: "/etc/vpn-node/credentials/node-agent", owner: "vpn-node-agent", group: "vpn-xray", mode: "0750" }
+    - { path: "/etc/vpn-node", owner: "root", group: "vpn-xray", mode: "0750" }
+    - { path: "/etc/vpn-node/credentials", owner: "root", group: "vpn-xray", mode: "0750" }
+    - { path: "/etc/vpn-node/credentials/node-agent", owner: "root", group: "vpn-node-agent", mode: "0750" }
     - { path: "/etc/vpn-node/credentials/xray", owner: "root", group: "vpn-xray", mode: "0750" }
     - { path: "/etc/vpn-node/xray", owner: "vpn-node-agent", group: "vpn-xray", mode: "2770" }
     - { path: "/var/lib/node-agent", owner: "vpn-node-agent", group: "vpn-xray", mode: "0700" }
@@ -154,11 +154,12 @@
     - name: Load node firewall policy
       ansible.builtin.command: /usr/sbin/nft -f /etc/nftables.d/vpn-node.nft
       changed_when: true
-    - name: Enable WireGuard and node-agent
+    - name: Enable WireGuard, Xray, and node-agent
       ansible.builtin.systemd_service:
         name: "{{ item }}"
         enabled: true
         state: restarted
       loop:
         - wg-quick@wg0.service
+        - xray.service
         - node-agent.service

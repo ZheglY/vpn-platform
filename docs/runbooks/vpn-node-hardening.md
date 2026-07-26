@@ -11,10 +11,10 @@ make node-hardening-test
 The test builds a digest-pinned Debian 12 target, applies `deploy/ansible/playbooks/vpn-node.yml` twice, requires zero changes on the second pass, and checks:
 
 - separate `vpn-node-agent` and `xray` non-root users;
-- private-key, certificate, WireGuard, and Xray config ownership/modes;
-- default-deny nftables with explicit management and Xray rules;
+- private-key, certificate, WireGuard, and Xray config ownership/modes plus successful reads under the actual service identities;
+- a role-owned default-deny `inet vpn_node` table with explicit management and Xray rules, applied twice without removing a pre-existing host table;
 - SSH and sysctl hardening;
-- hardened systemd units;
+- hardened systemd units that start both node-agent and Xray as separate non-root users;
 - an exact `reload`/`status` helper and narrow sudoers entry.
 
 The Linux Go test for `systemdManager` must also prove a failed candidate reload restores last-known-good and returns only after health recovers.
@@ -23,7 +23,7 @@ The Linux Go test for `systemdManager` must also prove a failed candidate reload
 
 1. Confirm Debian 12, console recovery, provider firewall ownership, approved SSH management CIDR, public Xray port, and WireGuard addresses.
 2. Create the production inventory outside the repository. Store no private key or host credential in Git.
-3. Review the rendered nftables policy against provider firewall rules. Node-agent management must be reachable only over WireGuard.
+3. Review the role-owned `inet vpn_node` table against provider firewall rules and all existing host tables. Node-agent management must be reachable only over WireGuard; do not replace or flush operator/provider firewall state.
 4. Stage mTLS and REALITY material through the approved secret channel with the owner/group/modes in ADR 0034.
 5. Run Ansible in check mode, review every change, then apply with an incident owner present.
 6. Verify WireGuard, node-agent mTLS authorization, Xray health, capacity visibility, and a canary credential before admitting the node to placement.

@@ -28,6 +28,15 @@ export YOOKASSA_SECRET_KEY="${YOOKASSA_SECRET_KEY:-local-compose-yookassa-key}"
 export PAYMENT_RETURN_URL="${PAYMENT_RETURN_URL:-https://example.invalid/payment-return}"
 export COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-2}"
 export COMPOSE_BAKE="${COMPOSE_BAKE:-false}"
+compose_project="${COMPOSE_PROJECT_NAME:-vpn-service}"
+if [[ ! "$compose_project" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+  echo 'COMPOSE_PROJECT_NAME must contain only lowercase letters, digits, and hyphens' >&2
+  exit 1
+fi
+compose_container() {
+  printf '%s-%s-1' "$compose_project" "$1"
+}
+vpn_data_network="${compose_project}_vpn-data"
 full_vpn="${VPN_SMOKE_FULL_CONTROL_PLANE:-0}"
 test_vpn_failover="${VPN_SMOKE_TEST_FAILOVER:-0}"
 stage7_extended="${STAGE7_EXTENDED_SMOKE:-0}"
@@ -57,8 +66,9 @@ if [[ "$observability" == "1" ]]; then
 fi
 export COMPOSE_PROFILES
 COMPOSE_PROFILES="$(IFS=,; echo "${profile_names[*]}")"
-vpn_client_name=vpn-stage6-client
+vpn_client_name="${compose_project}-stage6-client"
 vpn_client_image='ghcr.io/xtls/xray-core:26.3.27@sha256:592ec4d11f656db95598d01e76dbcc6e002d67360b96a5436500a938230f52c7'
+vpn_client_config="tmp/${compose_project}-stage6-client.json"
 
 bash scripts/dev-mtls.sh
 if [[ "$full_vpn" == "1" ]]; then bash scripts/dev-xray.sh; fi
@@ -67,11 +77,14 @@ docker compose "${profiles[@]}" down -v --remove-orphans
 
 cleanup() {
   docker rm -f "$vpn_client_name" >/dev/null 2>&1 || true
-  rm -f tmp/stage6-client.json
+  rm -f "$vpn_client_config"
   if [[ "${SMOKE_KEEP_STACK:-0}" == "1" ]]; then
     echo 'SMOKE_KEEP_STACK=1: Compose services and volumes were preserved for diagnostics.' >&2
   else
     docker compose "${profiles[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+    if [[ "${SMOKE_DISPOSABLE_PROJECT:-0}" == "1" ]]; then
+      docker volume rm "${compose_project}-go-mod-cache" "${compose_project}-go-build-cache" >/dev/null 2>&1 || true
+    fi
   fi
 }
 trap cleanup EXIT
@@ -131,30 +144,34 @@ done
 docker compose "${profiles[@]}" up -d --no-build
 
 containers=(
-  vpn-service-postgres-1
-  vpn-service-redis-1
-  vpn-service-kafka-1
-  vpn-service-identity-service-1
-  vpn-service-catalog-service-1
-  vpn-service-yookassa-api-1
-  vpn-service-billing-service-1
-  vpn-service-subscription-service-1
-  vpn-service-access-service-1
-  vpn-service-notification-service-1
-  vpn-service-admin-service-1
-  vpn-service-telegram-api-1
-  vpn-service-telegram-bot-1
+  "$(compose_container postgres)"
+  "$(compose_container redis)"
+  "$(compose_container kafka)"
+  "$(compose_container identity-service)"
+  "$(compose_container catalog-service)"
+  "$(compose_container yookassa-api)"
+  "$(compose_container billing-service)"
+  "$(compose_container subscription-service)"
+  "$(compose_container access-service)"
+  "$(compose_container notification-service)"
+  "$(compose_container admin-service)"
+  "$(compose_container telegram-api)"
+  "$(compose_container telegram-bot)"
 )
 if [[ "$full_vpn" == "1" ]]; then
-  containers+=(vpn-service-provisioning-service-1 vpn-service-node-agent-primary-1 vpn-service-node-agent-failover-1)
+  containers+=(
+    "$(compose_container provisioning-service)"
+    "$(compose_container node-agent-primary)"
+    "$(compose_container node-agent-failover)"
+  )
 fi
 if [[ "$observability" == "1" ]]; then
   containers+=(
-    vpn-service-prometheus-1
-    vpn-service-grafana-1
-    vpn-service-otel-collector-1
-    vpn-service-tempo-1
-    vpn-service-loki-1
+    "$(compose_container prometheus)"
+    "$(compose_container grafana)"
+    "$(compose_container otel-collector)"
+    "$(compose_container tempo)"
+    "$(compose_container loki)"
   )
 fi
 
@@ -270,7 +287,15 @@ if [[ "$observability" == "1" ]]; then
 fi
 
 if [[ "$full_vpn" != "1" ]]; then
-docker stop vpn-service-admin-service-1 vpn-service-notification-service-1 vpn-service-telegram-bot-1 vpn-service-access-service-1 vpn-service-subscription-service-1 vpn-service-billing-service-1 >/dev/null
+integration_containers=(
+  "$(compose_container admin-service)"
+  "$(compose_container notification-service)"
+  "$(compose_container telegram-bot)"
+  "$(compose_container access-service)"
+  "$(compose_container subscription-service)"
+  "$(compose_container billing-service)"
+)
+docker stop "${integration_containers[@]}" >/dev/null
 BILLING_TEST_DATABASE_URL="postgres://billing_app:${BILLING_DB_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/billing_service?sslmode=disable" \
   go test ./services/billing/internal/postgres -run '^TestIntegration' -count=1
 SUBSCRIPTION_TEST_DATABASE_URL="postgres://subscription_app:${SUBSCRIPTION_DB_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/subscription_service?sslmode=disable" \
@@ -287,14 +312,20 @@ NOTIFICATION_TEST_DATABASE_URL="postgres://notification_app:${NOTIFICATION_DB_PA
 ADMIN_TEST_DATABASE_URL="postgres://admin_app:${ADMIN_DB_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/admin_service?sslmode=disable" \
 ADMIN_MIGRATOR_TEST_DATABASE_URL="postgres://admin_migrator:${ADMIN_MIGRATOR_DB_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/admin_service?sslmode=disable" \
   go test ./services/admin/internal/postgres -run '^TestIntegration' -count=1
-docker start vpn-service-billing-service-1 vpn-service-subscription-service-1 vpn-service-access-service-1 vpn-service-telegram-bot-1 vpn-service-notification-service-1 vpn-service-admin-service-1 >/dev/null
+docker start \
+  "$(compose_container billing-service)" \
+  "$(compose_container subscription-service)" \
+  "$(compose_container access-service)" \
+  "$(compose_container telegram-bot)" \
+  "$(compose_container notification-service)" \
+  "$(compose_container admin-service)" >/dev/null
 for _ in $(seq 1 60); do
-  billing_status="$(docker inspect -f '{{.State.Health.Status}}' vpn-service-billing-service-1)"
-  subscription_status="$(docker inspect -f '{{.State.Health.Status}}' vpn-service-subscription-service-1)"
-  access_status="$(docker inspect -f '{{.State.Health.Status}}' vpn-service-access-service-1)"
-  bot_status="$(docker inspect -f '{{.State.Health.Status}}' vpn-service-telegram-bot-1)"
-  notification_status="$(docker inspect -f '{{.State.Health.Status}}' vpn-service-notification-service-1)"
-  admin_status="$(docker inspect -f '{{.State.Health.Status}}' vpn-service-admin-service-1)"
+  billing_status="$(docker inspect -f '{{.State.Health.Status}}' "$(compose_container billing-service)")"
+  subscription_status="$(docker inspect -f '{{.State.Health.Status}}' "$(compose_container subscription-service)")"
+  access_status="$(docker inspect -f '{{.State.Health.Status}}' "$(compose_container access-service)")"
+  bot_status="$(docker inspect -f '{{.State.Health.Status}}' "$(compose_container telegram-bot)")"
+  notification_status="$(docker inspect -f '{{.State.Health.Status}}' "$(compose_container notification-service)")"
+  admin_status="$(docker inspect -f '{{.State.Health.Status}}' "$(compose_container admin-service)")"
   if [[ "$billing_status" == "healthy" && "$subscription_status" == "healthy" && "$access_status" == "healthy" && "$bot_status" == "healthy" && "$notification_status" == "healthy" && "$admin_status" == "healthy" ]]; then
     break
   fi
@@ -556,9 +587,9 @@ if [[ "$stage7_extended" == "1" ]]; then
 fi
 
 if [[ "$full_vpn" == "1" ]]; then
-  sed -E 's/("id": ")[0-9a-f-]{36}(")/\1'"${vpn_credential_uuid}"'\2/' secrets/dev-xray/smoke-client.json >tmp/stage6-client.json
-  docker run --rm -v "$(pwd)/tmp/stage6-client.json:/etc/xray/client.json:ro" "$vpn_client_image" run -test -config /etc/xray/client.json >/dev/null
-  docker run -d --name "$vpn_client_name" --network vpn-service_vpn-data -p 127.0.0.1:11080:1080 -v "$(pwd)/tmp/stage6-client.json:/etc/xray/client.json:ro" "$vpn_client_image" run -config /etc/xray/client.json >/dev/null
+  sed -E 's/("id": ")[0-9a-f-]{36}(")/\1'"${vpn_credential_uuid}"'\2/' secrets/dev-xray/smoke-client.json >"$vpn_client_config"
+  docker run --rm -v "$(pwd)/${vpn_client_config}:/etc/xray/client.json:ro" "$vpn_client_image" run -test -config /etc/xray/client.json >/dev/null
+  docker run -d --name "$vpn_client_name" --network "$vpn_data_network" -p 127.0.0.1:11080:1080 -v "$(pwd)/${vpn_client_config}:/etc/xray/client.json:ro" "$vpn_client_image" run -config /etc/xray/client.json >/dev/null
   vpn_body=''
   for _ in $(seq 1 40); do
     vpn_body="$(curl -sS --socks5-hostname 127.0.0.1:11080 --connect-timeout 2 --max-time 5 http://camouflage.local/ 2>/dev/null || true)"
@@ -570,9 +601,9 @@ if [[ "$full_vpn" == "1" ]]; then
   if [[ "$test_vpn_failover" == "1" ]]; then
     docker compose stop node-agent-primary >/dev/null
     docker rm -f "$vpn_client_name" >/dev/null
-    sed -E 's/("id": ")[0-9a-f-]{36}(")/\1'"${vpn_credential_uuid}"'\2/' secrets/dev-xray/smoke-client-failover.json >tmp/stage6-client.json
-    docker run --rm -v "$(pwd)/tmp/stage6-client.json:/etc/xray/client.json:ro" "$vpn_client_image" run -test -config /etc/xray/client.json >/dev/null
-    docker run -d --name "$vpn_client_name" --network vpn-service_vpn-data -p 127.0.0.1:11080:1080 -v "$(pwd)/tmp/stage6-client.json:/etc/xray/client.json:ro" "$vpn_client_image" run -config /etc/xray/client.json >/dev/null
+    sed -E 's/("id": ")[0-9a-f-]{36}(")/\1'"${vpn_credential_uuid}"'\2/' secrets/dev-xray/smoke-client-failover.json >"$vpn_client_config"
+    docker run --rm -v "$(pwd)/${vpn_client_config}:/etc/xray/client.json:ro" "$vpn_client_image" run -test -config /etc/xray/client.json >/dev/null
+    docker run -d --name "$vpn_client_name" --network "$vpn_data_network" -p 127.0.0.1:11080:1080 -v "$(pwd)/${vpn_client_config}:/etc/xray/client.json:ro" "$vpn_client_image" run -config /etc/xray/client.json >/dev/null
     failover_body=''
     for _ in $(seq 1 40); do
       failover_body="$(curl -sS --socks5-hostname 127.0.0.1:11080 --connect-timeout 2 --max-time 5 http://camouflage.local/ 2>/dev/null || true)"
@@ -622,7 +653,7 @@ if [[ "$full_vpn" == "1" ]]; then
     bash scripts/stage7-e2e.sh AfterRevoke "$subscription_user_id" "$subscription_id" "$access_credential_id"
   fi
   docker rm -f "$vpn_client_name" >/dev/null
-  rm -f tmp/stage6-client.json
+  rm -f "$vpn_client_config"
 fi
 
 out_of_order_webhook='{"type":"notification","event":"payment.canceled","object":{"id":"'"${provider_payment_id}"'","status":"canceled"}}'

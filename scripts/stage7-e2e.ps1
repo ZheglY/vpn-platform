@@ -7,6 +7,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$composeProject = if (-not [string]::IsNullOrWhiteSpace($env:COMPOSE_PROJECT_NAME)) { $env:COMPOSE_PROJECT_NAME } else { "vpn-service" }
+$goModCacheVolume = "${composeProject}-go-mod-cache"
+$goBuildCacheVolume = "${composeProject}-go-build-cache"
 $goImage = "golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2"
 
 function Invoke-ScalarSQL([string]$database, [string]$sql) {
@@ -141,8 +144,8 @@ if ($Phase -eq "BeforeRevoke") {
     & docker run --rm `
         --add-host "admin-service.local:host-gateway" `
         -v "$($repo):/src" `
-        -v "vpn-service-go-mod-cache:/go/pkg/mod" `
-        -v "vpn-service-go-build-cache:/root/.cache/go-build" `
+        -v "$($goModCacheVolume):/go/pkg/mod" `
+        -v "$($goBuildCacheVolume):/root/.cache/go-build" `
         -w /src `
         $goImage `
         go run ./tools/mtlsprobe/cmd/mtlsprobe GET https://admin-service.local:8092/admin/v1/health secrets/dev-mtls/identity-health.crt secrets/dev-mtls/identity-health.key secrets/dev-mtls/ca.crt 403 | Out-Null
@@ -158,8 +161,8 @@ if ($Phase -eq "BeforeRevoke") {
     docker compose restart notification-service admin-service | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Stage 7 service restart failed" }
     foreach ($attempt in 1..60) {
-        $notificationHealth = docker inspect -f "{{.State.Health.Status}}" vpn-service-notification-service-1
-        $adminHealth = docker inspect -f "{{.State.Health.Status}}" vpn-service-admin-service-1
+        $notificationHealth = docker inspect -f "{{.State.Health.Status}}" "$composeProject-notification-service-1"
+        $adminHealth = docker inspect -f "{{.State.Health.Status}}" "$composeProject-admin-service-1"
         if ($notificationHealth -eq "healthy" -and $adminHealth -eq "healthy") { break }
         Start-Sleep -Seconds 1
     }

@@ -19,7 +19,7 @@ Default budgets:
 | Xray reload failure | Last-known-good is restored and healthy |
 | Provisioning recovery | Reconciliation/failover tests preserve generation fencing |
 
-`RESILIENCE_SOAK_DURATION` and `RESILIENCE_RPS` may increase the local probe within hard tool bounds. The URL remains environment-only and is never emitted. The drill raises the local Access source/token limits above its bounded 600-request workload so rate-limited `429` responses cannot make lookup latency look artificially healthy; default Compose limits remain 120 requests per source and 30 per token per window.
+`RESILIENCE_SOAK_DURATION` and `RESILIENCE_RPS` may increase the local probe within hard tool bounds. The target and every redirect must remain HTTPS with a non-empty host and without userinfo or a fragment; it remains environment-only and is never emitted. The 100,000-request cap is computed with a ceiling for fractional durations and caps actual submissions. The drill raises the local Access source/token limits above its bounded 600-request workload so rate-limited `429` responses cannot make lookup latency look artificially healthy; default Compose limits remain 120 requests per source and 30 per token per window.
 
 ## Failure Handling
 
@@ -29,7 +29,7 @@ Default budgets:
 - Failover traffic failed: stop new placement, inspect both node desired/actual revisions and Xray health, then use Provisioning reconciliation.
 - Reload rollback failed: remove the node from placement and recover through systemd/last-known-good before accepting traffic.
 
-The drill owns a disposable Compose project and removes volumes on exit. Cleanup failure is a failed drill.
+The drill generates a unique Compose project for every run and derives all auxiliary container, network, and cache-volume names from it. Before fault injection it records the ordinary `vpn-service_postgres-data` volume and after cleanup proves that volume was neither removed nor replaced; an otherwise absent volume receives a temporary content sentinel as a regression test. Cleanup may remove only the generated project and its auxiliary volumes. Any cleanup or preservation failure fails the drill.
 
 ## Production Blockers
 

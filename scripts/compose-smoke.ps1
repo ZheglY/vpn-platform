@@ -6,6 +6,31 @@ function Set-DefaultEnv([string]$name, [string]$value) {
     }
 }
 
+$repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$composeProject = if (-not [string]::IsNullOrWhiteSpace($env:COMPOSE_PROJECT_NAME)) {
+    $env:COMPOSE_PROJECT_NAME
+} else {
+    "vpn-service"
+}
+if ($composeProject -notmatch '^[a-z0-9][a-z0-9-]*$') {
+    throw "COMPOSE_PROJECT_NAME must contain only lowercase letters, digits, and hyphens"
+}
+$backendNetwork = "${composeProject}_backend"
+$vpnDataNetwork = "${composeProject}_vpn-data"
+$goModCacheVolume = "${composeProject}-go-mod-cache"
+$goBuildCacheVolume = "${composeProject}-go-build-cache"
+
+function Get-ComposeContainerName([string]$service) {
+    return "$composeProject-$service-1"
+}
+
+$cacheRoot = if (-not [string]::IsNullOrWhiteSpace($env:VPN_PLATFORM_CACHE_ROOT)) {
+    $env:VPN_PLATFORM_CACHE_ROOT
+} else {
+    Join-Path (Split-Path $repo -Parent) ".cache\vpn-platform"
+}
+$fallbackTemp = if (-not [string]::IsNullOrWhiteSpace($env:TEMP)) { $env:TEMP } else { Join-Path $repo "tmp" }
+
 Set-DefaultEnv "POSTGRES_USER" "vpn_local"
 Set-DefaultEnv "POSTGRES_PASSWORD" "local-compose-password"
 Set-DefaultEnv "POSTGRES_DB" "vpn_platform"
@@ -33,10 +58,11 @@ Set-DefaultEnv "YOOKASSA_SECRET_KEY" "local-compose-yookassa-key"
 Set-DefaultEnv "PAYMENT_RETURN_URL" "https://example.invalid/payment-return"
 Set-DefaultEnv "COMPOSE_PARALLEL_LIMIT" "2"
 Set-DefaultEnv "COMPOSE_BAKE" "false"
-Set-DefaultEnv "GOCACHE" "D:\Work\Projects\dev\go-work\cache"
-Set-DefaultEnv "GOTMPDIR" "D:\Work\Projects\dev\go-work\tmp"
-Set-DefaultEnv "TEMP" "D:\Work\Projects\dev\tmp"
-Set-DefaultEnv "TMP" "D:\Work\Projects\dev\tmp"
+Set-DefaultEnv "GOCACHE" (Join-Path $cacheRoot "cache")
+Set-DefaultEnv "GOMODCACHE" (Join-Path $cacheRoot "mod")
+Set-DefaultEnv "GOTMPDIR" (Join-Path $cacheRoot "tmp")
+Set-DefaultEnv "TEMP" $fallbackTemp
+Set-DefaultEnv "TMP" $fallbackTemp
 $fullVPN = [Environment]::GetEnvironmentVariable("VPN_SMOKE_FULL_CONTROL_PLANE") -eq "1"
 $testVPNFailover = [Environment]::GetEnvironmentVariable("VPN_SMOKE_TEST_FAILOVER") -eq "1"
 $stage7Extended = [Environment]::GetEnvironmentVariable("STAGE7_EXTENDED_SMOKE") -eq "1"
@@ -54,12 +80,11 @@ if ($observability) {
     $prometheusConfig = if ($fullVPN) { "./deploy/observability/prometheus/prometheus-vpn.yml" } else { "./deploy/observability/prometheus/prometheus.yml" }
     [Environment]::SetEnvironmentVariable("PROMETHEUS_CONFIG_FILE", $prometheusConfig, "Process")
 }
-$vpnClientName = "vpn-stage6-client"
+$vpnClientName = "$composeProject-stage6-client"
 $vpnClientImage = "ghcr.io/xtls/xray-core:26.3.27@sha256:592ec4d11f656db95598d01e76dbcc6e002d67360b96a5436500a938230f52c7"
 
 $goImage = "golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2"
-$repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$vpnClientConfig = Join-Path $repo "tmp\stage6-client.json"
+$vpnClientConfig = Join-Path $repo "tmp\$composeProject-stage6-client.json"
 
 function Invoke-MTLSProbe([string[]]$arguments) {
     $mappedArguments = foreach ($argument in $arguments) {
@@ -72,8 +97,8 @@ function Invoke-MTLSProbe([string[]]$arguments) {
         --add-host "access-service.local:host-gateway" `
         --add-host "node-agent-primary.local:host-gateway" `
         -v "$($repo):/src" `
-        -v "vpn-service-go-mod-cache:/go/pkg/mod" `
-        -v "vpn-service-go-build-cache:/root/.cache/go-build" `
+        -v "$($goModCacheVolume):/go/pkg/mod" `
+        -v "$($goBuildCacheVolume):/root/.cache/go-build" `
         -w /src `
         $goImage `
         go run ./tools/mtlsprobe/cmd/mtlsprobe @mappedArguments
@@ -89,10 +114,10 @@ function Invoke-GoIntegrationTest([hashtable]$environment, [string]$package) {
         $environmentArguments += @("-e", "$name=$($environment[$name])")
     }
     & docker run --rm `
-        --network vpn-service_backend `
+        --network $backendNetwork `
         -v "$($repo):/src" `
-        -v "vpn-service-go-mod-cache:/go/pkg/mod" `
-        -v "vpn-service-go-build-cache:/root/.cache/go-build" `
+        -v "$($goModCacheVolume):/go/pkg/mod" `
+        -v "$($goBuildCacheVolume):/root/.cache/go-build" `
         -w /src `
         @environmentArguments `
         $goImage `
@@ -215,31 +240,25 @@ try {
     }
 
     $containers = @(
-        "vpn-service-postgres-1",
-        "vpn-service-redis-1",
-        "vpn-service-kafka-1",
-        "vpn-service-identity-service-1",
-        "vpn-service-catalog-service-1",
-        "vpn-service-yookassa-api-1",
-        "vpn-service-billing-service-1",
-        "vpn-service-subscription-service-1",
-        "vpn-service-access-service-1",
-        "vpn-service-notification-service-1",
-        "vpn-service-admin-service-1",
-        "vpn-service-telegram-api-1",
-        "vpn-service-telegram-bot-1"
-    )
+        "postgres",
+        "redis",
+        "kafka",
+        "identity-service",
+        "catalog-service",
+        "yookassa-api",
+        "billing-service",
+        "subscription-service",
+        "access-service",
+        "notification-service",
+        "admin-service",
+        "telegram-api",
+        "telegram-bot"
+    ) | ForEach-Object { Get-ComposeContainerName $_ }
 	if ($fullVPN) {
-		$containers += @("vpn-service-provisioning-service-1", "vpn-service-node-agent-primary-1", "vpn-service-node-agent-failover-1")
+		$containers += @("provisioning-service", "node-agent-primary", "node-agent-failover") | ForEach-Object { Get-ComposeContainerName $_ }
 	}
     if ($observability) {
-        $containers += @(
-            "vpn-service-prometheus-1",
-            "vpn-service-grafana-1",
-            "vpn-service-otel-collector-1",
-            "vpn-service-tempo-1",
-            "vpn-service-loki-1"
-        )
+        $containers += @("prometheus", "grafana", "otel-collector", "tempo", "loki") | ForEach-Object { Get-ComposeContainerName $_ }
     }
     foreach ($attempt in 1..60) {
         $statuses = @()
@@ -356,7 +375,9 @@ try {
     }
 
     if (-not $fullVPN) {
-    docker stop "vpn-service-admin-service-1" "vpn-service-notification-service-1" "vpn-service-telegram-bot-1" "vpn-service-access-service-1" "vpn-service-subscription-service-1" "vpn-service-billing-service-1" | Out-Null
+    $integrationContainers = @("admin-service", "notification-service", "telegram-bot", "access-service", "subscription-service", "billing-service") |
+        ForEach-Object { Get-ComposeContainerName $_ }
+    docker stop @integrationContainers | Out-Null
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
@@ -387,17 +408,18 @@ try {
         ADMIN_TEST_DATABASE_URL = "postgres://admin_app:$($env:ADMIN_DB_PASSWORD)@postgres:5432/admin_service?sslmode=disable"
         ADMIN_MIGRATOR_TEST_DATABASE_URL = "postgres://admin_migrator:$($env:ADMIN_MIGRATOR_DB_PASSWORD)@postgres:5432/admin_service?sslmode=disable"
     } "./services/admin/internal/postgres"
-    docker start "vpn-service-billing-service-1" "vpn-service-subscription-service-1" "vpn-service-access-service-1" "vpn-service-telegram-bot-1" "vpn-service-notification-service-1" "vpn-service-admin-service-1" | Out-Null
+    [array]::Reverse($integrationContainers)
+    docker start @integrationContainers | Out-Null
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
     foreach ($attempt in 1..60) {
-        $billingStatus = docker inspect -f "{{.State.Health.Status}}" "vpn-service-billing-service-1"
-        $subscriptionStatus = docker inspect -f "{{.State.Health.Status}}" "vpn-service-subscription-service-1"
-        $accessStatus = docker inspect -f "{{.State.Health.Status}}" "vpn-service-access-service-1"
-        $botStatus = docker inspect -f "{{.State.Health.Status}}" "vpn-service-telegram-bot-1"
-        $notificationStatus = docker inspect -f "{{.State.Health.Status}}" "vpn-service-notification-service-1"
-        $adminStatus = docker inspect -f "{{.State.Health.Status}}" "vpn-service-admin-service-1"
+        $billingStatus = docker inspect -f "{{.State.Health.Status}}" (Get-ComposeContainerName "billing-service")
+        $subscriptionStatus = docker inspect -f "{{.State.Health.Status}}" (Get-ComposeContainerName "subscription-service")
+        $accessStatus = docker inspect -f "{{.State.Health.Status}}" (Get-ComposeContainerName "access-service")
+        $botStatus = docker inspect -f "{{.State.Health.Status}}" (Get-ComposeContainerName "telegram-bot")
+        $notificationStatus = docker inspect -f "{{.State.Health.Status}}" (Get-ComposeContainerName "notification-service")
+        $adminStatus = docker inspect -f "{{.State.Health.Status}}" (Get-ComposeContainerName "admin-service")
         if ($billingStatus -eq "healthy" -and $subscriptionStatus -eq "healthy" -and $accessStatus -eq "healthy" -and $botStatus -eq "healthy" -and $notificationStatus -eq "healthy" -and $adminStatus -eq "healthy") {
             break
         }
@@ -703,7 +725,7 @@ try {
         [System.IO.File]::WriteAllText($vpnClientConfig, ($clientConfig | ConvertTo-Json -Depth 12), [System.Text.UTF8Encoding]::new($false))
         docker run --rm -v "$($vpnClientConfig):/etc/xray/client.json:ro" $vpnClientImage run -test -config /etc/xray/client.json | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "generated Xray client configuration is invalid" }
-        docker run -d --name $vpnClientName --network vpn-service_vpn-data -p "127.0.0.1:11080:1080" -v "$($vpnClientConfig):/etc/xray/client.json:ro" $vpnClientImage run -config /etc/xray/client.json | Out-Null
+        docker run -d --name $vpnClientName --network $vpnDataNetwork -p "127.0.0.1:11080:1080" -v "$($vpnClientConfig):/etc/xray/client.json:ro" $vpnClientImage run -config /etc/xray/client.json | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "start Stage 6 Xray client failed" }
         $vpnBody = ""
         foreach ($attempt in 1..40) {
@@ -724,7 +746,7 @@ try {
             [System.IO.File]::WriteAllText($vpnClientConfig, ($clientConfig | ConvertTo-Json -Depth 12), [System.Text.UTF8Encoding]::new($false))
             docker run --rm -v "$($vpnClientConfig):/etc/xray/client.json:ro" $vpnClientImage run -test -config /etc/xray/client.json | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "generated failover Xray client configuration is invalid" }
-            docker run -d --name $vpnClientName --network vpn-service_vpn-data -p "127.0.0.1:11080:1080" -v "$($vpnClientConfig):/etc/xray/client.json:ro" $vpnClientImage run -config /etc/xray/client.json | Out-Null
+            docker run -d --name $vpnClientName --network $vpnDataNetwork -p "127.0.0.1:11080:1080" -v "$($vpnClientConfig):/etc/xray/client.json:ro" $vpnClientImage run -config /etc/xray/client.json | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "start failover Xray client failed" }
 
             $failoverBody = ""
@@ -872,6 +894,9 @@ try {
         Write-Warning "SMOKE_KEEP_STACK=1: Compose services and volumes were preserved for diagnostics."
     } else {
         docker compose @profiles down -v --remove-orphans
+        if ([Environment]::GetEnvironmentVariable("SMOKE_DISPOSABLE_PROJECT") -eq "1") {
+            docker volume rm $goModCacheVolume $goBuildCacheVolume 2>$null | Out-Null
+        }
     }
     $ErrorActionPreference = $cleanupPreference
 }

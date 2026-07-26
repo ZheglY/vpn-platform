@@ -1,9 +1,14 @@
 $ErrorActionPreference = "Stop"
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$env:GOCACHE = "D:\Work\Projects\dev\.cache\go-build"
-$env:GOMODCACHE = "D:\Work\Projects\dev\.cache\go-mod"
-$env:GOTMPDIR = "D:\Work\Projects\dev\.tmp\go"
+$cacheRoot = if (-not [string]::IsNullOrWhiteSpace($env:VPN_PLATFORM_CACHE_ROOT)) {
+    $env:VPN_PLATFORM_CACHE_ROOT
+} else {
+    Join-Path (Split-Path $repo -Parent) ".cache\vpn-platform"
+}
+if ([string]::IsNullOrWhiteSpace($env:GOCACHE)) { $env:GOCACHE = Join-Path $cacheRoot "cache" }
+if ([string]::IsNullOrWhiteSpace($env:GOMODCACHE)) { $env:GOMODCACHE = Join-Path $cacheRoot "mod" }
+if ([string]::IsNullOrWhiteSpace($env:GOTMPDIR)) { $env:GOTMPDIR = Join-Path $cacheRoot "tmp" }
 New-Item -ItemType Directory -Force -Path $env:GOCACHE, $env:GOMODCACHE, $env:GOTMPDIR | Out-Null
 $status = & git -C $repo status --porcelain --untracked-files=all
 if ($LASTEXITCODE -ne 0) { throw "cannot inspect repository state" }

@@ -119,3 +119,35 @@ func TestDecodeKeySetSupportsRotationWindow(t *testing.T) {
 		t.Fatalf("decode key set: %v", err)
 	}
 }
+
+func TestEncryptionKeyringRejectsEmptyAndUnboundedSets(t *testing.T) {
+	key := bytes.Repeat([]byte{8}, KeyBytes)
+	four := map[int][]byte{1: key, 2: key, 3: key, 4: key}
+	if _, err := NewKeyring(4, four); err != nil {
+		t.Fatalf("four-key encryption window was rejected: %v", err)
+	}
+	for name, keys := range map[string]map[int][]byte{
+		"empty": {},
+		"five":  {1: key, 2: key, 3: key, 4: key, 5: key},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := NewKeyring(1, keys); err == nil {
+				t.Fatal("NewKeyring unexpectedly accepted an invalid key set")
+			}
+		})
+	}
+}
+
+func TestDecodeKeySetRejectsEmptyAndUnboundedSets(t *testing.T) {
+	encoded := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, KeyBytes))
+	fourKeys := "1:" + encoded + ",2:" + encoded + ",3:" + encoded + ",4:" + encoded
+	fiveKeys := "1:" + encoded + ",2:" + encoded + ",3:" + encoded + ",4:" + encoded + ",5:" + encoded
+	if keys, err := DecodeKeySet(fourKeys); err != nil || len(keys) != MaxKeyringKeys {
+		t.Fatalf("four-key configuration was rejected: keys=%d err=%v", len(keys), err)
+	}
+	for _, value := range []string{"", "   ", fiveKeys} {
+		if _, err := DecodeKeySet(value); err == nil {
+			t.Fatalf("DecodeKeySet(%q) unexpectedly succeeded", value)
+		}
+	}
+}

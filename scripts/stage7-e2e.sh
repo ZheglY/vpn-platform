@@ -5,6 +5,7 @@ phase="${1:?phase is required}"
 user_id="${2:?user id is required}"
 subscription_id="${3:?subscription id is required}"
 credential_id="${4:?credential id is required}"
+compose_project="${COMPOSE_PROJECT_NAME:-vpn-service}"
 
 scalar_sql() {
   docker compose exec -T postgres psql --username="${POSTGRES_USER}" --dbname "$1" -tAc "$2" | tr -d '[:space:]'
@@ -128,8 +129,8 @@ if [[ "$phase" == "BeforeRevoke" ]]; then
   action_count="$(scalar_sql admin_service 'SELECT count(*) FROM admin_action_requests')"
   docker compose restart notification-service admin-service >/dev/null
   for _ in $(seq 1 60); do
-    notification_health="$(docker inspect -f '{{.State.Health.Status}}' vpn-service-notification-service-1)"
-    admin_health="$(docker inspect -f '{{.State.Health.Status}}' vpn-service-admin-service-1)"
+    notification_health="$(docker inspect -f '{{.State.Health.Status}}' "${compose_project}-notification-service-1")"
+    admin_health="$(docker inspect -f '{{.State.Health.Status}}' "${compose_project}-admin-service-1")"
     if [[ "$notification_health" == healthy && "$admin_health" == healthy ]]; then break; fi
     sleep 1
   done

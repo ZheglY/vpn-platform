@@ -6,7 +6,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=xray
-Group=vpn-xray
+Group=xray
+SupplementaryGroups=vpn-xray
 ExecStart=/usr/local/bin/xray run -config /etc/vpn-node/xray/config.json
 Restart=on-failure
 RestartSec=3s
@@ -24,7 +25,7 @@ LockPersonality=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_BIND_SERVICE
-ReadOnlyPaths=/etc/vpn-node/xray
+ReadOnlyPaths=/etc/vpn-node/xray /etc/vpn-node/credentials/xray
 UMask=0027
 
 [Install]

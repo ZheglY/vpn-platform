@@ -118,12 +118,15 @@ func TestIntegrationAccessLifecycleAndTokenRotation(t *testing.T) {
 	reactivationMeta := integrationMeta("50000000-0000-4000-8000-000000000001", "subscription.activated.v1", subscriptionID, 4, 3)
 	reactivationPeriod := period
 	reactivationPeriod.PeriodID = "50000000-0000-4000-8000-000000000002"
+	reactivationPeriod.SourceOrderID = "50000000-0000-4000-8000-000000000005"
+	reactivationPeriod.SourcePaymentID = "50000000-0000-4000-8000-000000000006"
 	reactivationPeriod.PeriodEnd = period.PeriodEnd.Add(30 * 24 * time.Hour)
 	reactivationPeriod.GraceEndsAt = period.GraceEndsAt.Add(30 * 24 * time.Hour)
 	replacementSeed := domain.CredentialSeed{CredentialID: "50000000-0000-4000-8000-000000000003", OperationID: "50000000-0000-4000-8000-000000000004", Ciphertext: bytes.Repeat([]byte{0x24}, 64), KeyVersion: 2}
 	if err := store.ApplyPeriod(ctx, reactivationMeta, reactivationPeriod, replacementSeed); err != nil {
 		t.Fatalf("reactivate access: %v", err)
 	}
+	assertCount(t, store, "payment_access_sli", 2)
 	var currentCredentialID string
 	var currentCiphertext []byte
 	if err := store.pool.QueryRow(ctx, `SELECT id, vless_uuid_ciphertext FROM access_credentials WHERE subscription_id=$1 AND status <> 'revoked'`, subscriptionID).Scan(&currentCredentialID, &currentCiphertext); err != nil {

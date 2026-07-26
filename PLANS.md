@@ -398,20 +398,20 @@ Acceptance-review remediation for slices 4-6:
 
 Seventh-slice acceptance:
 
-- A Debian 12 Ansible role configures nftables default deny, WireGuard-only node management, SSH/sysctl hardening, separate non-root node-agent and Xray identities, restricted credential modes, and hardened systemd units.
+- A Debian 12 Ansible role configures a role-owned nftables default-deny table without flushing unrelated host rules, WireGuard-only node management, SSH/sysctl hardening, separate non-root node-agent and Xray identities, restricted credential modes, and hardened systemd units.
 - node-agent production mode uses a fixed reload/status helper, atomic current/last-known-good state, and health-confirmed rollback without arbitrary shell input or unrestricted sudo.
-- A digest-pinned disposable target converges twice with zero second-pass changes and asserts identities, modes, firewall, WireGuard, sudoers, and unit restrictions. Real VPS enrollment remains blocked.
+- A digest-pinned systemd-enabled disposable target converges twice with zero second-pass changes, preserves a pre-existing firewall table, reads keys under the actual service identities, starts both services, and asserts identities, modes, WireGuard, sudoers, and unit restrictions. Real VPS enrollment remains blocked.
 
 Eighth-slice acceptance:
 
 - mTLS rotation proves old/new trust overlap, leaf cutover, old retirement, and rollback under TLS 1.3.
-- Access encryption and HMAC use independent versioned keyrings with at most four read generations and one explicit active writer. Token lookup survives overlap/rollback without plaintext storage or unbounded work.
+- Access encryption and HMAC use independent non-empty versioned keyrings with at most four read generations and one explicit active writer. Configuration decoding and direct construction both reject empty or oversized keysets. Token lookup survives overlap/rollback without plaintext storage or unbounded work.
 - Telegram/YooKassa client safety, Xray last-known-good recovery, and distinct REALITY generations have secret-free tests. Real provider/VPS rotation remains an approved operator procedure.
 
 Ninth-slice acceptance:
 
-- The bounded load probe cannot emit its target URL, exceeds neither duration/rate/sample limits, and produces aggregate p50/p95/p99/error evidence with explicit budgets.
-- Kafka outage/replay republishes durable work without a second subscription period; PostgreSQL outage preserves liveness, fails readiness, and recovers.
+- The bounded load probe accepts only HTTPS targets with a host and no userinfo/fragment, cannot emit its target URL, caps actual submissions using an exact fractional-duration ceiling, cannot deadlock at the sample cap, and produces aggregate p50/p95/p99/error evidence with explicit budgets.
+- Kafka outage/replay republishes durable work without a second subscription period; PostgreSQL outage preserves liveness, fails readiness, and recovers. Each drill uses a unique Compose namespace and proves ordinary local project volume identity/content is preserved.
 - Active primary-node loss is proven by real VLESS + REALITY traffic through the separately provisioned failover. Reload failure and Provisioning reconciliation retain last-known-good and generation fencing.
 
 Tenth-slice acceptance:

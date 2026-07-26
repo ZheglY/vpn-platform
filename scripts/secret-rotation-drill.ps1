@@ -1,12 +1,15 @@
 $ErrorActionPreference = "Stop"
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$cacheRoot = "D:\Work\Projects\dev\.cache"
-$tmpRoot = "D:\Work\Projects\dev\.tmp\go"
-New-Item -ItemType Directory -Force -Path $cacheRoot, $tmpRoot | Out-Null
-$env:GOCACHE = Join-Path $cacheRoot "go-build"
-$env:GOMODCACHE = Join-Path $cacheRoot "go-mod"
-$env:GOTMPDIR = $tmpRoot
+$cacheRoot = if (-not [string]::IsNullOrWhiteSpace($env:VPN_PLATFORM_CACHE_ROOT)) {
+    $env:VPN_PLATFORM_CACHE_ROOT
+} else {
+    Join-Path (Split-Path $repo -Parent) ".cache\vpn-platform"
+}
+if ([string]::IsNullOrWhiteSpace($env:GOCACHE)) { $env:GOCACHE = Join-Path $cacheRoot "cache" }
+if ([string]::IsNullOrWhiteSpace($env:GOMODCACHE)) { $env:GOMODCACHE = Join-Path $cacheRoot "mod" }
+if ([string]::IsNullOrWhiteSpace($env:GOTMPDIR)) { $env:GOTMPDIR = Join-Path $cacheRoot "tmp" }
+New-Item -ItemType Directory -Force -Path $env:GOCACHE, $env:GOMODCACHE, $env:GOTMPDIR | Out-Null
 
 Push-Location $repo
 try {

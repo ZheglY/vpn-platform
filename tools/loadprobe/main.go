@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -16,6 +17,8 @@ import (
 	"sync"
 	"time"
 )
+
+const maxProbeRequests = 100000
 
 type probeConfig struct {
 	URL               string
@@ -96,14 +99,48 @@ func loadConfig() (probeConfig, error) {
 		MaxErrorRatio:    maxErrorRatio,
 		ExpectedStatuses: expectedStatuses,
 	}
-	if cfg.URL == "" || cfg.Duration < time.Second || cfg.Duration > 30*time.Minute ||
-		cfg.RequestsPerSecond < 1 || cfg.RequestsPerSecond > 5000 ||
-		cfg.Concurrency < 1 || cfg.Concurrency > 256 ||
-		cfg.P95Budget <= 0 || cfg.MaxErrorRatio < 0 || cfg.MaxErrorRatio > 1 ||
-		int(cfg.Duration.Seconds())*cfg.RequestsPerSecond > 100000 {
-		return probeConfig{}, fmt.Errorf("probe bounds are invalid")
+	if _, err := validateConfig(cfg); err != nil {
+		return probeConfig{}, err
 	}
 	return cfg, nil
+}
+
+func validateConfig(cfg probeConfig) (int, error) {
+	if cfg.Duration < time.Second || cfg.Duration > 30*time.Minute ||
+		cfg.RequestsPerSecond < 1 || cfg.RequestsPerSecond > 5000 ||
+		cfg.Concurrency < 1 || cfg.Concurrency > 256 ||
+		cfg.P95Budget <= 0 || cfg.MaxErrorRatio < 0 || cfg.MaxErrorRatio > 1 {
+		return 0, fmt.Errorf("probe bounds are invalid")
+	}
+	if err := validateTargetURL(cfg.URL); err != nil {
+		return 0, err
+	}
+	requestLimit, err := calculateRequestLimit(cfg.Duration, cfg.RequestsPerSecond)
+	if err != nil {
+		return 0, err
+	}
+	return requestLimit, nil
+}
+
+func validateTargetURL(value string) error {
+	target, err := url.Parse(value)
+	if err != nil || target.Scheme != "https" || target.Host == "" || target.Hostname() == "" ||
+		target.User != nil || target.Fragment != "" || strings.Contains(value, "#") {
+		return fmt.Errorf("load probe target must be an HTTPS URL without userinfo or fragment")
+	}
+	return nil
+}
+
+func calculateRequestLimit(duration time.Duration, requestsPerSecond int) (int, error) {
+	if duration <= 0 || requestsPerSecond <= 0 {
+		return 0, fmt.Errorf("probe request limit is invalid")
+	}
+	numerator := int64(duration) * int64(requestsPerSecond)
+	requestLimit := (numerator + int64(time.Second) - 1) / int64(time.Second)
+	if requestLimit <= 0 || requestLimit > maxProbeRequests {
+		return 0, fmt.Errorf("probe request limit exceeds the maximum")
+	}
+	return int(requestLimit), nil
 }
 
 func parseExpectedStatuses(value string) ([]int, error) {
@@ -128,6 +165,10 @@ func parseExpectedStatuses(value string) ([]int, error) {
 }
 
 func run(ctx context.Context, cfg probeConfig) (report, error) {
+	requestLimit, err := validateConfig(cfg)
+	if err != nil {
+		return report{}, err
+	}
 	client, err := newClient(cfg.CAFile)
 	if err != nil {
 		return report{}, err
@@ -136,7 +177,7 @@ func run(ctx context.Context, cfg probeConfig) (report, error) {
 	runCtx, cancel := context.WithTimeout(ctx, cfg.Duration+10*time.Second)
 	defer cancel()
 	jobs := make(chan struct{})
-	results := make(chan sample, 100001)
+	results := make(chan sample, requestLimit)
 	var workers sync.WaitGroup
 	for range cfg.Concurrency {
 		workers.Add(1)
@@ -154,21 +195,26 @@ func run(ctx context.Context, cfg probeConfig) (report, error) {
 	defer ticker.Stop()
 	deadline := time.NewTimer(cfg.Duration)
 	defer deadline.Stop()
+	submitted := 0
+	finish := func(runErr error) (report, error) {
+		close(jobs)
+		workers.Wait()
+		close(results)
+		return summarize(cfg, results, runErr)
+	}
 	for {
+		if submitted == requestLimit {
+			return finish(nil)
+		}
 		select {
 		case <-runCtx.Done():
-			close(jobs)
-			workers.Wait()
-			close(results)
-			return summarize(cfg, results, runCtx.Err())
+			return finish(runCtx.Err())
 		case <-deadline.C:
-			close(jobs)
-			workers.Wait()
-			close(results)
-			return summarize(cfg, results, nil)
+			return finish(nil)
 		case <-ticker.C:
 			select {
 			case jobs <- struct{}{}:
+				submitted++
 			case <-runCtx.Done():
 			}
 		}
@@ -193,7 +239,13 @@ func newClient(caFile string) (*http.Client, error) {
 		MaxIdleConns:    512, MaxIdleConnsPerHost: 256,
 		IdleConnTimeout: 30 * time.Second,
 	}
-	return &http.Client{Transport: transport, Timeout: 5 * time.Second}, nil
+	return &http.Client{
+		Transport: transport,
+		Timeout:   5 * time.Second,
+		CheckRedirect: func(request *http.Request, _ []*http.Request) error {
+			return validateTargetURL(request.URL.String())
+		},
+	}, nil
 }
 
 func probe(ctx context.Context, client *http.Client, target string, expectedStatuses []int) error {

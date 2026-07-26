@@ -3,6 +3,9 @@ RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
        ansible-core nftables openssh-server python3 sudo systemd wireguard-tools \
     && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /run/sshd
+    && mkdir -p /run/sshd \
+    && systemd-machine-id-setup
+ENV container=docker
+STOPSIGNAL SIGRTMIN+3
 WORKDIR /workspace/deploy/ansible
-CMD ["sleep", "infinity"]
+CMD ["/lib/systemd/systemd"]
