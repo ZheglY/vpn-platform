@@ -71,6 +71,30 @@ func TestIntegrationAdminActionIdempotencyAuditAndAppendOnlyRole(t *testing.T) {
 	}
 }
 
+func TestIntegrationDisabledAdminPrincipalLosesAccessImmediately(t *testing.T) {
+	runtimeStore, cleanup := adminIntegrationStores(t)
+	defer cleanup()
+	ctx := context.Background()
+	const spiffeID = "spiffe://vpn-service/ns/local/admin/integration-ops"
+
+	if _, err := runtimeStore.GetPrincipal(ctx, spiffeID, "integration-ops"); err != nil {
+		t.Fatalf("enabled principal: %v", err)
+	}
+	migratorStore, err := Open(ctx, os.Getenv("ADMIN_MIGRATOR_TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migratorStore.Close()
+	if _, err := migratorStore.pool.Exec(ctx,
+		`UPDATE admin_principals SET enabled=false WHERE spiffe_id=$1`, spiffeID,
+	); err != nil {
+		t.Fatalf("disable principal: %v", err)
+	}
+	if _, err := runtimeStore.GetPrincipal(ctx, spiffeID, "integration-ops"); err == nil {
+		t.Fatal("disabled principal retained administrator access")
+	}
+}
+
 func TestIntegrationAdminRetriesUnknownOwnerOutcomeWithStableIdentity(t *testing.T) {
 	runtimeStore, cleanup := adminIntegrationStores(t)
 	defer cleanup()

@@ -8,6 +8,8 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -47,6 +49,63 @@ func TestNewMutualTLSConfig(t *testing.T) {
 func TestNewMutualTLSConfigRejectsMissingClientCA(t *testing.T) {
 	if _, err := NewMutualTLSConfig("server.pem", "server-key.pem", nil); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestMutualTLSRejectsExpiredClientCertificate(t *testing.T) {
+	dir := t.TempDir()
+	caPEM, caKey, caCert := newTestCA(t)
+	serverPEM, serverKeyPEM := newTestServerCertificate(t, caCert, caKey)
+	validClientPEM, validClientKeyPEM := newTestClientCertificate(
+		t, caCert, caKey, time.Now().Add(-time.Hour), time.Now().Add(time.Hour),
+	)
+	expiredClientPEM, expiredClientKeyPEM := newTestClientCertificate(
+		t, caCert, caKey, time.Now().Add(-2*time.Hour), time.Now().Add(-time.Hour),
+	)
+
+	caPath := writeTestFile(t, dir, "ca.pem", caPEM)
+	serverPath := writeTestFile(t, dir, "server.pem", serverPEM)
+	serverKeyPath := writeTestFile(t, dir, "server-key.pem", serverKeyPEM)
+	serverConfig, err := NewMutualTLSConfig(serverPath, serverKeyPath, []string{caPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	server.TLS = serverConfig
+	server.StartTLS()
+	defer server.Close()
+
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(caPEM) {
+		t.Fatal("append test root")
+	}
+	request := func(certPEM, keyPEM []byte) error {
+		certificate, err := tls.X509KeyPair(certPEM, keyPEM)
+		if err != nil {
+			t.Fatal(err)
+		}
+		client := &http.Client{
+			Transport: &http.Transport{TLSClientConfig: &tls.Config{
+				MinVersion:   tls.VersionTLS13,
+				RootCAs:      roots,
+				ServerName:   "identity-service.local",
+				Certificates: []tls.Certificate{certificate},
+			}},
+			Timeout: 2 * time.Second,
+		}
+		response, err := client.Get(server.URL)
+		if response != nil {
+			_ = response.Body.Close()
+		}
+		return err
+	}
+	if err := request(validClientPEM, validClientKeyPEM); err != nil {
+		t.Fatalf("valid client certificate was rejected: %v", err)
+	}
+	if err := request(expiredClientPEM, expiredClientKeyPEM); err == nil {
+		t.Fatal("expired client certificate completed a mutual TLS request")
 	}
 }
 
@@ -96,6 +155,36 @@ func newTestServerCertificate(t *testing.T, caCert *x509.Certificate, caKey *rsa
 	der, err := x509.CreateCertificate(rand.Reader, cert, caCert, &key.PublicKey, caKey)
 	if err != nil {
 		t.Fatalf("create server certificate: %v", err)
+	}
+	keyBytes := x509.MarshalPKCS1PrivateKey(key)
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+		pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: keyBytes})
+}
+
+func newTestClientCertificate(
+	t *testing.T,
+	caCert *x509.Certificate,
+	caKey *rsa.PrivateKey,
+	notBefore time.Time,
+	notAfter time.Time,
+) ([]byte, []byte) {
+	t.Helper()
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate client key: %v", err)
+	}
+	cert := &x509.Certificate{
+		SerialNumber: big.NewInt(notAfter.UnixNano()),
+		Subject:      pkix.Name{CommonName: "test-client"},
+		NotBefore:    notBefore,
+		NotAfter:     notAfter,
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, cert, caCert, &key.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create client certificate: %v", err)
 	}
 	keyBytes := x509.MarshalPKCS1PrivateKey(key)
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),

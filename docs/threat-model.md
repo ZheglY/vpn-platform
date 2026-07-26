@@ -482,3 +482,117 @@ Mitigation:
 - Concrete DNS/TLS provider and edge log redaction configuration.
 - VPS provider AUP and lawful request process.
 - Backup/restore key management.
+
+## Stage 9 production boundary review
+
+The accepted Stage 8 controls are proven only in the repository and
+local/disposable environments. Moving any service to production introduces
+additional trust boundaries that are not authorized by this document:
+
+- public DNS, TLS termination, reverse proxy, DDoS protection, and access logs;
+- production PostgreSQL, Kafka, Redis, object storage, and their administrators;
+- production CA, secret manager, HSM or equivalent custody, and revocation path;
+- container registry, release approvers, deployment identities, and runtime
+  configuration owners;
+- VPS provider staff, regions, abuse process, WireGuard enrollment, and node
+  decommissioning;
+- observability storage, authenticated users, alert receivers, and on-call staff;
+- legal counsel, payment operations, privacy operations, and lawful-request
+  handlers.
+
+These boundaries remain deny-by-default. Local Compose credentials, CA
+material, database grants, anonymous loopback Grafana, inert Alertmanager
+receiver, and provider fakes are explicitly unsuitable for production.
+
+### T31 - Production certificate compromise cannot be contained
+
+Risk: an attacker with an administrator, provisioning, node, service, or
+observability certificate retains access because the production issuing,
+inventory, revocation, and connection-drain mechanisms are undefined.
+
+Required mitigation:
+
+- approve a production CA hierarchy and custody model;
+- issue short-lived leaves to exact workload/operator identities;
+- maintain auditable inventory and emergency disable/revocation;
+- prove fleet propagation and replacement in a production-like staging drill;
+- alert before expiry and on anomalous privileged use.
+
+Status: open production blocker `SPR-001`/`SPR-007`.
+
+### T32 - Production edge leaks bearer paths or accepts abusive ingress
+
+Risk: reverse-proxy logs record `/s/{token}`, or unbounded/forged traffic
+exhausts webhook inboxes and public endpoints before application controls apply.
+
+Required mitigation:
+
+- use separate approved hostnames and TLS policy;
+- suppress or irreversibly template subscription paths at the first logging
+  boundary;
+- normalize requests and enforce body/header/rate/concurrency limits at edge;
+- validate current provider ingress requirements without trusting source
+  address alone for payment state;
+- test log redaction and DDoS behavior.
+
+Status: open production blocker `SPR-002`.
+
+### T33 - Infrastructure identities exceed service ownership
+
+Risk: a compromised runtime alters its schema, reads another Kafka topic, or
+uses shared backup/restore privileges.
+
+Required mitigation:
+
+- separate database owner, migrator, runtime, backup, and restore identities;
+- use per-service Kafka principals and explicit topic/group ACLs;
+- deny cross-owner operations in staging tests;
+- rotate credentials without widening grants.
+
+Status: open production blocker `ACR-001`/`SPR-003`.
+
+### T34 - Unmanaged production secret copies evade rotation and audit
+
+Risk: provider, Telegram, Access, REALITY, database, backup, or CA material is
+copied into operator files, CI, environment history, or untracked hosts.
+
+Required mitigation:
+
+- select an audited production secret manager and service-identity mechanism;
+- inject through owner-only files/mounts and keep values out of process
+  arguments;
+- define dual control, environment separation, escrow/recovery, and destruction;
+- exercise rotation and compromise recovery with safe evidence.
+
+Status: open production blocker `SPR-004`.
+
+### T35 - Operational or legal workflow mishandles personal data
+
+Risk: access/export/delete, abuse, breach, copyright, or lawful requests are
+fulfilled without verified authority, retained evidence, jurisdictional review,
+or correct deletion exceptions.
+
+Required mitigation:
+
+- obtain counsel-approved data inventory, lawful basis, retention, and roles;
+- define identity verification and authorization for every request type;
+- keep append-only safe audit without copying sensitive payloads;
+- assign breach, abuse, support, and lawful-request owners and exercises.
+
+Status: open launch blocker `SPR-005`.
+
+### T36 - Rollback reintroduces incompatible or vulnerable behavior
+
+Risk: an old mutable image is rebuilt, or an N-1 service reads a contracted
+schema/new event it does not understand.
+
+Required mitigation:
+
+- retain immutable image digests, SBOMs, scans, and provenance;
+- use forward-only expand/migrate/contract with an explicit compatibility
+  window;
+- abort canary before contract migrations;
+- roll forward or restore into isolation instead of automatic DB downgrade;
+- run two-version staging rollback and reconciliation.
+
+Status: open production blocker `ACR-002`.
