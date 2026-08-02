@@ -455,15 +455,15 @@ Tenth-slice acceptance:
 
 Depends on previous milestones. Performs architecture, security, legal/payment, license, incident, backup, and rollback reviews before any real launch.
 
-Status: accepted Stage 8 plus Stage 9 review is being remediated on
-`codex/stage9-remediation-production-enablement`. Five review defects are fixed,
-and provider-neutral schemas, identity bindings, startup guards, secure
+Status: technically complete as a Stage 9 review on
+`codex/stage9-remediation-production-enablement`. Five review defects are fixed;
+provider-neutral schemas, identity bindings, startup guards, secure
 PostgreSQL/Kafka/Redis requirements, offline preflight, and operations contracts
-are implemented. Final whole-repository verification, refreshed commit-bound
-evidence, GitHub CI/PR, and normal merge are pending. The production decision is
-`NO-GO` because the explicitly external legal, provider, license, PKI, HA/PITR,
-custody, alerting, registry, capacity, and production-like game-day gates remain
-blocked.
+are implemented. The full local verification and required disposable drills are
+commit-bound in `docs/reviews/stage9/evidence-index.md`. GitHub PR/required CI
+and normal merge remain pending. The production decision is `NO-GO` because the
+explicitly external legal, provider, license, PKI, HA/PITR, custody, alerting,
+registry, capacity, and production-like game-day gates remain blocked.
 
 Stage 9 is a review and local/disposable evidence milestone. It does not authorize production deployment, registry publication, real credentials, real domains, production databases, production VPS enrollment, provider calls, or customer traffic. The expected decision is `NO-GO` while any hard legal, provider, PKI, HA/PITR, alerting, custody, registry, or staging game-day gate remains unresolved.
 

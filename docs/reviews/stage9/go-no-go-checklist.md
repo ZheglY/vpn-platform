@@ -37,7 +37,7 @@ Local evidence is not promoted to production or staging evidence.
 | CAPACITY-01 | Control-plane and per-region VPN reserve approved | Platform / Operations / Finance | INF-CAP-01; no production load/region/provider selected | blocked | P1 | expiring | 2026-08-02 | 2026-08-30 | yes |
 | OPERATIONS-01 | Abuse, support, breach and lawful-request processes assigned | Product owner / Legal / Support | OPS-LEGAL-01 through OPS-LEGAL-06 are unresolved | blocked | P1 | expiring | 2026-08-02 | 2026-08-30 | yes |
 | ROLLBACK-01 | Critical N/N-1 rollback and disaster recovery drill passed | Platform / Operations | ACR-002, GD-11 and docs/runbooks/production-rollback.md | blocked | P1 | expiring | 2026-08-02 | 2026-08-30 | yes |
-| CI-01 | All required local CI, security, smoke, restore, node, rotation, resilience and release checks green | Platform / Security | EV-01 through EV-14 passed at dfee5bc44cadc8138e6ebe115cb7bf1ddab61b2a; production-only gates remain separately blocked | passed | P1 | expiring | 2026-08-02 | 2026-08-09 | yes |
+| CI-01 | All required local CI, security, smoke, restore, node, rotation, resilience and release checks green | Platform / Security | EV-02 through EV-11, EV-13 and EV-14 passed at dfee5bc44cadc8138e6ebe115cb7bf1ddab61b2a; EV-01 and EV-12 passed at e7f5f4a57be9b9fc66ebd91b5050d417861aeb8c; production-only gates remain separately blocked | passed | P1 | expiring | 2026-08-02 | 2026-08-09 | yes |
 
 ## Decision rationale
 
