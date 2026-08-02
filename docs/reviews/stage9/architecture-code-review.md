@@ -1,7 +1,7 @@
 # Stage 9 Architecture and Code Review
 
-Review date: 2026-07-26
-Review baseline: `76f5624e664c556c3ec598055524319eab0af1f3`
+Review date: 2026-08-02
+Review baseline: `dfee5bc44cadc8138e6ebe115cb7bf1ddab61b2a`
 Review owner: Architecture
 Scope: current repository, local/disposable environments, and release-candidate artifacts
 Production decision impact: blocking findings are carried into `go-no-go-checklist.md`
@@ -30,6 +30,12 @@ The review combined:
 - OpenAPI, AsyncAPI, and JSON Schema inventory;
 - accepted Stage 3-8 regression suites and the Stage 9 verification commands
   indexed in `evidence-index.md`.
+
+The final static pass found zero foreign service `internal` imports, zero
+cross-database references, and zero business-domain structs in
+`internal/platform`. All production money fields remain integer minor units;
+the reviewed `float64` uses are Prometheus samples, durations, ratios, or JSON
+test decoding.
 
 Static scans supplement tests; they do not replace transaction, concurrency,
 protocol, restore, or real-Xray evidence.
@@ -152,6 +158,10 @@ asynchronous completion; immediate reads and command admission use HTTP.
 - Every runtime service now applies the shared staging/production guard. Kafka
   uses per-service TLS 1.3 mTLS and Redis uses TLS 1.3 server verification;
   PostgreSQL must use `sslmode=verify-full`.
+- `make verify` and every required local smoke, restore, hardening, rotation,
+  resilience, and release-bundle command passed against the stated baseline.
+  These results do not substitute for the blocked production-like staging
+  checks.
 
 The application architecture/code review is complete for the stated baseline.
 It has no open P0/P1. A production `GO` is prohibited while ACR-001 or ACR-002

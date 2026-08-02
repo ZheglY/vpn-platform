@@ -1,7 +1,7 @@
 # Stage 9 Dependency and License Review
 
-Review date: 2026-07-26
-Review baseline: `76f5624e664c556c3ec598055524319eab0af1f3`
+Review date: 2026-08-02
+Review baseline: `dfee5bc44cadc8138e6ebe115cb7bf1ddab61b2a`
 Review owner: Platform / Security
 Legal status: technical inventory only; not legal advice
 Publication decision: **NO-GO**
@@ -12,6 +12,11 @@ The 19-image release inventory is complete and integrity-pinned. Go module
 verification, npm lockfile inspection, source-build pins, image SBOM generation,
 Trivy scanning, and release-manifest validation provide a reproducible technical
 inventory.
+
+The final 19-image rebuild resolves `CVE-2026-56852` by pinning
+`golang.org/x/text v0.40.0` in every affected security rebuild. The complete
+HIGH/CRITICAL image gate passes; Tempo's documented exact OpenVEX exception is
+still shown and independently scope-checked.
 
 Publication is blocked because:
 
