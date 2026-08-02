@@ -168,7 +168,7 @@ func validateCredentialFileReference(value string) error {
 	if value == "" {
 		return nil
 	}
-	if !(filepath.IsAbs(value) || strings.HasPrefix(value, "/")) || isUnsafeDeploymentValue(value) {
+	if !filepath.IsAbs(value) && !strings.HasPrefix(value, "/") || isUnsafeDeploymentValue(value) {
 		return fmt.Errorf("must be an absolute environment-owned credential path")
 	}
 	return nil

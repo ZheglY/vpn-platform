@@ -34,7 +34,7 @@ func NewClientForEnvironment(environment string, brokers []string, clientID stri
 		certFile := strings.TrimSpace(os.Getenv("KAFKA_TLS_CERT_FILE"))
 		keyFile := strings.TrimSpace(os.Getenv("KAFKA_TLS_KEY_FILE"))
 		if caFile == "" || certFile == "" || keyFile == "" {
-			return nil, fmt.Errorf("Kafka mTLS credential files are required")
+			return nil, fmt.Errorf("kafka mTLS credential files are required")
 		}
 		tlsConfig, err := tlsconfig.NewClient([]string{caFile}, certFile, keyFile)
 		if err != nil {
