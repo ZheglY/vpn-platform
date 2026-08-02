@@ -6,6 +6,36 @@ Approved milestone: Stage 9 - Production readiness review.
 
 Stage 8 was explicitly accepted by the product owner on 2026-07-26 after the acceptance-review remediation in commit `4ab8dff621c27c8766efaf3ecf5217dbaea77383`, with the instruction to execute Stage 9. Stage 9 may perform production-readiness reviews, local/disposable game-day exercises, and evidence generation only. It must not connect production VPS instances, publish production images, deploy production infrastructure, configure real alert receivers, or use production credentials, databases, DNS, providers, or users without separate explicit approval.
 
+### Stage 9 Remediation And Production Enablement Plan
+
+Approved scope: close provider-independent technical findings on branch
+`codex/stage9-remediation-production-enablement`. Production deployment,
+registry publication, release/tag creation, real provider access, DNS changes,
+customer data, and license/legal decisions remain prohibited.
+
+1. Correct the Debian/systemd first-boot sequence so node-agent creates and
+   validates the initial Xray configuration before Xray is started through the
+   fixed helper; prove idempotence, reboot behavior, and last-known-good rollback.
+2. Bind the strict license publication gate to a complete verified release
+   bundle and fail closed for malformed, empty, mismatched, or unresolved SPDX
+   assertions.
+3. Make production-readiness evidence explicitly typed and UTC-expiring, require
+   the complete gate inventory including `ARCH-03`, and cross-check Markdown,
+   JSON, referenced files, and Git commits.
+4. Derive build, scan, and release image sets from
+   `deploy/release/images.json`, including `migrate`, while rejecting every
+   unclassified production Dockerfile.
+5. Forbid loadprobe redirects and cover downgrade, cross-origin, malformed,
+   relative, looping, and privacy-safe failure cases.
+6. Complete an architecture/security review, provider-neutral configuration and
+   identity inventories, fail-closed environment preflight, and owner-input
+   handoff without selecting infrastructure providers.
+7. Run all required source, integration, smoke, drill, security, image, SPDX,
+   and release checks on the final clean commit; regenerate commit-bound evidence.
+8. Publish a draft pull request, require native Ubuntu CI, self-review the final
+   diff, and merge normally to protected `main` only after every technical gate
+   is green. External launch gates keep the production decision `NO-GO`.
+
 ## Stage 0 Plan
 
 ### Goals
