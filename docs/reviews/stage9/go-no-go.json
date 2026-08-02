@@ -1,7 +1,7 @@
 {
-  "format_version": 1,
-  "reviewed_at": "2026-07-26",
-  "next_review_at": "2026-08-26",
+  "format_version": 2,
+  "reviewed_at": "2026-08-02",
+  "valid_until": "2026-08-09",
   "decision": "NO-GO",
   "decision_owner": "Product owner",
   "gates": [
@@ -12,8 +12,9 @@
       "evidence": "PLANS.md and commit 76f5624e664c556c3ec598055524319eab0af1f3",
       "status": "passed",
       "severity": "P1",
-      "review_date": "2026-07-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "immutable"
     },
     {
       "id": "ARCH-01",
@@ -22,8 +23,10 @@
       "evidence": "docs/reviews/stage9/architecture-code-review.md",
       "status": "passed",
       "severity": "P1",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-09"
     },
     {
       "id": "ARCH-02",
@@ -32,8 +35,10 @@
       "evidence": "docs/reviews/stage9/architecture-code-review.md",
       "status": "passed",
       "severity": "P1",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-09"
     },
     {
       "id": "ARCH-03",
@@ -42,8 +47,10 @@
       "evidence": "ACR-001 and ACR-002 have no accepted production deferral",
       "status": "blocked",
       "severity": "P2",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-30"
     },
     {
       "id": "SEC-01",
@@ -52,8 +59,10 @@
       "evidence": "docs/reviews/stage9/security-privacy-review.md and docs/threat-model.md",
       "status": "passed",
       "severity": "P1",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-09"
     },
     {
       "id": "LIC-01",
@@ -62,8 +71,10 @@
       "evidence": "docs/reviews/stage9/dependency-license-review.md and deploy/release/license-policy.json",
       "status": "passed",
       "severity": "P1",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-09"
     },
     {
       "id": "LIC-02",
@@ -72,8 +83,10 @@
       "evidence": "LIC-01 through LIC-06 remain unresolved; publication policy is NO-GO",
       "status": "blocked",
       "severity": "P1",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-30"
     },
     {
       "id": "LEGAL-01",
@@ -82,8 +95,10 @@
       "evidence": "docs/reviews/stage9/legal-payment-provider-checklist.md",
       "status": "blocked",
       "severity": "P1",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-30"
     },
     {
       "id": "PAY-01",
@@ -92,8 +107,10 @@
       "evidence": "PAY-01 and PAY-02 are unresolved; sandbox only",
       "status": "blocked",
       "severity": "P1",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-30"
     },
     {
       "id": "PAY-02",
@@ -102,8 +119,10 @@
       "evidence": "PAY-03 through PAY-09 are unresolved",
       "status": "blocked",
       "severity": "P1",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-30"
     },
     {
       "id": "VPS-01",
@@ -112,8 +131,10 @@
       "evidence": "VPS-01 and VPS-02 are unresolved; no provider selected",
       "status": "blocked",
       "severity": "P1",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-30"
     },
     {
       "id": "PKI-01",
@@ -122,8 +143,10 @@
       "evidence": "SPR-001, SPR-007 and GD-07/GD-08",
       "status": "blocked",
       "severity": "P1",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-30"
     },
     {
       "id": "SECRET-01",
@@ -132,8 +155,10 @@
       "evidence": "SPR-004 and INF-SECRET-01",
       "status": "blocked",
       "severity": "P1",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-30"
     },
     {
       "id": "DB-01",
@@ -142,8 +167,10 @@
       "evidence": "ACR-001, INF-DB-01 and GD-03",
       "status": "blocked",
       "severity": "P1",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-30"
     },
     {
       "id": "KAFKA-01",
@@ -152,8 +179,10 @@
       "evidence": "Local replay passes but INF-KAFKA-01 production topology is unresolved",
       "status": "blocked",
       "severity": "P1",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-30"
     },
     {
       "id": "BACKUP-01",
@@ -162,8 +191,10 @@
       "evidence": "INF-BACKUP-01 is unresolved",
       "status": "blocked",
       "severity": "P1",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-30"
     },
     {
       "id": "RESTORE-01",
@@ -172,8 +203,10 @@
       "evidence": "EV-07: eight encrypted databases restored at f4c7d1eb500944b80d6b8749e69a8427468dbd2d; checksum, row-count and owner checks passed",
       "status": "passed",
       "severity": "P1",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-09"
     },
     {
       "id": "GAME-01",
@@ -182,8 +215,10 @@
       "evidence": "GD-03, GD-07, GD-08 and GD-11 remain staging blockers",
       "status": "blocked",
       "severity": "P1",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-30"
     },
     {
       "id": "ALERT-01",
@@ -192,8 +227,10 @@
       "evidence": "SPR-006 and OPS-ALERT-01; local receiver is inert",
       "status": "blocked",
       "severity": "P1",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-30"
     },
     {
       "id": "EDGE-01",
@@ -202,8 +239,10 @@
       "evidence": "SPR-002 and INF-DNS-01 through INF-EDGE-01",
       "status": "blocked",
       "severity": "P1",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-30"
     },
     {
       "id": "REGISTRY-01",
@@ -212,8 +251,10 @@
       "evidence": "INF-REG-01; no registry selected",
       "status": "blocked",
       "severity": "P1",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-30"
     },
     {
       "id": "PROVENANCE-01",
@@ -222,8 +263,10 @@
       "evidence": "Local release metadata exists; publication/attestation and license approval are blocked",
       "status": "blocked",
       "severity": "P1",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-30"
     },
     {
       "id": "CAPACITY-01",
@@ -232,8 +275,10 @@
       "evidence": "INF-CAP-01; no production load/region/provider selected",
       "status": "blocked",
       "severity": "P1",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-30"
     },
     {
       "id": "OPERATIONS-01",
@@ -242,8 +287,10 @@
       "evidence": "OPS-LEGAL-01 through OPS-LEGAL-06 are unresolved",
       "status": "blocked",
       "severity": "P1",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-30"
     },
     {
       "id": "ROLLBACK-01",
@@ -252,8 +299,10 @@
       "evidence": "ACR-002, GD-11 and docs/runbooks/production-rollback.md",
       "status": "blocked",
       "severity": "P1",
-      "review_date": "2026-08-26",
-      "blocking": true
+      "review_date": "2026-08-02",
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-30"
     },
     {
       "id": "CI-01",
@@ -263,7 +312,9 @@
       "status": "passed",
       "severity": "P1",
       "review_date": "2026-08-02",
-      "blocking": true
+      "blocking": true,
+      "evidence_type": "expiring",
+      "valid_until": "2026-08-09"
     }
   ]
 }

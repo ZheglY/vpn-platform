@@ -98,6 +98,8 @@ green review validation can still report `NO-GO`; it means the blockers are
 represented honestly, not that production is authorized. The stricter
 `make license-publication-gate RELEASE_OUTPUT_DIR=<bundle>` remains blocked
 until counsel/product decisions and final SBOM obligations are approved.
+Readiness evidence is either immutable or has an explicit UTC expiry; stale or
+future-dated evidence and Markdown/JSON drift fail the check.
 
 `make vpn-smoke` generates local-only keys on D and runs the full Stage 6 acceptance path: Access command outbox, Kafka, Provisioning, authenticated material and placement reads, two node-agents with the integrity-checked Xray-core `26.3.27` security rebuild, sequenced outcome consumption, one-time Happ profile issuance, real VLESS + REALITY traffic, refund-driven revoke, and proof that traffic no longer passes afterward.
 

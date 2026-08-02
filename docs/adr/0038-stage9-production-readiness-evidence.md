@@ -6,6 +6,7 @@
 - Security impact: High
 - Contract impact: release review metadata only
 - Extends: ADR 0013, ADR 0032, ADR 0036, and ADR 0037
+- Amended by: ADR 0040 and ADR 0041
 
 ## Context
 
@@ -20,9 +21,10 @@ compound license assertions that are not legal conclusions.
 1. Stage 9 may be technically complete with a production decision of `NO-GO`.
    Review completion never authorizes deployment, provider credentials, real
    data, registry publication, VPS enrollment, DNS, or customer traffic.
-2. `docs/reviews/stage9/go-no-go.json` is the machine-readable gate source. Every
-   hard gate has owner, evidence, severity, review date, status, and blocking
-   flag. Any blocking status other than `passed` forces `NO-GO`.
+2. `docs/reviews/stage9/go-no-go.json` is the machine-readable gate source. ADR
+   0041 supersedes the original untyped freshness representation and fixes the
+   exact required gate inventory. Any blocking status other than `passed`
+   forces `NO-GO`.
 3. `make production-readiness` validates the required reports/runbooks, minimum
    gate inventory, decision consistency, and license-policy relationship. It
    succeeds when the review truthfully records `NO-GO`; it is not a deployment

@@ -98,6 +98,7 @@ endif
 	node scripts/validate-license-policy.mjs --publication --output="$(RELEASE_OUTPUT_DIR)"
 
 production-readiness: license-review-check
+	node --test scripts/validate-production-readiness.test.mjs
 	node scripts/validate-production-readiness.mjs
 
 docker-build:
