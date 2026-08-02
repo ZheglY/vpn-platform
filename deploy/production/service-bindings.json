@@ -1,0 +1,105 @@
+{
+  "format_version": 1,
+  "database_roles": {
+    "access": ["{environment}_access_runtime", "{environment}_access_migrator", "{environment}_access_backup", "{environment}_access_restore"],
+    "admin": ["{environment}_admin_runtime", "{environment}_admin_migrator", "{environment}_admin_backup", "{environment}_admin_restore"],
+    "billing": ["{environment}_billing_runtime", "{environment}_billing_migrator", "{environment}_billing_backup", "{environment}_billing_restore"],
+    "catalog": ["{environment}_catalog_runtime", "{environment}_catalog_migrator", "{environment}_catalog_backup", "{environment}_catalog_restore"],
+    "identity": ["{environment}_identity_runtime", "{environment}_identity_migrator", "{environment}_identity_backup", "{environment}_identity_restore"],
+    "notification": ["{environment}_notification_runtime", "{environment}_notification_migrator", "{environment}_notification_backup", "{environment}_notification_restore"],
+    "provisioning": ["{environment}_provisioning_runtime", "{environment}_provisioning_migrator", "{environment}_provisioning_backup", "{environment}_provisioning_restore"],
+    "subscription": ["{environment}_subscription_runtime", "{environment}_subscription_migrator", "{environment}_subscription_backup", "{environment}_subscription_restore"]
+  },
+  "services": [
+    {
+      "name": "identity-service",
+      "database": "identity",
+      "kafka_principal": null,
+      "produce_topics": [],
+      "consume_topics": [],
+      "consumer_group": null,
+      "mtls_identity": "spiffe://{trust_domain}/{environment}/identity-service"
+    },
+    {
+      "name": "catalog-service",
+      "database": "catalog",
+      "kafka_principal": null,
+      "produce_topics": [],
+      "consume_topics": [],
+      "consumer_group": null,
+      "mtls_identity": "spiffe://{trust_domain}/{environment}/catalog-service"
+    },
+    {
+      "name": "billing-service",
+      "database": "billing",
+      "kafka_principal": "{environment}.billing-service",
+      "produce_topics": ["billing.payment.succeeded.v1", "billing.payment.canceled.v1", "billing.refund.succeeded.v1"],
+      "consume_topics": [],
+      "consumer_group": null,
+      "mtls_identity": "spiffe://{trust_domain}/{environment}/billing-service"
+    },
+    {
+      "name": "subscription-service",
+      "database": "subscription",
+      "kafka_principal": "{environment}.subscription-service",
+      "produce_topics": ["subscription.activated.v1", "subscription.extended.v1", "subscription.grace.started.v1", "subscription.expired.v1", "subscription.revoked.v1"],
+      "consume_topics": ["billing.payment.succeeded.v1", "billing.refund.succeeded.v1"],
+      "consumer_group": "{environment}.subscription-service-v1",
+      "mtls_identity": "spiffe://{trust_domain}/{environment}/subscription-service"
+    },
+    {
+      "name": "access-service",
+      "database": "access",
+      "kafka_principal": "{environment}.access-service",
+      "produce_topics": ["access.provision.request.v1", "access.revoke.request.v1", "access.ready.v1", "access.provisioning.failed.v1", "access.revoked.v1"],
+      "consume_topics": ["billing.payment.succeeded.v1", "subscription.activated.v1", "subscription.extended.v1", "subscription.grace.started.v1", "subscription.expired.v1", "subscription.revoked.v1", "access.provision.succeeded.v1", "access.provision.failed.v1", "access.revoke.succeeded.v1", "access.revoke.failed.v1"],
+      "consumer_group": "{environment}.access-service-v1",
+      "mtls_identity": "spiffe://{trust_domain}/{environment}/access-service"
+    },
+    {
+      "name": "provisioning-service",
+      "database": "provisioning",
+      "kafka_principal": "{environment}.provisioning-service",
+      "produce_topics": ["access.provision.request.v1.dlq", "access.revoke.request.v1.dlq", "access.provision.succeeded.v1", "access.provision.failed.v1", "access.revoke.succeeded.v1", "access.revoke.failed.v1"],
+      "consume_topics": ["access.provision.request.v1", "access.revoke.request.v1"],
+      "consumer_group": "{environment}.provisioning-service-v1",
+      "mtls_identity": "spiffe://{trust_domain}/{environment}/provisioning-service"
+    },
+    {
+      "name": "node-agent",
+      "database": null,
+      "kafka_principal": null,
+      "produce_topics": [],
+      "consume_topics": [],
+      "consumer_group": null,
+      "mtls_identity": "spiffe://{trust_domain}/{environment}/node/{node_id}"
+    },
+    {
+      "name": "telegram-bot",
+      "database": null,
+      "kafka_principal": null,
+      "produce_topics": [],
+      "consume_topics": [],
+      "consumer_group": null,
+      "mtls_identity": "spiffe://{trust_domain}/{environment}/telegram-bot"
+    },
+    {
+      "name": "notification-service",
+      "database": "notification",
+      "kafka_principal": "{environment}.notification-service",
+      "produce_topics": [],
+      "consume_topics": ["billing.payment.succeeded.v1", "billing.payment.canceled.v1", "billing.refund.succeeded.v1", "subscription.activated.v1", "subscription.extended.v1", "subscription.grace.started.v1", "subscription.expired.v1", "subscription.revoked.v1", "access.ready.v1", "access.provisioning.failed.v1", "access.revoked.v1"],
+      "consumer_group": "{environment}.notification-service-v1",
+      "mtls_identity": "spiffe://{trust_domain}/{environment}/notification-service"
+    },
+    {
+      "name": "admin-service",
+      "database": "admin",
+      "kafka_principal": null,
+      "produce_topics": [],
+      "consume_topics": [],
+      "consumer_group": null,
+      "mtls_identity": "spiffe://{trust_domain}/{environment}/admin-service"
+    }
+  ]
+}

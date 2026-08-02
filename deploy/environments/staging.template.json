@@ -1,0 +1,81 @@
+{
+  "format_version": 1,
+  "environment": "staging",
+  "source_commit": "<required:40-character-reviewed-commit>",
+  "release_images": {
+    "credentialstage": "<required:sha256-digest>",
+    "migrate": "<required:sha256-digest>",
+    "backupctl": "<required:sha256-digest>",
+    "identity-service": "<required:sha256-digest>",
+    "catalog-service": "<required:sha256-digest>",
+    "billing-service": "<required:sha256-digest>",
+    "subscription-service": "<required:sha256-digest>",
+    "access-service": "<required:sha256-digest>",
+    "provisioning-service": "<required:sha256-digest>",
+    "node-agent": "<required:sha256-digest>",
+    "telegram-bot": "<required:sha256-digest>",
+    "notification-service": "<required:sha256-digest>",
+    "admin-service": "<required:sha256-digest>",
+    "admin-cli": "<required:sha256-digest>",
+    "prometheus": "<required:sha256-digest>",
+    "grafana": "<required:sha256-digest>",
+    "otel-collector": "<required:sha256-digest>",
+    "tempo": "<required:sha256-digest>",
+    "loki": "<required:sha256-digest>"
+  },
+  "public": {
+    "telegram_webhook_url": "https://<required:telegram-domain>/webhooks/telegram",
+    "billing_webhook_url": "https://<required:billing-domain>/webhooks/yookassa",
+    "subscription_base_url": "https://<required:subscription-domain>",
+    "admin_base_url": "https://<required:private-admin-domain>",
+    "payment_return_url": "https://<required:public-domain>/payment-return",
+    "terms_url": "https://<required:legal-domain>/terms",
+    "support_url": "https://<required:support-domain>/support"
+  },
+  "config_references": {
+    "postgres_topology": "configref://<required:staging-postgres-topology>",
+    "kafka_topology": "configref://<required:staging-kafka-topology>",
+    "redis_topology": "configref://<required:staging-redis-topology>",
+    "registry": "configref://<required:staging-registry>",
+    "backup_repository": "configref://<required:staging-backup-repository>",
+    "observability": "configref://<required:staging-observability>",
+    "alert_routing": "configref://<required:staging-alert-routing>",
+    "wireguard_network": "configref://<required:staging-wireguard-network>",
+    "node_inventory": "configref://<required:staging-node-inventory>",
+    "edge_policy": "configref://<required:staging-edge-policy>"
+  },
+  "credential_references": {
+    "secrets": {
+      "database_runtime": "secretref://<required:staging-database-runtime>",
+      "redis_password": "secretref://<required:staging-redis-password>",
+      "telegram_bot_token": "secretref://<required:staging-telegram-bot-token>",
+      "telegram_webhook_secret": "secretref://<required:staging-telegram-webhook-secret>",
+      "yookassa_credentials": "secretref://<required:staging-yookassa-credentials>"
+    },
+    "keys": {
+      "access_credential_encryption": "keyref://<required:staging-access-credential-key>",
+      "access_token_hmac": "keyref://<required:staging-access-token-key>",
+      "backup_encryption": "keyref://<required:staging-backup-key>",
+      "pki_issuing": "keyref://<required:staging-pki-key>",
+      "reality_private": "keyref://<required:staging-reality-key>",
+      "wireguard_private": "keyref://<required:staging-wireguard-keys>"
+    },
+    "certificates": {
+      "admin_client": "certref://<required:staging-admin-client>",
+      "edge_tls": "certref://<required:staging-edge-tls>",
+      "kafka_clients": "certref://<required:staging-kafka-clients>",
+      "observability_clients": "certref://<required:staging-observability-clients>",
+      "service_mesh": "certref://<required:staging-service-certificates>"
+    }
+  },
+  "operations": {
+    "primary_oncall": "contactref://<required:staging-primary-oncall>",
+    "secondary_oncall": "contactref://<required:staging-secondary-oncall>",
+    "rpo_minutes": 0,
+    "rto_minutes": 0,
+    "canary_percent": 0,
+    "minimum_nodes_per_region": 0,
+    "reserve_percent": 0,
+    "regions": ["<required:staging-region>"]
+  }
+}

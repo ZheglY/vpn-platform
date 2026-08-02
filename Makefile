@@ -6,7 +6,7 @@ TRIVY_IMAGE ?= aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a
 export GOVULNCHECK_VERSION
 export GITLEAKS_VERSION
 
-.PHONY: fmt fmt-check tidy-check test race vet lint vuln secret-scan filesystem-secret-scan npm-audit contracts openapi asyncapi license-review-check license-publication-gate production-readiness docker-build image-scan compose-config compose-smoke vpn-smoke stage7-smoke observability-validate observability-smoke backup-restore-drill backup-cleanup-test node-hardening-test secret-rotation-drill resilience-drill release-bundle compose-up compose-down diff-check verify
+.PHONY: fmt fmt-check tidy-check test race vet lint vuln secret-scan filesystem-secret-scan npm-audit contracts openapi asyncapi license-review-check license-publication-gate production-readiness production-preflight production-preflight-check docker-build image-scan compose-config compose-smoke vpn-smoke stage7-smoke observability-validate observability-smoke backup-restore-drill backup-cleanup-test node-hardening-test secret-rotation-drill resilience-drill release-bundle compose-up compose-down diff-check verify
 
 fmt:
 	go fmt ./...
@@ -100,6 +100,15 @@ endif
 production-readiness: license-review-check
 	node --test scripts/validate-production-readiness.test.mjs
 	node scripts/validate-production-readiness.mjs
+
+production-preflight:
+ifndef ENVIRONMENT_CONFIG
+	$(error ENVIRONMENT_CONFIG is required)
+endif
+	go run -mod=readonly ./tools/productionpreflight --config "$(ENVIRONMENT_CONFIG)" --environment "$(or $(DEPLOY_ENVIRONMENT),production)" --source-commit "$(or $(SOURCE_COMMIT),$(shell git rev-parse HEAD))"
+
+production-preflight-check:
+	go test ./tools/productionpreflight ./internal/platform/config ./internal/platform/kafka ./internal/platform/redis
 
 docker-build:
 	go run -mod=readonly ./tools/releasectl local-build --inventory deploy/release/images.json
@@ -207,4 +216,4 @@ compose-down:
 diff-check:
 	git diff --exit-code
 
-verify: fmt-check tidy-check vet test race lint vuln secret-scan filesystem-secret-scan npm-audit contracts production-readiness observability-validate docker-build image-scan compose-config diff-check
+verify: fmt-check tidy-check vet test race lint vuln secret-scan filesystem-secret-scan npm-audit contracts production-readiness production-preflight-check observability-validate docker-build image-scan compose-config diff-check

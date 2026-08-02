@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vpn-platform.example/schema/environment-base-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format_version", "environment", "source_commit", "release_images", "public", "config_references", "credential_references", "operations"],
+  "properties": {
+    "format_version": {"const": 1},
+    "environment": {"enum": ["staging", "production"]},
+    "source_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "release_images": {
+      "type": "object",
+      "minProperties": 19,
+      "maxProperties": 19,
+      "additionalProperties": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+    },
+    "public": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["telegram_webhook_url", "billing_webhook_url", "subscription_base_url", "admin_base_url", "payment_return_url", "terms_url", "support_url"],
+      "properties": {
+        "telegram_webhook_url": {"type": "string", "format": "uri"},
+        "billing_webhook_url": {"type": "string", "format": "uri"},
+        "subscription_base_url": {"type": "string", "format": "uri"},
+        "admin_base_url": {"type": "string", "format": "uri"},
+        "payment_return_url": {"type": "string", "format": "uri"},
+        "terms_url": {"type": "string", "format": "uri"},
+        "support_url": {"type": "string", "format": "uri"}
+      }
+    },
+    "config_references": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["postgres_topology", "kafka_topology", "redis_topology", "registry", "backup_repository", "observability", "alert_routing", "wireguard_network", "node_inventory", "edge_policy"],
+      "properties": {
+        "postgres_topology": {"type": "string", "pattern": "^configref://"},
+        "kafka_topology": {"type": "string", "pattern": "^configref://"},
+        "redis_topology": {"type": "string", "pattern": "^configref://"},
+        "registry": {"type": "string", "pattern": "^configref://"},
+        "backup_repository": {"type": "string", "pattern": "^configref://"},
+        "observability": {"type": "string", "pattern": "^configref://"},
+        "alert_routing": {"type": "string", "pattern": "^configref://"},
+        "wireguard_network": {"type": "string", "pattern": "^configref://"},
+        "node_inventory": {"type": "string", "pattern": "^configref://"},
+        "edge_policy": {"type": "string", "pattern": "^configref://"}
+      }
+    },
+    "credential_references": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["secrets", "keys", "certificates"],
+      "properties": {
+        "secrets": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^secretref://"}},
+        "keys": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^keyref://"}},
+        "certificates": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^certref://"}}
+      }
+    },
+    "operations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary_oncall", "secondary_oncall", "rpo_minutes", "rto_minutes", "canary_percent", "minimum_nodes_per_region", "reserve_percent", "regions"],
+      "properties": {
+        "primary_oncall": {"type": "string", "pattern": "^contactref://"},
+        "secondary_oncall": {"type": "string", "pattern": "^contactref://"},
+        "rpo_minutes": {"type": "integer", "minimum": 1},
+        "rto_minutes": {"type": "integer", "minimum": 1},
+        "canary_percent": {"type": "integer", "minimum": 1, "maximum": 25},
+        "minimum_nodes_per_region": {"type": "integer", "minimum": 2},
+        "reserve_percent": {"type": "integer", "minimum": 20, "maximum": 90},
+        "regions": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 2}}
+      }
+    }
+  }
+}
