@@ -12,6 +12,7 @@ ARG PROMETHEUS_OTLPTRANSLATOR_VERSION=v0.0.0-20250527173959-2573485683d5
 ARG OTEL_PROMETHEUS_EXPORTER_VERSION=v0.59.0
 ARG X_CRYPTO_VERSION=v0.52.0
 ARG X_NET_VERSION=v0.55.0
+ARG X_TEXT_VERSION=v0.40.0
 
 FROM golang:${GO_VERSION}-alpine@${GO_BUILDER_DIGEST} AS build
 ARG TEMPO_VERSION
@@ -24,6 +25,7 @@ ARG PROMETHEUS_OTLPTRANSLATOR_VERSION
 ARG OTEL_PROMETHEUS_EXPORTER_VERSION
 ARG X_CRYPTO_VERSION
 ARG X_NET_VERSION
+ARG X_TEXT_VERSION
 WORKDIR /src/tempo
 RUN wget -q -O /tmp/tempo.tar.gz "https://github.com/grafana/tempo/archive/${TEMPO_COMMIT}.tar.gz" \
     && echo "${TEMPO_SOURCE_SHA256}  /tmp/tempo.tar.gz" | sha256sum -c - \
@@ -39,6 +41,7 @@ RUN go mod edit \
         -require="go.opentelemetry.io/otel/exporters/prometheus@${OTEL_PROMETHEUS_EXPORTER_VERSION}" \
         -require="golang.org/x/crypto@${X_CRYPTO_VERSION}" \
         -require="golang.org/x/net@${X_NET_VERSION}" \
+        -require="golang.org/x/text@${X_TEXT_VERSION}" \
         -require="google.golang.org/grpc@${GRPC_VERSION}" \
     && go mod edit \
         -replace="github.com/prometheus/otlptranslator=github.com/prometheus/otlptranslator@${PROMETHEUS_OTLPTRANSLATOR_VERSION}" \
@@ -50,7 +53,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
         "$(go env GOMODCACHE)/github.com/prometheus/prometheus@${PROMETHEUS_VERSION}/storage/remote/azuread/azuread.go"
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOAMD64=v2 go build -mod=mod -trimpath \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOAMD64=v2 GOMAXPROCS=4 go build -p=4 -mod=mod -trimpath \
     -tags=netgo \
     -ldflags="-s -w -buildid= -X main.Branch=stage8-security-rebuild -X main.Revision=${TEMPO_COMMIT} -X main.Version=${TEMPO_VERSION}" \
     -o /out/tempo ./cmd/tempo

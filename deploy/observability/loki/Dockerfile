@@ -9,6 +9,7 @@ ARG THRIFT_VERSION=v0.23.0
 ARG PROMETHEUS_VERSION=v0.311.3
 ARG X_CRYPTO_VERSION=v0.52.0
 ARG X_NET_VERSION=v0.55.0
+ARG X_TEXT_VERSION=v0.40.0
 
 FROM golang:${GO_VERSION}-alpine@${GO_BUILDER_DIGEST} AS build
 ARG LOKI_VERSION
@@ -19,6 +20,7 @@ ARG THRIFT_VERSION
 ARG PROMETHEUS_VERSION
 ARG X_CRYPTO_VERSION
 ARG X_NET_VERSION
+ARG X_TEXT_VERSION
 WORKDIR /src/loki
 RUN wget -q -O /tmp/loki.tar.gz "https://github.com/grafana/loki/archive/${LOKI_COMMIT}.tar.gz" \
     && echo "${LOKI_SOURCE_SHA256}  /tmp/loki.tar.gz" | sha256sum -c - \
@@ -32,13 +34,14 @@ RUN go mod edit \
         -require="github.com/prometheus/prometheus@${PROMETHEUS_VERSION}" \
         -require="golang.org/x/crypto@${X_CRYPTO_VERSION}" \
         -require="golang.org/x/net@${X_NET_VERSION}" \
+        -require="golang.org/x/text@${X_TEXT_VERSION}" \
         -require="google.golang.org/grpc@${GRPC_VERSION}"
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download \
     && go mod verify
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=mod -trimpath \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOMAXPROCS=4 go build -p=4 -mod=mod -trimpath \
     -tags=netgo \
     -ldflags="-s -w -buildid= -X github.com/grafana/loki/v3/pkg/util/build.Branch=stage8-security-rebuild -X github.com/grafana/loki/v3/pkg/util/build.Version=${LOKI_VERSION} -X github.com/grafana/loki/v3/pkg/util/build.Revision=${LOKI_COMMIT}" \
     -o /out/loki ./cmd/loki
