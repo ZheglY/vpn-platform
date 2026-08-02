@@ -5,6 +5,8 @@ vpn_node_ssh_port: 22
 vpn_node_xray_port: 443
 vpn_node_wireguard_port: 51820
 vpn_node_agent_port: 8443
+vpn_node_xray_reload_timeout: "10s"
+vpn_node_xray_startup_grace: "10s"
 vpn_node_management_cidr: "10.70.0.0/24"
 vpn_node_wireguard_address: "10.70.0.2/32"
 vpn_node_wireguard_peer_public_key: ""

@@ -14,10 +14,34 @@ The test builds a digest-pinned Debian 12 target, applies `deploy/ansible/playbo
 - private-key, certificate, WireGuard, and Xray config ownership/modes plus successful reads under the actual service identities;
 - a role-owned default-deny `inet vpn_node` table with explicit management and Xray rules, applied twice without removing a pre-existing host table;
 - SSH and sysctl hardening;
-- hardened systemd units that start both node-agent and Xray as separate non-root users;
-- an exact `reload`/`status` helper and narrow sudoers entry.
+- a fail-closed initial candidate, successful bootstrap without a manually seeded
+  Xray config, idempotent second apply, and normal host reboot;
+- hardened systemd units that run node-agent and Xray as separate non-root users;
+- the fixed request/acknowledgement reload path, non-root health marker, and
+  absence of a sudoers grant;
+- an invalid later candidate leaving the current config and running
+  last-known-good Xray unchanged.
 
-The Linux Go test for `systemdManager` must also prove a failed candidate reload restores last-known-good and returns only after health recovers.
+The Linux Go tests for `systemdManager` also prove validation failure preserves
+current and a failed reload restores last-known-good only after health recovers.
+
+## Boot And Reload Order
+
+1. systemd creates the private control and Xray-health runtime directories.
+2. `vpn-xray-reload.path` becomes active. `xray.service` remains static and
+   cannot start without a non-empty managed config.
+3. node-agent renders a candidate, runs pinned Xray validation, and atomically
+   installs it while preserving current as last-known-good when present.
+4. The non-root helper submits a unique reload request. The fixed root worker
+   restarts only `xray.service`, verifies it active, and acknowledges the exact
+   request ID and outcome.
+5. node-agent verifies the Xray lifecycle marker, completes bootstrap, and sends
+   systemd readiness. Ansible treats the unit as started only after that point.
+
+Do not enable Xray directly, seed `config.json`, add a sudoers exception, or
+manually write to the runtime queue. On timeout, inspect the two fixed control
+units, Xray lifecycle, and node-agent logs without printing config or credential
+contents.
 
 ## Host Enrollment
 

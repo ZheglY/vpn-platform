@@ -129,6 +129,9 @@ func run(ctx context.Context) error {
 	handler := httpserver.Chain(mux, httpserver.RequestID, platformtelemetry.HTTPServer, httpserver.LimitBody(cfg.maxBodyBytes), httpserver.Recover(logger), httpMetrics.Middleware)
 	srv := httpserver.New(cfg.http, handler)
 	srv.TLSConfig = cfg.tls
+	if err := notifyReady(); err != nil {
+		return fmt.Errorf("notify service readiness: %w", err)
+	}
 	logger.Info("starting node agent", zap.String("service", serviceName), zap.String("node_id", cfg.nodeID), zap.String("environment", cfg.environment))
 	return httpserver.Run(ctx, srv, cfg.http.ShutdownTimeout, logger)
 }

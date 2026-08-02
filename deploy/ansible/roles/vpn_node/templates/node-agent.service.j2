@@ -1,10 +1,12 @@
 [Unit]
 Description=VPN node-agent
-After=network-online.target wg-quick@wg0.service
-Wants=network-online.target wg-quick@wg0.service
+After=network-online.target wg-quick@wg0.service vpn-xray-reload.path
+Wants=network-online.target wg-quick@wg0.service vpn-xray-reload.path
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+TimeoutStartSec=30s
 User=vpn-node-agent
 Group=vpn-node-agent
 SupplementaryGroups=vpn-xray

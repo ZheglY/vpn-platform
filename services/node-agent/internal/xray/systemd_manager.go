@@ -122,7 +122,9 @@ func (m *SystemdManager) Healthy() bool {
 func (m *SystemdManager) Version(ctx context.Context) string {
 	versionCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	output, err := exec.CommandContext(versionCtx, m.config.BinaryPath, "version").Output()
+	command := exec.CommandContext(versionCtx, m.config.BinaryPath, "version")
+	command.Env = environmentWithoutSystemdNotify()
+	output, err := command.Output()
 	if err != nil {
 		return "unknown"
 	}
@@ -173,6 +175,7 @@ func (m *SystemdManager) validate(ctx context.Context, path string) error {
 	validateCtx, cancel := context.WithTimeout(ctx, m.config.ValidateTimeout)
 	defer cancel()
 	command := exec.CommandContext(validateCtx, m.config.BinaryPath, "run", "-test", "-config", path)
+	command.Env = environmentWithoutSystemdNotify()
 	command.Stdout, command.Stderr = io.Discard, io.Discard
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("xray candidate validation failed")
@@ -188,6 +191,7 @@ func (m *SystemdManager) control(ctx context.Context, action string) error {
 	defer cancel()
 	args := append(append([]string(nil), m.config.ControlArgs...), action)
 	command := exec.CommandContext(controlCtx, m.config.ControlCommand, args...)
+	command.Env = environmentWithoutSystemdNotify()
 	command.Stdout, command.Stderr = io.Discard, io.Discard
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("xray control action failed")
@@ -220,4 +224,14 @@ func (m *SystemdManager) currentPath() string {
 
 func (m *SystemdManager) backupPath() string {
 	return filepath.Join(m.config.ConfigDirectory, "last-known-good.json")
+}
+
+func environmentWithoutSystemdNotify() []string {
+	environment := os.Environ()
+	for index, value := range environment {
+		if strings.HasPrefix(value, "NOTIFY_SOCKET=") {
+			environment[index] = "NOTIFY_SOCKET="
+		}
+	}
+	return environment
 }

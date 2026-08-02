@@ -69,6 +69,54 @@ func TestSystemdManagerRestoresLastKnownGoodAfterReloadFailure(t *testing.T) {
 	}
 }
 
+func TestSystemdManagerStartValidationFailurePreservesCurrent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("executable shell fixtures are validated on Linux")
+	}
+	directory := t.TempDir()
+	if err := os.Chmod(directory, 0o770); err != nil {
+		t.Fatal(err)
+	}
+	reject := filepath.Join(directory, "reject")
+	binary := filepath.Join(directory, "xray")
+	control := filepath.Join(directory, "control")
+	writeExecutable(t, binary, "#!/bin/sh\n[ ! -e \""+reject+"\" ]\n")
+	writeExecutable(t, control, "#!/bin/sh\nexit 0\n")
+	manager, err := NewSystemdManager(SystemdManagerConfig{
+		BinaryPath: binary, ConfigDirectory: directory, ControlCommand: control,
+		ValidateTimeout: time.Second, ReloadTimeout: time.Second, StartupGrace: 100 * time.Millisecond,
+		Render: RenderConfig{
+			ListenAddress: "127.0.0.1", ListenPort: 443, RealityTarget: "example.invalid:443",
+			ServerNames: []string{"example.invalid"}, RealityPrivateKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+			ShortIDs: []string{"0011"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := domain.Snapshot{NodeID: "61000000-0000-4000-8000-000000000001", Credentials: map[string]domain.Credential{}}
+	if err := manager.Start(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(directory, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(reject, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Start(context.Background(), snapshot); err == nil {
+		t.Fatal("invalid startup candidate unexpectedly succeeded")
+	}
+	after, err := os.ReadFile(filepath.Join(directory, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("invalid startup candidate changed current configuration")
+	}
+}
+
 type recordingReloadObserver struct {
 	outcome string
 }

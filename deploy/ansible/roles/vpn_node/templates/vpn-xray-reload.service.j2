@@ -1,0 +1,25 @@
+[Unit]
+Description=Apply one validated Xray reload request
+
+[Service]
+Type=oneshot
+User=root
+Group=vpn-node-agent
+ExecStart=/usr/local/libexec/vpn-xray-reload-worker
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadWritePaths=/run/vpn-node-control
+UMask=0007
