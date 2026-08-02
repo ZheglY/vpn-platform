@@ -139,6 +139,20 @@ asynchronous completion; immediate reads and command admission use HTTP.
 
 ## Acceptance
 
+### Remediation update 2026-08-02
+
+- `deploy/production/service-bindings.json` now defines all eight runtime,
+  migrator, backup, and restore role names and the exact service/Kafka/SPIFFE
+  mapping. This closes the repository design portion of ACR-001; real grants and
+  deny tests remain blocked on production-like staging.
+- `deploy/environments/` and `productionpreflight` bind a reviewed full commit
+  to all 19 immutable image digests and reject placeholders or mutable tags.
+  The deployment contract defines expand/migrate/contract and N/N-1 checks.
+  ACR-002 remains blocked until a two-version staging canary/rollback is run.
+- Every runtime service now applies the shared staging/production guard. Kafka
+  uses per-service TLS 1.3 mTLS and Redis uses TLS 1.3 server verification;
+  PostgreSQL must use `sslmode=verify-full`.
+
 The application architecture/code review is complete for the stated baseline.
 It has no open P0/P1. A production `GO` is prohibited while ACR-001 or ACR-002
 is blocked.

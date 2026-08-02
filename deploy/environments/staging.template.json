@@ -23,6 +23,10 @@
     "tempo": "<required:sha256-digest>",
     "loki": "<required:sha256-digest>"
   },
+  "identity": {
+    "trust_domain": "<required:staging-trust-domain>",
+    "namespace": "staging"
+  },
   "public": {
     "telegram_webhook_url": "https://<required:telegram-domain>/webhooks/telegram",
     "billing_webhook_url": "https://<required:billing-domain>/webhooks/yookassa",

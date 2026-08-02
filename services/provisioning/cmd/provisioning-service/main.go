@@ -369,14 +369,12 @@ func loadConfig() (appConfig, error) {
 	if len(brokers) == 0 {
 		fields = config.Append(fields, "KAFKA_BROKERS", fmt.Errorf("at least one broker is required"))
 	}
+	consumerGroup := strings.TrimSpace(config.String("KAFKA_CONSUMER_GROUP", "provisioning-service-v1"))
+	fields = config.Append(fields, "KAFKA_CONSUMER_GROUP", config.ValidateKafkaConsumerGroup(environment, "provisioning-service", consumerGroup))
 	httpConfig := httpserver.DefaultConfig()
 	httpConfig.Addr = config.String("HTTP_ADDR", ":8088")
 	if err := config.Combine(fields); err != nil {
 		return appConfig{}, err
-	}
-	consumerGroup := strings.TrimSpace(config.String("KAFKA_CONSUMER_GROUP", "provisioning-service-v1"))
-	if consumerGroup == "" {
-		return appConfig{}, fmt.Errorf("KAFKA_CONSUMER_GROUP must not be empty")
 	}
 	return appConfig{Environment: environment, LogLevel: config.String("LOG_LEVEL", "info"), DatabaseURL: databaseURL, AccessBaseURL: accessURL, SubscriptionBaseURL: subscriptionURL, TrustDomain: config.String("MTLS_TRUST_DOMAIN", "vpn-service"), ClientCertFile: clientCert, ClientKeyFile: clientKey, ServerCAFile: serverCA, KafkaBrokers: brokers, ConsumerGroup: consumerGroup, OutboundTimeout: outbound, WorkerPollInterval: poll, WorkerRetryDelay: retry, WorkerLease: lease, HealthInterval: health, HealthStaleAfter: stale, ReconciliationInterval: reconciliation, ReconciliationBatch: reconciliationBatch, MaxAttempts: maxAttempts, MaxBodyBytes: int64(maxBody), HTTP: httpConfig, TLS: tlsConfig}, nil
 }

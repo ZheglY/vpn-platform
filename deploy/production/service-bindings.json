@@ -18,7 +18,7 @@
       "produce_topics": [],
       "consume_topics": [],
       "consumer_group": null,
-      "mtls_identity": "spiffe://{trust_domain}/{environment}/identity-service"
+      "mtls_identity": "spiffe://{trust_domain}/ns/{environment}/sa/identity-service"
     },
     {
       "name": "catalog-service",
@@ -27,7 +27,7 @@
       "produce_topics": [],
       "consume_topics": [],
       "consumer_group": null,
-      "mtls_identity": "spiffe://{trust_domain}/{environment}/catalog-service"
+      "mtls_identity": "spiffe://{trust_domain}/ns/{environment}/sa/catalog-service"
     },
     {
       "name": "billing-service",
@@ -36,7 +36,7 @@
       "produce_topics": ["billing.payment.succeeded.v1", "billing.payment.canceled.v1", "billing.refund.succeeded.v1"],
       "consume_topics": [],
       "consumer_group": null,
-      "mtls_identity": "spiffe://{trust_domain}/{environment}/billing-service"
+      "mtls_identity": "spiffe://{trust_domain}/ns/{environment}/sa/billing-service"
     },
     {
       "name": "subscription-service",
@@ -45,7 +45,7 @@
       "produce_topics": ["subscription.activated.v1", "subscription.extended.v1", "subscription.grace.started.v1", "subscription.expired.v1", "subscription.revoked.v1"],
       "consume_topics": ["billing.payment.succeeded.v1", "billing.refund.succeeded.v1"],
       "consumer_group": "{environment}.subscription-service-v1",
-      "mtls_identity": "spiffe://{trust_domain}/{environment}/subscription-service"
+      "mtls_identity": "spiffe://{trust_domain}/ns/{environment}/sa/subscription-service"
     },
     {
       "name": "access-service",
@@ -54,7 +54,7 @@
       "produce_topics": ["access.provision.request.v1", "access.revoke.request.v1", "access.ready.v1", "access.provisioning.failed.v1", "access.revoked.v1"],
       "consume_topics": ["billing.payment.succeeded.v1", "subscription.activated.v1", "subscription.extended.v1", "subscription.grace.started.v1", "subscription.expired.v1", "subscription.revoked.v1", "access.provision.succeeded.v1", "access.provision.failed.v1", "access.revoke.succeeded.v1", "access.revoke.failed.v1"],
       "consumer_group": "{environment}.access-service-v1",
-      "mtls_identity": "spiffe://{trust_domain}/{environment}/access-service"
+      "mtls_identity": "spiffe://{trust_domain}/ns/{environment}/sa/access-service"
     },
     {
       "name": "provisioning-service",
@@ -63,7 +63,7 @@
       "produce_topics": ["access.provision.request.v1.dlq", "access.revoke.request.v1.dlq", "access.provision.succeeded.v1", "access.provision.failed.v1", "access.revoke.succeeded.v1", "access.revoke.failed.v1"],
       "consume_topics": ["access.provision.request.v1", "access.revoke.request.v1"],
       "consumer_group": "{environment}.provisioning-service-v1",
-      "mtls_identity": "spiffe://{trust_domain}/{environment}/provisioning-service"
+      "mtls_identity": "spiffe://{trust_domain}/ns/{environment}/sa/provisioning-service"
     },
     {
       "name": "node-agent",
@@ -72,7 +72,7 @@
       "produce_topics": [],
       "consume_topics": [],
       "consumer_group": null,
-      "mtls_identity": "spiffe://{trust_domain}/{environment}/node/{node_id}"
+      "mtls_identity": "spiffe://{trust_domain}/ns/{environment}/sa/node-agent-{node_id}"
     },
     {
       "name": "telegram-bot",
@@ -81,7 +81,7 @@
       "produce_topics": [],
       "consume_topics": [],
       "consumer_group": null,
-      "mtls_identity": "spiffe://{trust_domain}/{environment}/telegram-bot"
+      "mtls_identity": "spiffe://{trust_domain}/ns/{environment}/sa/telegram-bot"
     },
     {
       "name": "notification-service",
@@ -90,7 +90,7 @@
       "produce_topics": [],
       "consume_topics": ["billing.payment.succeeded.v1", "billing.payment.canceled.v1", "billing.refund.succeeded.v1", "subscription.activated.v1", "subscription.extended.v1", "subscription.grace.started.v1", "subscription.expired.v1", "subscription.revoked.v1", "access.ready.v1", "access.provisioning.failed.v1", "access.revoked.v1"],
       "consumer_group": "{environment}.notification-service-v1",
-      "mtls_identity": "spiffe://{trust_domain}/{environment}/notification-service"
+      "mtls_identity": "spiffe://{trust_domain}/ns/{environment}/sa/notification-service"
     },
     {
       "name": "admin-service",
@@ -99,7 +99,7 @@
       "produce_topics": [],
       "consume_topics": [],
       "consumer_group": null,
-      "mtls_identity": "spiffe://{trust_domain}/{environment}/admin-service"
+      "mtls_identity": "spiffe://{trust_domain}/ns/{environment}/sa/admin-service"
     }
   ]
 }

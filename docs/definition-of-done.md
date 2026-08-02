@@ -162,3 +162,15 @@ This Definition of Done applies to every implementation task after Stage 0. Stag
 - Required local verification, smoke, restore, node, rotation, resilience, and
   release-bundle commands are commit-bound in the evidence index with aggregate
   secret-free results. Heavy generated artifacts remain ignored/checksummed.
+- Provider-neutral staging/production schemas and templates contain no secret
+  values; placeholders cannot pass the offline preflight.
+- The preflight binds the reviewed commit to the exact 19 digest-only images,
+  service/database/Kafka/SPIFFE contract, public endpoints, opaque credential
+  references, on-call ownership, RPO/RTO, canary, regions, and node reserve.
+- Every service applies shared staging/production startup validation. Local or
+  fake credentials, unsafe endpoints, weak PostgreSQL transport, Kafka without
+  per-service mTLS, and Redis without TLS fail closed without echoing values.
+- Provider-specific deployment, real credentials, public DNS, registry publish,
+  VPS enrollment, payment activation, canary, HA/PITR, PKI revocation, alert
+  delivery, and DR remain external hard gates and are never inferred from a
+  local or offline pass.

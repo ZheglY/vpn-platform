@@ -39,6 +39,12 @@ remain open.
 - Stage 9 review artifacts with a machine-readable fail-closed go/no-go decision,
   exact 19-image license policy, incident/game-day/rollback runbooks, and
   evidence freshness rules.
+- Provider-neutral staging/production schemas, intentionally incomplete
+  secret-free templates, an exact database/Kafka/SPIFFE binding contract, and
+  an offline digest/commit/configuration preflight.
+- Uniform staging/production startup rejection of local/fake/default values,
+  PostgreSQL without `verify-full`, Kafka without per-service mTLS, and Redis
+  without TLS 1.3 server verification.
 
 No real payments, refund initiation, production VPS enrollment, WireGuard deployment, or real user traffic exist yet. The `vpn` profile is local-only and uses generated development keys.
 
@@ -100,6 +106,16 @@ represented honestly, not that production is authorized. The stricter
 until counsel/product decisions and final SBOM obligations are approved.
 Readiness evidence is either immutable or has an explicit UTC expiry; stale or
 future-dated evidence and Markdown/JSON drift fail the check.
+
+An environment owner can validate a candidate without contacting any provider:
+
+```powershell
+make production-preflight ENVIRONMENT_CONFIG=D:\secure\production.json DEPLOY_ENVIRONMENT=production SOURCE_COMMIT=<reviewed-full-commit>
+```
+
+The committed templates intentionally fail this command. A pass does not
+authorize deployment and does not change the current `NO-GO`; see
+`docs/production/OWNER_INPUTS.md` and ADR 0042.
 
 `make vpn-smoke` generates local-only keys on D and runs the full Stage 6 acceptance path: Access command outbox, Kafka, Provisioning, authenticated material and placement reads, two node-agents with the integrity-checked Xray-core `26.3.27` security rebuild, sequenced outcome consumption, one-time Happ profile issuance, real VLESS + REALITY traffic, refund-driven revoke, and proof that traffic no longer passes afterward.
 

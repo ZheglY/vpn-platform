@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
@@ -24,10 +25,16 @@ type environmentConfig struct {
 	Environment          string               `json:"environment"`
 	SourceCommit         string               `json:"source_commit"`
 	ReleaseImages        map[string]string    `json:"release_images"`
+	Identity             identityConfig       `json:"identity"`
 	Public               publicConfig         `json:"public"`
 	ConfigReferences     configReferences     `json:"config_references"`
 	CredentialReferences credentialReferences `json:"credential_references"`
 	Operations           operationsConfig     `json:"operations"`
+}
+
+type identityConfig struct {
+	TrustDomain string `json:"trust_domain"`
+	Namespace   string `json:"namespace"`
 }
 
 type publicConfig struct {
@@ -129,6 +136,9 @@ func runPreflight(configPath, environment, sourceCommit, inventoryPath, bindings
 	if !commitPattern.MatchString(sourceCommit) {
 		return errors.New("source commit must be a full lowercase Git commit")
 	}
+	if err := validateRepositoryState(sourceCommit); err != nil {
+		return err
+	}
 
 	var inventory imageInventory
 	if err := decodeStrictFile(inventoryPath, &inventory); err != nil {
@@ -146,6 +156,24 @@ func runPreflight(configPath, environment, sourceCommit, inventoryPath, bindings
 		return fmt.Errorf("environment configuration: %w", err)
 	}
 	return validateEnvironment(candidate, environment, sourceCommit, inventory)
+}
+
+func validateRepositoryState(expectedCommit string) error {
+	headOutput, err := exec.Command("git", "rev-parse", "HEAD").Output()
+	if err != nil {
+		return errors.New("repository HEAD cannot be resolved")
+	}
+	if strings.TrimSpace(string(headOutput)) != expectedCommit {
+		return errors.New("source commit does not match repository HEAD")
+	}
+	statusOutput, err := exec.Command("git", "status", "--porcelain", "--untracked-files=normal").Output()
+	if err != nil {
+		return errors.New("repository state cannot be inspected")
+	}
+	if len(strings.TrimSpace(string(statusOutput))) != 0 {
+		return errors.New("repository worktree must be clean")
+	}
+	return nil
 }
 
 func decodeStrictFile(path string, target any) error {
@@ -193,6 +221,8 @@ func validateEnvironment(candidate environmentConfig, expectedEnvironment, expec
 		_, ok := expectedImages[name]
 		add("release_images."+name, ok)
 	}
+	add("identity.trust_domain", validTrustDomain(candidate.Identity.TrustDomain))
+	add("identity.namespace", candidate.Identity.Namespace == expectedEnvironment)
 
 	publicURLs := map[string]string{
 		"public.telegram_webhook_url":  candidate.Public.TelegramWebhookURL,
@@ -277,7 +307,7 @@ func validateBindings(bindings serviceBindings) error {
 			return errors.New("service bindings contain a duplicate service")
 		}
 		seen[service.Name] = struct{}{}
-		if !strings.HasPrefix(service.MTLSIdentity, "spiffe://{trust_domain}/{environment}/") {
+		if !strings.HasPrefix(service.MTLSIdentity, "spiffe://{trust_domain}/ns/{environment}/sa/") {
 			return errors.New("service bindings contain an invalid mTLS identity")
 		}
 		if service.Database != nil {
@@ -355,6 +385,14 @@ func unsafeHost(host string) bool {
 		return ip.IsLoopback() || ip.IsUnspecified()
 	}
 	return false
+}
+
+func validTrustDomain(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "vpn-service" || unsafeValue(value) || unsafeHost(value) || strings.ContainsAny(value, "/:@") {
+		return false
+	}
+	return strings.Contains(value, ".")
 }
 
 func validUniqueValues(values []string) bool {

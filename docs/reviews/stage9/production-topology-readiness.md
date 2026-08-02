@@ -1,8 +1,8 @@
 # Stage 9 Production Topology Readiness
 
-Review date: 2026-07-26
+Review date: 2026-08-02
 Review owner: Platform / Operations / Security
-Status: **NO-GO; topology options documented, no provider selected**
+Status: **NO-GO; provider-neutral contracts implemented, no provider selected**
 Scope: design review only; no production resource, DNS record, credential,
 registry artifact, database, or VPS was created
 
@@ -141,6 +141,15 @@ owner and one reviewer for:
 - backup schedules, object locks, keys and restore approvals.
 
 Sensitive values belong in the approved secret manager, never in this inventory.
+
+The repository-side portion is now represented by strict staging/production
+schemas and templates, `deploy/production/service-bindings.json`, the complete
+configuration and identity inventories under `docs/production/`, and the
+offline `make production-preflight` gate. Templates are intentionally invalid
+until owner references, operational objectives, a reviewed commit, and all 19
+digests are supplied. This closes configuration-format ambiguity but does not
+close `INF-CONFIG-01`: provider selection, environment-owned values, approvals,
+audit, rollback, and production-like staging evidence remain absent.
 
 ## Decision
 

@@ -115,6 +115,19 @@ func ValidateDeploymentEnvironment(environment string) []FieldError {
 	return fields
 }
 
+func ValidateKafkaConsumerGroup(environment, service, group string) error {
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return fmt.Errorf("must not be empty")
+	}
+	if environment == "staging" || environment == "production" {
+		if group != environment+"."+service+"-v1" {
+			return fmt.Errorf("must match the environment service binding")
+		}
+	}
+	return nil
+}
+
 func validateDeploymentHTTPSURL(value string) error {
 	parsed, err := url.Parse(strings.TrimSpace(value))
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {

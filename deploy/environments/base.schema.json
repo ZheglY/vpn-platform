@@ -3,7 +3,7 @@
   "$id": "https://vpn-platform.example/schema/environment-base-v1.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["format_version", "environment", "source_commit", "release_images", "public", "config_references", "credential_references", "operations"],
+  "required": ["format_version", "environment", "source_commit", "release_images", "identity", "public", "config_references", "credential_references", "operations"],
   "properties": {
     "format_version": {"const": 1},
     "environment": {"enum": ["staging", "production"]},
@@ -13,6 +13,15 @@
       "minProperties": 19,
       "maxProperties": 19,
       "additionalProperties": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trust_domain", "namespace"],
+      "properties": {
+        "trust_domain": {"type": "string", "minLength": 3},
+        "namespace": {"enum": ["staging", "production"]}
+      }
     },
     "public": {
       "type": "object",

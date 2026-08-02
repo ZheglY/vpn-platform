@@ -1,6 +1,6 @@
 # Stage 9 System Inventory
 
-- Review date: 2026-07-26
+- Review date: 2026-08-02
 - Owner: Architecture
 - Accepted baseline: `76f5624e664c556c3ec598055524319eab0af1f3`
 - Environment represented: local portfolio/sandbox only
@@ -21,7 +21,7 @@
 | `telegram-bot` | Telegram webhook UX, typed delivery boundary | Redis ephemeral dedupe/FSM only |
 | `node-agent` | Node desired/actual convergence and Xray last-known-good | Node-local journal and configuration |
 
-The eight PostgreSQL databases use distinct local credentials. No service is permitted to connect to another owner's database. Local runtime/migration role separation is complete only for Admin; production least-privilege roles for every database remain a Stage 9 infrastructure blocker.
+The eight PostgreSQL databases use distinct local credentials. No service is permitted to connect to another owner's database. The provider-neutral contract now names separate runtime, migrator, backup, and restore roles for every database; actual production grants and denial evidence remain a Stage 9 infrastructure blocker.
 
 ## HTTP Surfaces
 
@@ -51,7 +51,7 @@ The AsyncAPI contract defines 19 versioned channels:
 - Provisioning outcomes: `access.provision.succeeded.v1`, `access.provision.failed.v1`, `access.revoke.succeeded.v1`, `access.revoke.failed.v1`.
 - User-facing Access facts: `access.ready.v1`, `access.provisioning.failed.v1`, `access.revoked.v1`.
 
-Business writes use transactional outbox/inbox and at-least-once delivery. Subscription lifecycle, Access commands/outcomes, and Notification delivery have explicit owner sequences and gap/collision handling. Production broker topology, ACLs, authentication, encryption, quotas, and retention are not selected.
+Business writes use transactional outbox/inbox and at-least-once delivery. Subscription lifecycle, Access commands/outcomes, and Notification delivery have explicit owner sequences and gap/collision handling. Staging/production clients now require TLS 1.3 mTLS and the machine contract enumerates per-service topics/groups; production broker topology, applied ACL denial, quotas, and retention are not selected or tested.
 
 ## Network and Trust Boundaries
 
@@ -92,6 +92,12 @@ GitHub workflows:
 - `release-attest.yml`: manually approved keyless metadata attestation without registry or deployment permission.
 
 Production registry, immutable OCI digest publication, per-image signatures/attestations, approval identity, canary deployment, and digest rollback are unresolved.
+
+Provider-neutral deployment artifacts now include separate strict staging and
+production schemas/templates, complete configuration classification, exact
+service/database/Kafka/SPIFFE bindings, and an offline preflight that requires
+the full reviewed commit and all 19 image digests. These artifacts contain no
+provider choice or valid credential value and do not close external gates.
 
 ## Admission Result
 

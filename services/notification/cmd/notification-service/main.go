@@ -239,6 +239,8 @@ func loadConfig() (appConfig, error) {
 	if maxBody < 1 {
 		fields = config.Append(fields, "HTTP_MAX_BODY_BYTES", fmt.Errorf("must be positive"))
 	}
+	consumerGroup := strings.TrimSpace(config.String("KAFKA_CONSUMER_GROUP", "notification-service-v1"))
+	fields = config.Append(fields, "KAFKA_CONSUMER_GROUP", config.ValidateKafkaConsumerGroup(environment, "notification-service", consumerGroup))
 	httpCfg := httpserver.DefaultConfig()
 	httpCfg.Addr = config.String("HTTP_ADDR", ":8091")
 	if err := config.Combine(fields); err != nil {
@@ -246,7 +248,7 @@ func loadConfig() (appConfig, error) {
 	}
 	return appConfig{
 		Environment: environment, LogLevel: config.String("LOG_LEVEL", "info"), DatabaseURL: databaseURL,
-		KafkaBrokers: brokers, ConsumerGroup: config.String("KAFKA_CONSUMER_GROUP", "notification-service-v1"),
+		KafkaBrokers: brokers, ConsumerGroup: consumerGroup,
 		InternalAuth: authMode, TrustDomain: config.String("MTLS_TRUST_DOMAIN", "vpn-service"), Namespace: config.String("MTLS_NAMESPACE", environment),
 		IdentityBaseURL: identityURL, SubscriptionBaseURL: subscriptionURL, AccessBaseURL: accessURL, TelegramBotBaseURL: telegramURL,
 		ConsentDocumentType: consentType, ConsentDocumentVersion: consentVersion,

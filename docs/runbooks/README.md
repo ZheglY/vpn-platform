@@ -21,6 +21,10 @@ Implemented local and sandbox runbooks are listed below. Production operations s
 - [Incident response](incident-response.md)
 - [Production-readiness game day](game-day.md)
 - [Production rollback and disaster recovery](production-rollback.md)
+- [Provider-neutral deployment and rollback contract](../production/deployment-and-rollback.md)
+- [Production security and operations contracts](../production/security-operations-contracts.md)
+- [Production configuration inventory](../production/configuration-inventory.md)
+- [Production identity and access matrix](../production/identity-access-matrix.md)
 
 Required before production:
 

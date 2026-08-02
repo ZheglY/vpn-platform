@@ -19,6 +19,8 @@ Production decision: **NO-GO**
 
 ## Preconditions
 
+- offline preflight passes for the exact environment document, reviewed full
+  commit, service-binding contract, and all 19 immutable image digests;
 - accepted current and previous release manifests with immutable image digests;
 - N/N-1 compatibility matrix for HTTP, Kafka, schema, and configuration;
 - canary cohort and abort alerts;
@@ -28,6 +30,9 @@ Production decision: **NO-GO**
 - verified recent backup/PITR and isolated restore environment.
 
 If any precondition is missing, stop deployment and use forward remediation.
+The preflight command and complete rollout order are defined in
+`docs/production/deployment-and-rollback.md`; a preflight pass is not deployment
+authorization.
 
 ## Control-plane service rollback
 

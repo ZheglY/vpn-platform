@@ -28,6 +28,8 @@ func TestValidateEnvironmentRejectsPlaceholdersSecretsAndImageDrift(t *testing.T
 		{name: "missing image", mutate: func(c *environmentConfig) { delete(c.ReleaseImages, "migrate") }, field: "release_images"},
 		{name: "mutable tag", mutate: func(c *environmentConfig) { c.ReleaseImages["migrate"] = "registry/migrate:latest" }, field: "release_images.migrate"},
 		{name: "unsafe URL", mutate: func(c *environmentConfig) { c.Public.SubscriptionBaseURL = "https://127.0.0.1/s" }, field: "public.subscription_base_url"},
+		{name: "local trust domain", mutate: func(c *environmentConfig) { c.Identity.TrustDomain = "vpn-service" }, field: "identity.trust_domain"},
+		{name: "wrong namespace", mutate: func(c *environmentConfig) { c.Identity.Namespace = "staging" }, field: "identity.namespace"},
 		{name: "same oncall", mutate: func(c *environmentConfig) { c.Operations.SecondaryOncall = c.Operations.PrimaryOncall }, field: "operations.secondary_oncall"},
 	}
 	for _, test := range tests {
@@ -100,6 +102,17 @@ func TestSchemasAreStrictJSON(t *testing.T) {
 	}
 }
 
+func TestCommitPatternsAreFullAndImmutable(t *testing.T) {
+	for _, value := range []string{"abc", strings.Repeat("A", 40), strings.Repeat("a", 39), "refs/heads/main"} {
+		if commitPattern.MatchString(value) {
+			t.Fatalf("unexpected accepted commit %q", value)
+		}
+	}
+	if !commitPattern.MatchString(strings.Repeat("a", 40)) {
+		t.Fatal("full lowercase commit was rejected")
+	}
+}
+
 func validEnvironment(inventory imageInventory) environmentConfig {
 	images := make(map[string]string, len(inventory.Images))
 	for index, image := range inventory.Images {
@@ -107,6 +120,7 @@ func validEnvironment(inventory imageInventory) environmentConfig {
 	}
 	return environmentConfig{
 		FormatVersion: 1, Environment: "production", SourceCommit: strings.Repeat("a", 40), ReleaseImages: images,
+		Identity: identityConfig{TrustDomain: "identity.acme.net", Namespace: "production"},
 		Public: publicConfig{
 			TelegramWebhookURL: "https://telegram.acme.net/webhooks/telegram", BillingWebhookURL: "https://billing.acme.net/webhooks/yookassa",
 			SubscriptionBaseURL: "https://subscription.acme.net", AdminBaseURL: "https://admin.internal.acme.net",

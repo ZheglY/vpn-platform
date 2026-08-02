@@ -2,6 +2,10 @@
 
 Open questions must be resolved before the milestone where they affect code, contracts, payments, privacy, or infrastructure.
 
+The minimal consolidated owner handoff is maintained in
+`docs/production/OWNER_INPUTS.md`. Credential values are never requested in an
+issue, document, pull request, or chat.
+
 | ID | Question | Blocks | Recommended next step |
 |---|---|---|---|
 | OQ-001 | Which jurisdiction is the seller registered in, and which buyer countries are allowed? | Real payments, production launch, geoblocking, privacy policy | Legal review before Stage 9 production readiness. |

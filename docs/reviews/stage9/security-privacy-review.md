@@ -193,6 +193,21 @@ blocked in the Stage 9 legal checklist.
 
 ## Acceptance
 
+### Remediation update 2026-08-02
+
+- ADR 0042, strict environment schemas, opaque credential references, the
+  configuration inventory, PKI/secret/backup/alert/edge contracts, and the
+  machine service-binding matrix define the repository-side controls for
+  SPR-001 through SPR-004 and SPR-006.
+- The shared startup guard rejects local/fake/default credentials and unsafe
+  endpoints outside local/test, requires environment-bound mTLS identity,
+  PostgreSQL full verification, Kafka client mTLS, and Redis TLS 1.3.
+- `/s/{token}` first-boundary log suppression and synthetic staging sentinel
+  acceptance are explicit provider requirements. No real edge is claimed.
+- All seven findings remain blocked until provider selection, real identities,
+  deny/revocation tests, human alert acknowledgement, legal approval, and
+  production-like staging evidence exist.
+
 The repository-level security/privacy review is complete for the baseline and
 has no open P0/P1. All seven P2 findings are launch blockers because no explicit
 product-owner risk acceptance or production evidence exists.

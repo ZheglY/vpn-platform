@@ -361,6 +361,15 @@ ADR 0032, corrected by ADR 0033, streams each PostgreSQL service dump directly i
 
 ADR 0034 separates production node-agent and Xray identities behind WireGuard, nftables, hardened systemd units, strict credential modes, and an exact reload helper. ADR 0035 defines bounded overlap and rollback for mTLS, provider, Access, and REALITY generations. ADR 0036 exercises bounded load, Kafka/database interruption, active-node loss with real failover traffic, and last-known-good recovery. ADR 0037 builds a fixed image inventory, SPDX SBOMs, digest-pinned scans, checksummed release metadata, and manually approved GitHub OIDC provenance without registry or deployment permission.
 
+ADR 0042 adds the provider-neutral deployment boundary. Separate strict staging
+and production documents contain only public/config values and opaque
+secret/key/certificate references. An offline preflight binds the reviewed
+commit to the exact 19 digest-only images and service/database/Kafka/SPIFFE
+matrix. Every service rejects local/fake/default production values; PostgreSQL
+requires `verify-full`, Kafka uses per-service TLS 1.3 mTLS, and Redis uses TLS
+1.3 server verification. These controls do not select infrastructure or replace
+real staging denial, revocation, alert, HA/PITR, canary, and DR evidence.
+
 Initial SLOs come from the specification:
 
 - Control API availability: 99.9% monthly.

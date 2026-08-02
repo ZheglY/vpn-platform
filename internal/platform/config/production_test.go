@@ -59,6 +59,20 @@ func TestValidateDeploymentEnvironmentRejectsMissingIdentityAndTLS(t *testing.T)
 	}
 }
 
+func TestValidateKafkaConsumerGroup(t *testing.T) {
+	if err := ValidateKafkaConsumerGroup("local", "access-service", "access-service-v1"); err != nil {
+		t.Fatalf("local consumer group rejected: %v", err)
+	}
+	if err := ValidateKafkaConsumerGroup("production", "access-service", "production.access-service-v1"); err != nil {
+		t.Fatalf("production consumer group rejected: %v", err)
+	}
+	for _, group := range []string{"", "access-service-v1", "staging.access-service-v1"} {
+		if err := ValidateKafkaConsumerGroup("production", "access-service", group); err == nil {
+			t.Fatalf("unsafe production consumer group %q accepted", group)
+		}
+	}
+}
+
 func setSecureDeploymentEnvironment(t *testing.T, environment string) {
 	t.Helper()
 	t.Setenv("APP_ENV", environment)

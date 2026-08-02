@@ -225,9 +225,7 @@ func loadConfig() (appConfig, error) {
 		fields = config.Append(fields, "KAFKA_BROKERS", fmt.Errorf("at least one broker is required"))
 	}
 	consumerGroup := strings.TrimSpace(config.String("KAFKA_CONSUMER_GROUP", "subscription-service-v1"))
-	if consumerGroup == "" {
-		fields = config.Append(fields, "KAFKA_CONSUMER_GROUP", fmt.Errorf("must not be empty"))
-	}
+	fields = config.Append(fields, "KAFKA_CONSUMER_GROUP", config.ValidateKafkaConsumerGroup(environment, "subscription-service", consumerGroup))
 	httpCfg := httpserver.DefaultConfig()
 	httpCfg.Addr = config.String("HTTP_ADDR", ":8086")
 	if err := config.Combine(fields); err != nil {

@@ -596,3 +596,22 @@ Required mitigation:
 - run two-version staging rollback and reconciliation.
 
 Status: open production blocker `ACR-002`.
+
+### T37 - Placeholder or local configuration is promoted as production
+
+Risk: a deployer uses a template, mutable image tag, development credential,
+loopback endpoint, plaintext data-store transport, overlapping environment
+identity, or incomplete service ACL and mistakes a local success for production
+evidence.
+
+Required mitigation:
+
+- strict separate environment schemas and opaque credential references;
+- exact commit and 19-image digest binding through offline preflight;
+- shared service startup validation for staging/production;
+- PostgreSQL full TLS verification, per-service Kafka mTLS, and Redis TLS 1.3;
+- machine-readable database/Kafka/SPIFFE mapping and deny tests;
+- current provider/staging evidence in addition to preflight success.
+
+Status: repository/runtime controls implemented in ADR 0042; real identity,
+provider, ACL-denial, and staging evidence remain production blockers.
