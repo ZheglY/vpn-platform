@@ -1,6 +1,9 @@
 package cryptoutil
 
-import "testing"
+import (
+	"regexp"
+	"testing"
+)
 
 func TestRandomBase64URL(t *testing.T) {
 	got, err := RandomBase64URL(16)
@@ -20,5 +23,16 @@ func TestRandomBase64URL(t *testing.T) {
 func TestRandomBytesRejectsNonPositiveSize(t *testing.T) {
 	if _, err := RandomBytes(0); err == nil {
 		t.Fatal("expected error for zero byte count")
+	}
+}
+
+func TestRandomUUID(t *testing.T) {
+	value, err := RandomUUID()
+	if err != nil {
+		t.Fatalf("RandomUUID() error = %v", err)
+	}
+	pattern := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+	if !pattern.MatchString(value) {
+		t.Fatalf("RandomUUID() = %q, want RFC 4122 version 4 UUID", value)
 	}
 }

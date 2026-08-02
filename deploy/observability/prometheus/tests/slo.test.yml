@@ -1,0 +1,139 @@
+rule_files:
+  - /etc/prometheus/rules/slo.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: control API fast burn consumes the 99.9 percent budget
+    interval: 1m
+    input_series:
+      - series: 'vpn_platform_http_server_requests_total{service="identity-service",method="GET",route="GET /internal/v1/users/{user_id}",status_class="2xx"}'
+        values: '0+98x75'
+      - series: 'vpn_platform_http_server_requests_total{service="identity-service",method="GET",route="GET /internal/v1/users/{user_id}",status_class="5xx"}'
+        values: '0+2x75'
+    alert_rule_test:
+      - eval_time: 65m
+        alertname: VPNControlAPIErrorBudgetFastBurn
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: control_api_availability
+            exp_annotations:
+              summary: "Control API is rapidly consuming its availability budget"
+              description: "The 99.9% monthly availability objective is burning at more than 14.4x over both one-hour and five-minute windows."
+              runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#slo-budget-burn"
+
+  - name: subscription endpoint fast burn consumes the 99.95 percent budget
+    interval: 1m
+    input_series:
+      - series: 'vpn_platform_http_server_requests_total{service="access-service",method="GET",route="GET /s/{token}",status_class="2xx"}'
+        values: '0+99x75'
+      - series: 'vpn_platform_http_server_requests_total{service="access-service",method="GET",route="GET /s/{token}",status_class="5xx"}'
+        values: '0+1x75'
+    alert_rule_test:
+      - eval_time: 65m
+        alertname: VPNSubscriptionEndpointErrorBudgetFastBurn
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: subscription_endpoint_availability
+            exp_annotations:
+              summary: "Subscription endpoint is rapidly consuming its availability budget"
+              description: "The 99.95% monthly availability objective is burning at more than 14.4x over both one-hour and five-minute windows."
+              runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#slo-budget-burn"
+
+  - name: durable payment access workflow fast burn includes overdue starts
+    interval: 1m
+    input_series:
+      - series: 'vpn_access_payment_access_fulfillment_started_total{instance="access-service:8087"}'
+        values: '0+100x75'
+      - series: 'vpn_access_payment_access_fulfillment_bad_total{instance="access-service:8087"}'
+        values: '0+20x75'
+    alert_rule_test:
+      - eval_time: 65m
+        alertname: VPNPaymentProvisioningErrorBudgetFastBurn
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: payment_to_provisioning
+            exp_annotations:
+              summary: "Payment-to-provisioning latency is rapidly consuming its budget"
+              description: "More than the allowed share of successful payments take over 60 seconds to create the initial provisioning command or durably apply an extension."
+              runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#slo-budget-burn"
+
+  - name: healthy objectives do not page
+    interval: 1m
+    input_series:
+      - series: 'vpn_platform_http_server_requests_total{service="identity-service",method="GET",route="GET /internal/v1/users/{user_id}",status_class="2xx"}'
+        values: '0+100x75'
+      - series: 'vpn_platform_http_server_requests_total{service="access-service",method="GET",route="GET /s/{token}",status_class="2xx"}'
+        values: '0+100x75'
+      - series: 'vpn_access_payment_access_fulfillment_started_total{instance="access-service:8087"}'
+        values: '0+100x75'
+      - series: 'vpn_access_payment_access_fulfillment_bad_total{instance="access-service:8087"}'
+        values: '0+0x75'
+    alert_rule_test:
+      - eval_time: 65m
+        alertname: VPNControlAPIErrorBudgetFastBurn
+        exp_alerts: []
+      - eval_time: 65m
+        alertname: VPNSubscriptionEndpointErrorBudgetFastBurn
+        exp_alerts: []
+      - eval_time: 65m
+        alertname: VPNPaymentProvisioningErrorBudgetFastBurn
+        exp_alerts: []
+
+  - name: slow burn and both p95 objectives are evaluated
+    interval: 1m
+    input_series:
+      - series: 'vpn_platform_http_server_requests_total{service="identity-service",method="GET",route="GET /internal/v1/users/{user_id}",status_class="2xx"}'
+        values: '0+99x400'
+      - series: 'vpn_platform_http_server_requests_total{service="identity-service",method="GET",route="GET /internal/v1/users/{user_id}",status_class="5xx"}'
+        values: '0+1x400'
+      - series: 'vpn_platform_http_server_request_duration_seconds_bucket{service="identity-service",method="GET",route="GET /internal/v1/users/{user_id}",le="0.1"}'
+        values: '0+10x400'
+      - series: 'vpn_platform_http_server_request_duration_seconds_bucket{service="identity-service",method="GET",route="GET /internal/v1/users/{user_id}",le="0.3"}'
+        values: '0+50x400'
+      - series: 'vpn_platform_http_server_request_duration_seconds_bucket{service="identity-service",method="GET",route="GET /internal/v1/users/{user_id}",le="0.5"}'
+        values: '0+100x400'
+      - series: 'vpn_platform_http_server_request_duration_seconds_bucket{service="identity-service",method="GET",route="GET /internal/v1/users/{user_id}",le="+Inf"}'
+        values: '0+100x400'
+      - series: 'vpn_platform_http_server_request_duration_seconds_bucket{service="access-service",method="GET",route="GET /s/{token}",le="0.1"}'
+        values: '0+10x400'
+      - series: 'vpn_platform_http_server_request_duration_seconds_bucket{service="access-service",method="GET",route="GET /s/{token}",le="0.2"}'
+        values: '0+50x400'
+      - series: 'vpn_platform_http_server_request_duration_seconds_bucket{service="access-service",method="GET",route="GET /s/{token}",le="0.5"}'
+        values: '0+100x400'
+      - series: 'vpn_platform_http_server_request_duration_seconds_bucket{service="access-service",method="GET",route="GET /s/{token}",le="+Inf"}'
+        values: '0+100x400'
+    alert_rule_test:
+      - eval_time: 390m
+        alertname: VPNControlAPIErrorBudgetSlowBurn
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              slo: control_api_availability
+            exp_annotations:
+              summary: "Control API is persistently consuming its availability budget"
+              description: "The 99.9% monthly availability objective is burning at more than 6x over both six-hour and thirty-minute windows."
+              runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#slo-budget-burn"
+      - eval_time: 30m
+        alertname: VPNControlAPIP95LatencySLOMiss
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              slo: control_api_latency
+            exp_annotations:
+              summary: "Control API p95 latency exceeds 300 ms"
+              description: "The control API latency SLI has remained above its initial objective for fifteen minutes."
+              runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#slo-budget-burn"
+      - eval_time: 30m
+        alertname: VPNSubscriptionEndpointP95LatencySLOMiss
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              slo: subscription_endpoint_latency
+            exp_annotations:
+              summary: "Subscription endpoint p95 latency exceeds 200 ms"
+              description: "Warm subscription document generation has remained above its initial p95 objective for fifteen minutes."
+              runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#slo-budget-burn"

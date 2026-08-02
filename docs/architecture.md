@@ -8,7 +8,9 @@ Happ is only the user client. It is not the VPN provider. User VPN traffic must 
 
 ## Current Scope
 
-Stage 0 is documentation-only. No business code, databases, migrations, Docker Compose, service binaries, or production infrastructure are created in this stage.
+Stage 7 adds durable user notifications and bounded administrator operations. `notification-service` owns Kafka inbox/cursors, causal delivery stream/sequence barriers, business deduplication, typed template versions, durable delivery jobs, leases, retries, and sanitized dead-letter metadata in its own PostgreSQL database. `admin-service` owns principals, role grants, fenced owner attempts, recoverable unknown outcomes, idempotent action requests, and append-only audit in another database; it reaches fixed owning-service APIs over mTLS and has no credentials for their databases. Stage 8 added protected privacy-safe telemetry, durable SLI/SLO alerts, owner-local retention, encrypted recovery, Debian node hardening, secret rotation, bounded resilience drills, and release SBOM/provenance controls. It was accepted by the product owner on 2026-07-26 after final review remediation. Stage 9 is an evidence-driven production-readiness review and does not authorize a production deployment.
+
+The current environment is portfolio/sandbox only. It does not use real YooKassa credentials, issue receipts, initiate provider refunds, enroll production VPS hosts, or carry real user traffic. Normal Compose smoke keeps a contract-injected provisioning result for the Stage 5 delivery path. The `vpn` profile runs the full Access command, Kafka, Provisioning, two-node Xray, outcome, Happ delivery, and revoke path with real local VLESS + REALITY traffic. `stage7-smoke` extends that path with fake Telegram failures and local development administrator identities. Production certificate issuance, key custody, alert delivery, off-host backup storage, and VPS deployment remain Stage 9 approval gates.
 
 ## Product Decisions Already Accepted
 
@@ -19,7 +21,7 @@ Stage 0 is documentation-only. No business code, databases, migrations, Docker C
 - Grace period is 24 hours.
 - Buying while active extends from `current_period_end`; buying after expiry starts from confirmed payment time.
 - Only full operator-initiated refunds in v1.
-- Confirmed full refund is tied to the specific payment-funded subscription period; access is revoked only if recalculation leaves no valid current/future paid entitlement.
+- Confirmed full refund is tied to the specific payment-funded subscription period; it revokes current access when recalculation creates a gap, while historical or future-only refunds preserve currently valid access.
 - Happ HWID and device limit are not used in v1.
 - Only aggregate traffic and health data may be collected.
 - Management plane uses private WireGuard networking and mTLS.
@@ -64,6 +66,7 @@ flowchart LR
 | `access-service` | Subscription URL tokens, Happ document rendering, credential lifecycle | Yes |
 | `provisioning-service` | Nodes, allocations, desired state, operations, health snapshots | Yes |
 | `notification-service` | Durable Telegram notifications and retry | Yes |
+| `admin-service` | Administrator identity mapping, RBAC, typed action orchestration, and append-only audit | Yes |
 | `node-agent` | Applies Xray desired state on a VPN node, validates config, reports aggregate health | Local last-known-good and operation journal |
 | `Xray-core` | Data-plane VPN traffic processing | Local config/state only |
 
@@ -123,6 +126,8 @@ Root `internal/platform` may contain technical helpers only. It must not define 
 | Async command | Kafka command message | Explicit owner, timeout, retry, DLQ, terminal failure |
 | Credential material retrieval | HTTP/mTLS | Provisioning-service fetches minimum material from access-service by credential ID |
 | Node desired state | HTTPS/mTLS over private WireGuard network | Idempotent operation ID and desired revision |
+| Notification delivery | HTTP/mTLS from notification-service to telegram-bot | Stable delivery ID; typed send only; Telegram token remains in telegram-bot |
+| Administrator read/action | Admin mTLS to admin-service, then fixed owner HTTP/mTLS | Explicit permission and typed owner endpoint; no cross-service SQL |
 | Public subscription document | `GET /s/{token}` on separate hostname | Bearer token in path, redacted everywhere, no-store |
 
 Kafka never replaces HTTP when an immediate answer is required. PostgreSQL commit and Kafka publish are connected through transactional outbox, not a distributed transaction.
@@ -170,6 +175,7 @@ sequenceDiagram
     participant Billing as billing-service
     participant Yoo as YooKassa sandbox
     participant Kafka
+    participant Sub as subscription-service
     User->>Bot: choose plan
     Bot->>Catalog: GET published plans
     Bot->>Billing: POST order/payment with Idempotency-Key
@@ -182,7 +188,22 @@ sequenceDiagram
     Billing->>Yoo: worker GET payment for verification
     Billing->>Billing: state transition + outbox in one DB transaction
     Billing->>Kafka: billing.payment.succeeded.v1
+    Kafka->>Sub: payment fact with user partition key
+    Sub->>Billing: GET immutable order snapshot over mTLS
+    Sub->>Sub: inbox + period + entitlement + outbox transaction
+    Sub->>Kafka: subscription.activated.v1 or subscription.extended.v1
 ```
+
+The existing payment event remains v1-compatible and intentionally carries no mutable catalog lookup. Subscription validates event identity, plan, and money against the immutable Billing order snapshot before committing the Kafka offset. Duplicate event IDs and duplicate source payment IDs cannot create another period.
+
+### Entitlement Time Lifecycle
+
+- A purchase while active or in grace appends a complete period at the current entitlement end.
+- A purchase after expiry or revocation starts at provider-confirmed `paid_at`.
+- At `current_period_end`, active becomes grace. At `grace_ends_at`, active/grace becomes expired and emits one event.
+- Scheduler rows use recoverable leases and `FOR UPDATE SKIP LOCKED`; exact boundaries use `now >= boundary` semantics.
+- A confirmed full refund marks only its immutable source period and recalculates remaining paid periods. It emits terminal revoke when nothing remains, refund-gap revoke when only a future period remains, and no revoke for historical or future-only changes while current access remains valid.
+- Refund-before-payment is retained as normalized pending inbox work and reconciled after the source period arrives.
 
 ### Access and Provisioning
 
@@ -196,21 +217,25 @@ sequenceDiagram
     participant Xray
     Kafka->>Sub: billing.payment.succeeded.v1
     Sub->>Kafka: subscription.activated.v1 or subscription.extended.v1
-    Kafka->>Access: subscription event
+    Kafka->>Access: subscription event with aggregate_sequence
+    Access->>Access: require previous sequence and unexpired DB-time entitlement
     Access->>Access: create credential only; no subscription token yet
-    Access->>Kafka: access.provision.request.v1
-    Kafka->>Prov: provision command
+    Access->>Kafka: access.provision.request.v1 with desired_revision sequence
+    Kafka->>Prov: next provision command for credential
     Prov->>Access: GET credential material over mTLS
+    Access->>Access: append secret-free security audit event
     Access-->>Prov: minimum VLESS material; no REALITY private key
-    Prov->>Agent: PUT credential over mTLS
+    Prov->>Sub: GET immutable placement over mTLS
+    Prov->>Prov: reserve primary and failover generation
+    Prov->>Agent: PUT credential over mTLS to both assigned nodes
     Agent->>Xray: validate, atomic apply, reload
     Agent-->>Prov: operation result
-    Prov->>Kafka: access.provision.succeeded.v1 or failed.v1
-    Kafka->>Access: provisioning result
-    Access->>Kafka: access.ready.v1 when primary node applied
+    Prov->>Kafka: sequenced provision outcome with full assignment proof
+    Kafka->>Access: next outcome across all four result topics
+    Access->>Kafka: access.ready.v1 only if entitlement still valid
 ```
 
-Subscription entitlement can be `active` while VPN access is still pending. VPN access becomes `ready` only after the primary node successfully applies the credential. If failover is not ready, provisioning is `degraded`, access may be issued through the one-time link flow, and the failure must be visible in metrics, admin CLI, and alerting. If the primary node fails, access must not become `ready`.
+Subscription entitlement can be `active` while VPN access is still pending. VPN access becomes `ready` only after the primary node successfully applies the credential. If failover is not ready, provisioning is `degraded`, access may be issued through the one-time link flow, and the failure must be visible in metrics, admin CLI, and alerting. If the primary node fails, access must not become `ready`. Provision success keeps the complete two-node assignment proof separate from usable Happ endpoints so a later revoke must remove even a failed failover assignment.
 
 ### One-Time Subscription URL Issuance
 
@@ -234,6 +259,18 @@ sequenceDiagram
 
 The plaintext subscription token is never created before provisioning and is never sent through Kafka. The bot must not persist or log the returned URL.
 
+### Notification Delivery
+
+Subscription and Access producers own independent positive sequences across their user-facing topics. Notification keeps one cursor per `(producer, aggregate_type, aggregate_id)`, defers a gap without committing it, treats exact replay as a no-op, and rejects a changed reuse. Billing facts remain unsequenced and are deduplicated by event identity plus a business key.
+
+Jobs never persist rendered text or Telegram chat ID. At each attempt Notification resolves the current consent-eligible target from Identity, checks current entitlement in Subscription for access-related messages, checks current Access state for readiness messages, renders an HTML-escaped versioned template, and calls telegram-bot over mTLS. PostgreSQL leases and bounded retries are durable; Redis only guards the stable delivery ID immediately around the Telegram call. Telegram can accept a message while its HTTP response is lost, so user-visible delivery is at-least-once and a duplicate remains possible in that ambiguous case.
+
+### Administrator Operations
+
+Admin certificates use exactly one verified URI `spiffe://<trust-domain>/ns/<environment>/admin/<principal>`. Admin-service maps that URI to local role grants and checks a distinct permission on every endpoint. A valid non-admin platform certificate receives `403`; missing verified client identity is unauthenticated.
+
+Read paths proxy only support-safe owner DTOs from configured fixed URLs. Mutations are limited to notification retry, subscription revoke, and higher-revision Access recovery. Admin records accepted intent, fenced attempts, unknown outcomes, and final confirmation as append-only audit. Timeout/reset/`5xx`/invalid `2xx` remains recoverable and exact replay uses the same action ID, correlation ID, and owner idempotency key; only definitive rejection is terminal failure. Changed input conflicts. No payment mutation, arbitrary URL, SQL, shell, Kafka payload, role mutation, subscription URL, VLESS UUID, or node configuration operation exists.
+
 ### Revoke Lifecycle
 
 ```mermaid
@@ -251,25 +288,34 @@ sequenceDiagram
     Kafka->>Prov: revoke command
     Prov->>Agent: DELETE credential over mTLS
     Agent-->>Prov: removed or redacted failure
-    Prov->>Kafka: access.revoke.succeeded.v1 or failed.v1
+    Prov->>Kafka: exact allocation-revision removal proof or failed.v1
     Kafka->>Access: revoke result
     Access->>Access: mark revoked only after all assigned nodes confirm removal
 ```
 
-Reconciliation periodically compares access state, provisioning allocations, and node actual state. Terminal revoke failure creates alert and operator escalation.
+Reconciliation claims due allocations with PostgreSQL leases and `FOR UPDATE SKIP LOCKED`, then compares provisioning desired state with node actual state. Claims are bounded, safely shared by replicas, rescheduled independently, and cannot starve rows beyond the first batch. Terminal revoke failure creates alert and operator escalation.
 
 ## Subscription Endpoint
 
 `GET /s/{token}` is served from a dedicated subscription hostname by `access-service`.
 
-Initial ADR decision:
+Implemented access and Stage 6 provisioning behavior:
 
 - Unknown, expired, and revoked tokens return the same external response.
+- Empty and nested malformed `/s` paths return that same response without redirecting to a distinguishable document.
 - Response does not reveal user or subscription existence.
 - Use `404 Not Found`, `Content-Type: text/plain; charset=utf-8`, `Cache-Control: no-store`.
 - Response body is generic and contains no token, user ID, credential ID, or reason.
 - Edge, reverse proxy, traces, metrics, and error reporting must not record the path segment.
-- Stage 5 must run Happ compatibility tests against the current official documentation and may supersede the status/body decision through a new ADR if needed.
+- Happ standard headers are `profile-title`, `profile-update-interval`, `subscription-userinfo`, and optional `support-url`.
+- The body contains one deterministic VLESS + REALITY share URI per validated primary/failover endpoint snapshot.
+- Provisioning success is the only event that stores an endpoint snapshot and moves access to `active` or `degraded`.
+- Access stores the complete assigned-node snapshot separately from usable endpoint snapshots and validates revoke against the complete assignment.
+- A delayed physical provisioning success after entitlement expiry stores the allocation only to initiate revoke and never makes access ready.
+- Subscription owns immutable period placement; Provisioning atomically selects one primary and one failover below the 80% threshold.
+- Provisioning outcomes have one credential-owned sequence across all four result topics; Access durably defers gaps and rejects sequence collisions.
+- A higher desired revision creates and fences a new allocation generation, preserving existing capacity reservations and reserving revoked allocations exactly once on reactivation.
+- Node-agent applies revisioned present/absent state. Once validated mutation starts, an independent bounded context completes candidate startup or last-known-good restoration even if the caller disconnects.
 
 ## Security Boundaries
 
@@ -282,7 +328,7 @@ Initial ADR decision:
 | Provisioning material API | mTLS restricted to provisioning-service; audit; no REALITY private key |
 | Admin operations | CLI/internal API over admin mTLS, RBAC, deny-by-default, audit log |
 | Management plane | Private WireGuard network, mTLS, firewall default deny |
-| Node agent | Allowlisted fields only, no shell command execution, Xray config test before reload |
+| Node agent | Provisioning-only mTLS, exact server SPIFFE pin, allowlisted fields, no shell command execution, pinned Xray config test before reload |
 
 ## HTTP Authentication Model
 
@@ -297,6 +343,33 @@ Initial ADR decision:
 
 Metrics must be useful without exposing secrets or high-cardinality identifiers. Labels must not contain user IDs, payment IDs, subscription tokens, VLESS UUIDs, raw paths, destination IPs, or Telegram payload data.
 
+The implemented HTTP baseline exports request count, duration, and in-flight requests. Labels contain only service, an allowlisted method, the registered `net/http` route pattern, and response status class. Unknown values collapse to bounded labels. In particular, `/s/<bearer>` is represented only as `GET /s/{token}`. Every service, including node-agent, protects `/metrics` with the dedicated `observability` mTLS identity; telegram-bot serves metrics only on its internal TLS listener.
+
+The local `obs` profile uses integrity-pinned Prometheus, Grafana, OpenTelemetry Collector, Tempo, and Loki images. Prometheus scrapes explicit 8-target or 11-target inventories over TLS 1.3 mTLS, evaluates target, HTTP, PostgreSQL, Kafka, durable-workflow, scheduler, node-capacity, heartbeat, and Xray alerts linked to runbooks, and retains 15 days without remote write. Services export sampled OTLP/HTTP traces and allowlisted logs to the Collector over TLS 1.3 mTLS. The Collector repeats privacy allowlists before private-network export to 30-day Tempo and 14-day Loki storage; only loopback Grafana can query them.
+
+PostgreSQL metrics use `pgx` query tracing and `pgxpool.Stat`; query labels are only a fixed operation class and outcome. Kafka topics are finite owner allowlists, and all outcomes and retry stages are enums. Durable backlog and domain-state collectors query only their owning database, emit reviewed zero-valued series, time out after one second, and fail closed on an unknown state. Provisioning aggregates node status and capacity without a node-ID label; Prometheus target metadata distinguishes local agents. ADR 0028 is the normative telemetry contract.
+
+Trace propagation uses W3C `traceparent` and `tracestate` only; baggage is disabled. HTTP spans retain only method, registered route, and status. Kafka spans retain only the messaging system and fixed operation. Trace headers are not persisted in transactional outbox rows or business envelopes, so delayed outbox publication starts a new trace root while durable causality remains in owner-controlled envelope metadata. The OTLP log branch accepts only exact reviewed messages and fields before export. ADR 0029 is the normative tracing/logging contract.
+
+Host keys pass through a network-isolated allowlist init into per-owner named volumes; a Linux UID verifier gates service startup. Collector has a separate server-only identity, while each service receives a client alias in its existing volume. All observability images are HIGH/CRITICAL scan gates.
+
+ADR 0030, corrected by ADR 0033, defines executable SLI recording and multi-window budget alerts. Access durably projects every successful Billing payment using owner-local identifiers for idempotency, records committed initial provisioning or extension fulfillment without replay double-counting, and exports only aggregate identifier-free metrics. Pending payments older than 60 seconds remain in the bad numerator across restart. Alertmanager has an integrity-pinned, credential-free configuration with inert receivers; no production notification delivery is claimed.
+
+ADR 0031 and ADR 0033 keep deletion inside each owner database. Retention uses PostgreSQL time, defaults to dry-run, deletes in bounded batches, preserves partial aggregate reports on later failure, protects unresolved dead letters and correctness barriers, honors Billing legal holds, and uses a separate Admin migrator identity for audit deletion. Payment records and the Identity, Catalog, and Subscription durable ledgers are not automatically deleted.
+
+ADR 0032, corrected by ADR 0033, streams each PostgreSQL service dump directly into authenticated age encryption and verifies ciphertext before restore. Source inspection and `pg_dump` share one exported repeatable-read snapshot. Restore requires the exact empty database and never cleans existing objects. The drill recreates all eight databases in a separate tmpfs-backed PostgreSQL instance, compares exact public-table counts and relation owners, and proves failure cleanup. Production key custody, immutable off-host storage, scheduling, HA/PITR, and final RPO/RTO remain unresolved.
+
+ADR 0034 separates production node-agent and Xray identities behind WireGuard, nftables, hardened systemd units, strict credential modes, and an exact reload helper. ADR 0035 defines bounded overlap and rollback for mTLS, provider, Access, and REALITY generations. ADR 0036 exercises bounded load, Kafka/database interruption, active-node loss with real failover traffic, and last-known-good recovery. ADR 0037 builds a fixed image inventory, SPDX SBOMs, digest-pinned scans, checksummed release metadata, and manually approved GitHub OIDC provenance without registry or deployment permission.
+
+ADR 0042 adds the provider-neutral deployment boundary. Separate strict staging
+and production documents contain only public/config values and opaque
+secret/key/certificate references. An offline preflight binds the reviewed
+commit to the exact 19 digest-only images and service/database/Kafka/SPIFFE
+matrix. Every service rejects local/fake/default production values; PostgreSQL
+requires `verify-full`, Kafka uses per-service TLS 1.3 mTLS, and Redis uses TLS
+1.3 server verification. These controls do not select infrastructure or replace
+real staging denial, revocation, alert, HA/PITR, canary, and DR evidence.
+
 Initial SLOs come from the specification:
 
 - Control API availability: 99.9% monthly.
@@ -305,13 +378,11 @@ Initial SLOs come from the specification:
 - p95 subscription document: under 200 ms with warm DB.
 - 99% of successful payment events start provisioning within 60 seconds.
 
-## Stage 0 Risks
+## Deferred Production Risks
 
 The architecture intentionally keeps several decisions as future approval points:
 
 - Production jurisdiction and legal compliance.
 - Real YooKassa receipts, tax fields, and buyer data.
 - Actual domain, DNS/TLS, and VPS provider choices.
-- Happ compatibility details beyond Stage 0 documentation.
-- Xray-core pinned version and security review.
 - Production admin credential issuance and rotation procedure.

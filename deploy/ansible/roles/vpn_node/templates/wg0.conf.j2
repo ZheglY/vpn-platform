@@ -1,0 +1,11 @@
+[Interface]
+Address = {{ vpn_node_wireguard_address }}
+ListenPort = {{ vpn_node_wireguard_port }}
+PrivateKey = {{ lookup('ansible.builtin.file', vpn_node_wireguard_private_key_source) | trim }}
+SaveConfig = false
+
+[Peer]
+PublicKey = {{ vpn_node_wireguard_peer_public_key }}
+Endpoint = {{ vpn_node_wireguard_peer_endpoint }}
+AllowedIPs = {{ vpn_node_wireguard_allowed_ips }}
+PersistentKeepalive = 25

@@ -1,0 +1,23 @@
+{
+  "event_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  "event_type": "subscription.extended.v1",
+  "schema_version": 1,
+  "occurred_at": "2026-07-18T01:02:03Z",
+  "producer": "subscription-service",
+  "correlation_id": "44444444-4444-4444-8444-444444444444",
+  "causation_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  "aggregate_type": "subscription",
+  "aggregate_id": "99999999-9999-4999-8999-999999999999",
+  "aggregate_sequence": 2,
+  "partition_key": "user:33333333-3333-4333-8333-333333333333",
+  "data": {
+    "subscription_id": "99999999-9999-4999-8999-999999999999",
+    "user_id": "33333333-3333-4333-8333-333333333333",
+    "period_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    "source_order_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+    "source_payment_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+    "period_start": "2026-08-16T01:02:03Z",
+    "period_end": "2026-09-15T01:02:03Z",
+    "grace_ends_at": "2026-09-16T01:02:03Z"
+  }
+}

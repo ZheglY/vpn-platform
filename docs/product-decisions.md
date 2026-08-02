@@ -9,7 +9,7 @@ Accepted on 2026-07-12 for Stage 0 and future MVP planning.
 | PD-003 | MVP has one test plan: 30 days, no hard traffic cap, one selected region, one primary node, one failover, 24h grace. | Accepted | Price and currency come from seed configuration, not domain constants. |
 | PD-004 | Purchase during active subscription extends from `current_period_end`; purchase after expiry starts from confirmed payment time. | Accepted | Must be covered by boundary-time tests in Stage 4. |
 | PD-005 | v1 supports only full operator-initiated refunds. | Accepted | Partial refunds are not supported. |
-| PD-006 | Confirmed full refund is tied to the specific payment-funded subscription period. | Accepted | Revoke access only if recalculation leaves no valid current/future paid entitlement. |
+| PD-006 | Confirmed full refund is tied to the specific payment-funded subscription period. | Accepted | Revoke terminally when nothing remains; revoke with `refund_gap` when only future entitlement remains; preserve currently valid access for historical/future-only refunds. |
 | PD-007 | Subscription receives primary node in selected region plus one failover node. | Accepted | User is not given all platform nodes. |
 | PD-008 | Happ HWID and device limit are not used in v1. | Accepted | No unused device fields or interfaces should be introduced early. |
 | PD-009 | Only aggregate traffic and health statistics are allowed. | Accepted | No DNS, domains, destination IPs, packet content, or browsing history. |
@@ -39,6 +39,14 @@ Accepted on 2026-07-12 for Stage 0 and future MVP planning.
 | PD-033 | Subscription URL is issued only after provisioning readiness through a synchronous one-time bot call. | Accepted | Kafka never carries the URL or token. |
 | PD-034 | Provisioning fetches credential material from access-service over mTLS. | Accepted | Kafka carries only credential ID, operation ID, and revision. |
 | PD-035 | Revoke lifecycle has explicit request, succeeded, failed events and reconciliation. | Accepted | Access remains `revoking` until assigned nodes confirm removal. |
+| PD-036 | Stage 6 pins official Xray-core 26.3.27 source by commit and archive SHA-256, rebuilds it on pinned Go with fixed security dependencies, and validates with `xray run -test -config`. | Accepted | The rebuild overrides `x/crypto`, `x/net`, and, after the 2026-07-23 advisory, gRPC-Go 1.82.1; re-check release/security notes before production rollout; ADR 0023. |
+| PD-037 | Stage 6 placement is exactly one primary and one distinct failover below the 80% threshold. | Accepted | Primary success may produce `degraded` only after bounded failover retries. |
+| PD-038 | Stage 7 administrator authentication uses short-lived mTLS certificates with verified `spiffe://vpn-service/ns/{environment}/admin/{principal}` identities. | Accepted | No web-admin/password login; production issuance and hardware backing remain Stage 8/9. |
+| PD-039 | Stage 7 RBAC has support-readonly, operations, security, and finance-readonly roles with explicit permissions and no superadmin wildcard. | Accepted | Security and finance remain read-only in Stage 7. |
+| PD-040 | Telegram notification delivery is durable at-least-once with business dedupe; an ambiguous post-send timeout can still duplicate a message. | Accepted | ADR 0025 documents mitigation and runbook requirements. |
+| PD-041 | Stage 7 admin mutations are limited to notification retry, subscription revoke, and fresh higher-revision provisioning recovery through the owning services. | Accepted | No payment success/refund, bearer URL retrieval, generic Kafka/SQL/shell, or node/role mutation. |
+| PD-042 | Notification delivery is FIFO inside an explicit causal stream, while terminal subscription/refund facts preempt older retry work. | Accepted | Permanently failed predecessors do not block; stale predecessor retry is rejected; ADR 0025. |
+| PD-043 | Ambiguous administrator owner outcomes are recoverable `outcome_unknown`, not terminal failure. | Accepted | Same action/correlation/owner idempotency identity is retried under a fenced lease; ADR 0026. |
 
 ## Decisions Requiring Later Approval
 

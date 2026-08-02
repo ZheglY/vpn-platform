@@ -1,0 +1,7 @@
+---
+- name: Harden VPN node
+  hosts: all
+  become: true
+  gather_facts: true
+  roles:
+    - vpn_node

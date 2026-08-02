@@ -1,0 +1,34 @@
+[Unit]
+Description=Xray VPN data plane
+After=network-online.target
+Wants=network-online.target
+ConditionFileNotEmpty=/etc/vpn-node/xray/config.json
+
+[Service]
+Type=simple
+User=xray
+Group=xray
+SupplementaryGroups=vpn-xray
+ExecStartPre=/bin/rm -f /run/vpn-xray-health/active
+ExecStart=/usr/local/bin/xray run -config /etc/vpn-node/xray/config.json
+ExecStartPost=/bin/touch /run/vpn-xray-health/active
+ExecStopPost=/bin/rm -f /run/vpn-xray-health/active
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+ReadOnlyPaths=/etc/vpn-node/xray /etc/vpn-node/credentials/xray
+ReadWritePaths=/run/vpn-xray-health
+UMask=0027

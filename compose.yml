@@ -1,5 +1,12 @@
 name: vpn-service
 
+x-otel-environment: &otel-environment
+  OTEL_EXPORTER_OTLP_ENDPOINT: https://otel-collector:4318
+  OTEL_EXPORTER_OTLP_CERTIFICATE: /run/mtls/ca.crt
+  OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE: /run/mtls/otel-client.crt
+  OTEL_EXPORTER_OTLP_CLIENT_KEY: /run/mtls/otel-client.key
+  OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-0.1}
+
 services:
   postgres:
     image: postgres:18-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
@@ -8,6 +15,15 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-vpn_platform}
+      IDENTITY_DB_PASSWORD: ${IDENTITY_DB_PASSWORD:?set IDENTITY_DB_PASSWORD}
+      CATALOG_DB_PASSWORD: ${CATALOG_DB_PASSWORD:?set CATALOG_DB_PASSWORD}
+      BILLING_DB_PASSWORD: ${BILLING_DB_PASSWORD:?set BILLING_DB_PASSWORD}
+      SUBSCRIPTION_DB_PASSWORD: ${SUBSCRIPTION_DB_PASSWORD:?set SUBSCRIPTION_DB_PASSWORD}
+      ACCESS_DB_PASSWORD: ${ACCESS_DB_PASSWORD:?set ACCESS_DB_PASSWORD}
+      PROVISIONING_DB_PASSWORD: ${PROVISIONING_DB_PASSWORD:?set PROVISIONING_DB_PASSWORD}
+      NOTIFICATION_DB_PASSWORD: ${NOTIFICATION_DB_PASSWORD:?set NOTIFICATION_DB_PASSWORD}
+      ADMIN_DB_PASSWORD: ${ADMIN_DB_PASSWORD:?set ADMIN_DB_PASSWORD}
+      ADMIN_MIGRATOR_DB_PASSWORD: ${ADMIN_MIGRATOR_DB_PASSWORD:?set ADMIN_MIGRATOR_DB_PASSWORD}
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     healthcheck:
@@ -17,6 +33,7 @@ services:
       retries: 5
     volumes:
       - postgres-data:/var/lib/postgresql
+      - ./deploy/local/postgres/init:/docker-entrypoint-initdb.d:ro
     networks:
       - backend
 
@@ -65,7 +82,214 @@ services:
     networks:
       - backend
 
+  kafka-init:
+    image: apache/kafka:4.3.1@sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837
+    profiles: ["app"]
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic billing.payment.succeeded.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic billing.payment.canceled.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic billing.refund.succeeded.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic subscription.activated.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic subscription.extended.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic subscription.expired.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic subscription.revoked.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic access.provision.request.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic access.revoke.request.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic access.provision.succeeded.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic access.provision.failed.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic access.revoke.succeeded.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic access.revoke.failed.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic access.ready.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic subscription.grace.started.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic access.provisioning.failed.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic access.revoked.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic access.provision.request.v1.dlq --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic access.revoke.request.v1.dlq --partitions 3 --replication-factor 1
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - backend
+
+  mtls-credentials-init:
+    image: vpn-service/credentialstage:local
+    build:
+      context: .
+      dockerfile: tools/credentialstage/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app", "vpn", "obs"]
+    user: "0:0"
+    command:
+      - stage
+      - --manifest=/etc/credentialstage/manifest.json
+      - --source=/source
+      - --destination=/runtime
+    volumes:
+      - ./deploy/local/credentials/mtls-manifest.json:/etc/credentialstage/manifest.json:ro
+      - ./secrets/dev-mtls:/source:ro
+      - mtls-identity:/runtime/identity
+      - mtls-catalog:/runtime/catalog
+      - mtls-billing:/runtime/billing
+      - mtls-subscription:/runtime/subscription
+      - mtls-access:/runtime/access
+      - mtls-provisioning:/runtime/provisioning
+      - mtls-node-primary:/runtime/node-primary
+      - mtls-node-failover:/runtime/node-failover
+      - mtls-notification:/runtime/notification
+      - mtls-admin:/runtime/admin
+      - mtls-telegram:/runtime/telegram
+      - mtls-observability:/runtime/observability
+      - mtls-collector:/runtime/collector
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
+    network_mode: none
+    restart: "no"
+
+  mtls-credentials-verify:
+    image: vpn-service/credentialstage:local
+    profiles: ["app", "vpn", "obs"]
+    user: "65532:65532"
+    command:
+      - verify
+      - --manifest=/etc/credentialstage/manifest.json
+      - --destination=/runtime
+    volumes:
+      - ./deploy/local/credentials/mtls-manifest.json:/etc/credentialstage/manifest.json:ro
+      - mtls-identity:/runtime/identity:ro
+      - mtls-catalog:/runtime/catalog:ro
+      - mtls-billing:/runtime/billing:ro
+      - mtls-subscription:/runtime/subscription:ro
+      - mtls-access:/runtime/access:ro
+      - mtls-provisioning:/runtime/provisioning:ro
+      - mtls-node-primary:/runtime/node-primary:ro
+      - mtls-node-failover:/runtime/node-failover:ro
+      - mtls-notification:/runtime/notification:ro
+      - mtls-admin:/runtime/admin:ro
+      - mtls-telegram:/runtime/telegram:ro
+      - mtls-observability:/runtime/observability:ro
+      - mtls-collector:/runtime/collector:ro
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    network_mode: none
+    restart: "no"
+    depends_on:
+      mtls-credentials-init:
+        condition: service_completed_successfully
+
+  xray-credentials-init:
+    image: vpn-service/credentialstage:local
+    profiles: ["vpn"]
+    user: "0:0"
+    command:
+      - stage
+      - --manifest=/etc/credentialstage/manifest.json
+      - --source=/source
+      - --destination=/runtime
+    volumes:
+      - ./deploy/local/credentials/xray-manifest.json:/etc/credentialstage/manifest.json:ro
+      - ./secrets/dev-xray:/source:ro
+      - xray-provisioning:/runtime/provisioning
+      - xray-node-primary:/runtime/node-primary
+      - xray-node-failover:/runtime/node-failover
+      - xray-camouflage:/runtime/camouflage
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
+    network_mode: none
+    restart: "no"
+
+  xray-credentials-verify:
+    image: vpn-service/credentialstage:local
+    profiles: ["vpn"]
+    user: "65532:65532"
+    command:
+      - verify
+      - --manifest=/etc/credentialstage/manifest.json
+      - --destination=/runtime
+      - --group=nonroot
+    volumes:
+      - ./deploy/local/credentials/xray-manifest.json:/etc/credentialstage/manifest.json:ro
+      - xray-provisioning:/runtime/provisioning:ro
+      - xray-node-primary:/runtime/node-primary:ro
+      - xray-node-failover:/runtime/node-failover:ro
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    network_mode: none
+    restart: "no"
+    depends_on:
+      xray-credentials-init:
+        condition: service_completed_successfully
+
+  camouflage-credentials-verify:
+    image: vpn-service/credentialstage:local
+    profiles: ["vpn"]
+    user: "0:0"
+    command:
+      - verify
+      - --manifest=/etc/credentialstage/manifest.json
+      - --destination=/runtime
+      - --group=camouflage
+    volumes:
+      - ./deploy/local/credentials/xray-manifest.json:/etc/credentialstage/manifest.json:ro
+      - xray-camouflage:/runtime/camouflage:ro
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    network_mode: none
+    restart: "no"
+    depends_on:
+      xray-credentials-init:
+        condition: service_completed_successfully
+
+  identity-migrate:
+    image: vpn-service/migrate:local
+    build:
+      context: .
+      dockerfile: tools/migrate/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      DATABASE_URL: postgres://identity_app:${IDENTITY_DB_PASSWORD:?set IDENTITY_DB_PASSWORD}@postgres:5432/identity_service?sslmode=disable
+      MIGRATIONS_DIR: /migrations/identity
+      MIGRATION_COMMAND: up
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+
   identity-service:
+    image: vpn-service/identity-service:local
     build:
       context: .
       dockerfile: services/identity/Dockerfile
@@ -73,18 +297,1127 @@ services:
         GO_VERSION: "1.26.5"
     profiles: ["app"]
     environment:
+      <<: *otel-environment
       APP_ENV: local
       LOG_LEVEL: info
       HTTP_ADDR: ":8080"
+      DATABASE_URL: postgres://identity_app:${IDENTITY_DB_PASSWORD:?set IDENTITY_DB_PASSWORD}@postgres:5432/identity_service?sslmode=disable
+      INTERNAL_AUTH_MODE: mtls
+      MTLS_TRUST_DOMAIN: vpn-service
+      MTLS_NAMESPACE: local
+      SERVER_TLS_CERT_FILE: /run/mtls/identity-service.crt
+      SERVER_TLS_KEY_FILE: /run/mtls/identity-service.key
+      CLIENT_CA_FILE: /run/mtls/ca.crt
+      HEALTHCHECK_CLIENT_CERT_FILE: /run/mtls/identity-health.crt
+      HEALTHCHECK_CLIENT_KEY_FILE: /run/mtls/identity-health.key
+      HEALTHCHECK_CA_FILE: /run/mtls/ca.crt
     ports:
       - "127.0.0.1:${IDENTITY_HTTP_PORT:-8080}:8080"
+    volumes:
+      - mtls-identity:/run/mtls:ro
+    depends_on:
+      identity-migrate:
+        condition: service_completed_successfully
+      mtls-credentials-verify:
+        condition: service_completed_successfully
     networks:
       - backend
+
+  catalog-migrate:
+    image: vpn-service/migrate:local
+    build:
+      context: .
+      dockerfile: tools/migrate/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      DATABASE_URL: postgres://catalog_app:${CATALOG_DB_PASSWORD:?set CATALOG_DB_PASSWORD}@postgres:5432/catalog_service?sslmode=disable
+      MIGRATIONS_DIR: /migrations/catalog
+      MIGRATION_COMMAND: up
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+
+  catalog-seed:
+    image: vpn-service/catalog-service:local
+    build:
+      context: .
+      dockerfile: services/catalog/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    command: ["seed"]
+    profiles: ["app"]
+    environment:
+      APP_ENV: local
+      DATABASE_URL: postgres://catalog_app:${CATALOG_DB_PASSWORD:?set CATALOG_DB_PASSWORD}@postgres:5432/catalog_service?sslmode=disable
+      INTERNAL_AUTH_MODE: dev-insecure
+      CATALOG_SEED_PLAN_ID: ${CATALOG_SEED_PLAN_ID:-vpn-30d-v1}
+      CATALOG_SEED_NAME: ${CATALOG_SEED_NAME:-VPN 30 days}
+      CATALOG_SEED_AMOUNT_MINOR: ${CATALOG_SEED_AMOUNT_MINOR:-29900}
+      CATALOG_SEED_CURRENCY: ${CATALOG_SEED_CURRENCY:-RUB}
+      CATALOG_SEED_REGIONS: ${CATALOG_SEED_REGIONS:-ru-test}
+    depends_on:
+      catalog-migrate:
+        condition: service_completed_successfully
+    networks:
+      - backend
+
+  catalog-service:
+    image: vpn-service/catalog-service:local
+    build:
+      context: .
+      dockerfile: services/catalog/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      <<: *otel-environment
+      APP_ENV: local
+      LOG_LEVEL: info
+      HTTP_ADDR: ":8083"
+      DATABASE_URL: postgres://catalog_app:${CATALOG_DB_PASSWORD:?set CATALOG_DB_PASSWORD}@postgres:5432/catalog_service?sslmode=disable
+      INTERNAL_AUTH_MODE: mtls
+      MTLS_TRUST_DOMAIN: vpn-service
+      MTLS_NAMESPACE: local
+      SERVER_TLS_CERT_FILE: /run/mtls/catalog-service.crt
+      SERVER_TLS_KEY_FILE: /run/mtls/catalog-service.key
+      CLIENT_CA_FILE: /run/mtls/ca.crt
+      HEALTHCHECK_CA_FILE: /run/mtls/ca.crt
+    ports:
+      - "127.0.0.1:${CATALOG_HTTP_PORT:-8083}:8083"
+    volumes:
+      - mtls-catalog:/run/mtls:ro
+    depends_on:
+      catalog-seed:
+        condition: service_completed_successfully
+      mtls-credentials-verify:
+        condition: service_completed_successfully
+    networks:
+      - backend
+
+  billing-migrate:
+    image: vpn-service/migrate:local
+    build:
+      context: .
+      dockerfile: tools/migrate/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      DATABASE_URL: postgres://billing_app:${BILLING_DB_PASSWORD:?set BILLING_DB_PASSWORD}@postgres:5432/billing_service?sslmode=disable
+      MIGRATIONS_DIR: /migrations/billing
+      MIGRATION_COMMAND: up
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+
+  yookassa-api:
+    image: vpn-service/fake-yookassa:local
+    build:
+      context: .
+      dockerfile: tools/fake-yookassa/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      HTTP_ADDR: ":8085"
+      FAKE_YOOKASSA_SHOP_ID: ${YOOKASSA_SHOP_ID:-test-shop}
+      FAKE_YOOKASSA_SECRET_KEY: ${YOOKASSA_SECRET_KEY:?set YOOKASSA_SECRET_KEY}
+    ports:
+      - "127.0.0.1:${YOOKASSA_HTTP_PORT:-8085}:8085"
+    networks:
+      - backend
+
+  billing-service:
+    image: vpn-service/billing-service:local
+    build:
+      context: .
+      dockerfile: services/billing/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      <<: *otel-environment
+      APP_ENV: local
+      LOG_LEVEL: info
+      HTTP_ADDR: ":8084"
+      DATABASE_URL: postgres://billing_app:${BILLING_DB_PASSWORD:?set BILLING_DB_PASSWORD}@postgres:5432/billing_service?sslmode=disable
+      IDENTITY_BASE_URL: https://identity-service:8080
+      CATALOG_BASE_URL: https://catalog-service:8083
+      INTERNAL_AUTH_MODE: mtls
+      INTERNAL_CLIENT_CERT_FILE: /run/mtls/billing-service.crt
+      INTERNAL_CLIENT_KEY_FILE: /run/mtls/billing-service.key
+      INTERNAL_SERVER_CA_FILE: /run/mtls/ca.crt
+      MTLS_TRUST_DOMAIN: vpn-service
+      MTLS_NAMESPACE: local
+      SERVER_TLS_CERT_FILE: /run/mtls/billing-service.crt
+      SERVER_TLS_KEY_FILE: /run/mtls/billing-service.key
+      CLIENT_CA_FILE: /run/mtls/ca.crt
+      HEALTHCHECK_CA_FILE: /run/mtls/ca.crt
+      YOOKASSA_BASE_URL: http://yookassa-api:8085
+      YOOKASSA_SHOP_ID: ${YOOKASSA_SHOP_ID:-test-shop}
+      YOOKASSA_SECRET_KEY: ${YOOKASSA_SECRET_KEY:?set YOOKASSA_SECRET_KEY}
+      PAYMENT_RETURN_URL: ${PAYMENT_RETURN_URL:-https://example.invalid/payment-return}
+      KAFKA_BROKERS: kafka:9092
+      BILLING_WORKER_POLL_INTERVAL: 250ms
+      BILLING_WORKER_RETRY_DELAY: 500ms
+    ports:
+      - "127.0.0.1:${BILLING_HTTP_PORT:-8084}:8084"
+    volumes:
+      - mtls-billing:/run/mtls:ro
+    depends_on:
+      billing-migrate:
+        condition: service_completed_successfully
+      mtls-credentials-verify:
+        condition: service_completed_successfully
+      identity-service:
+        condition: service_healthy
+      catalog-service:
+        condition: service_healthy
+      yookassa-api:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    networks:
+      - backend
+
+  subscription-migrate:
+    image: vpn-service/migrate:local
+    build:
+      context: .
+      dockerfile: tools/migrate/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      DATABASE_URL: postgres://subscription_app:${SUBSCRIPTION_DB_PASSWORD:?set SUBSCRIPTION_DB_PASSWORD}@postgres:5432/subscription_service?sslmode=disable
+      MIGRATIONS_DIR: /migrations/subscription
+      MIGRATION_COMMAND: up
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+
+  subscription-service:
+    image: vpn-service/subscription-service:local
+    build:
+      context: .
+      dockerfile: services/subscription/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      <<: *otel-environment
+      APP_ENV: local
+      LOG_LEVEL: info
+      HTTP_ADDR: ":8086"
+      DATABASE_URL: postgres://subscription_app:${SUBSCRIPTION_DB_PASSWORD:?set SUBSCRIPTION_DB_PASSWORD}@postgres:5432/subscription_service?sslmode=disable
+      BILLING_BASE_URL: https://billing-service:8084
+      INTERNAL_AUTH_MODE: mtls
+      INTERNAL_CLIENT_CERT_FILE: /run/mtls/subscription-service.crt
+      INTERNAL_CLIENT_KEY_FILE: /run/mtls/subscription-service.key
+      INTERNAL_SERVER_CA_FILE: /run/mtls/ca.crt
+      MTLS_TRUST_DOMAIN: vpn-service
+      MTLS_NAMESPACE: local
+      SERVER_TLS_CERT_FILE: /run/mtls/subscription-service.crt
+      SERVER_TLS_KEY_FILE: /run/mtls/subscription-service.key
+      CLIENT_CA_FILE: /run/mtls/ca.crt
+      HEALTHCHECK_CA_FILE: /run/mtls/ca.crt
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_CONSUMER_GROUP: subscription-service-v1
+      SUBSCRIPTION_WORKER_POLL_INTERVAL: 250ms
+      SUBSCRIPTION_WORKER_RETRY_DELAY: 500ms
+    ports:
+      - "127.0.0.1:${SUBSCRIPTION_HTTP_PORT:-8086}:8086"
+    volumes:
+      - mtls-subscription:/run/mtls:ro
+    depends_on:
+      subscription-migrate:
+        condition: service_completed_successfully
+      mtls-credentials-verify:
+        condition: service_completed_successfully
+      billing-service:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    networks:
+      - backend
+
+  access-migrate:
+    image: vpn-service/migrate:local
+    build:
+      context: .
+      dockerfile: tools/migrate/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      DATABASE_URL: postgres://access_app:${ACCESS_DB_PASSWORD:?set ACCESS_DB_PASSWORD}@postgres:5432/access_service?sslmode=disable
+      MIGRATIONS_DIR: /migrations/access
+      MIGRATION_COMMAND: up
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+
+  access-service:
+    image: vpn-service/access-service:local
+    build:
+      context: .
+      dockerfile: services/access/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      <<: *otel-environment
+      APP_ENV: local
+      LOG_LEVEL: info
+      HTTP_ADDR: ":8087"
+      DATABASE_URL: postgres://access_app:${ACCESS_DB_PASSWORD:?set ACCESS_DB_PASSWORD}@postgres:5432/access_service?sslmode=disable
+      INTERNAL_AUTH_MODE: mtls
+      MTLS_TRUST_DOMAIN: vpn-service
+      MTLS_NAMESPACE: local
+      SERVER_TLS_CERT_FILE: /run/mtls/access-service.crt
+      SERVER_TLS_KEY_FILE: /run/mtls/access-service.key
+      CLIENT_CA_FILE: /run/mtls/ca.crt
+      HEALTHCHECK_CA_FILE: /run/mtls/ca.crt
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_CONSUMER_GROUP: access-service-v1
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+      REDIS_DB: 1
+      ACCESS_CREDENTIAL_KEY_VERSION: 1
+      ACCESS_CREDENTIAL_KEYS: 1:${ACCESS_CREDENTIAL_KEY_BASE64:?set ACCESS_CREDENTIAL_KEY_BASE64}
+      ACCESS_TOKEN_HMAC_KEY_VERSION: ${ACCESS_TOKEN_HMAC_KEY_VERSION:-1}
+      ACCESS_TOKEN_HMAC_KEYS: ${ACCESS_TOKEN_HMAC_KEYS:-}
+      ACCESS_TOKEN_HMAC_KEY_BASE64: ${ACCESS_TOKEN_HMAC_KEY_BASE64:?set ACCESS_TOKEN_HMAC_KEY_BASE64}
+      ACCESS_PUBLIC_IP_RATE_LIMIT: ${ACCESS_PUBLIC_IP_RATE_LIMIT:-120}
+      ACCESS_PUBLIC_TOKEN_RATE_LIMIT: ${ACCESS_PUBLIC_TOKEN_RATE_LIMIT:-30}
+      SUBSCRIPTION_PUBLIC_BASE_URL: ${SUBSCRIPTION_PUBLIC_BASE_URL:-https://127.0.0.1:8087}
+      HAPP_PROFILE_TITLE: ${HAPP_PROFILE_TITLE:-VPN Platform}
+      HAPP_SUPPORT_URL: ${HAPP_SUPPORT_URL:-https://example.invalid/support}
+      HAPP_PROFILE_UPDATE_HOURS: 6
+      ACCESS_WORKER_POLL_INTERVAL: 250ms
+      ACCESS_WORKER_RETRY_DELAY: 500ms
+    ports:
+      - "127.0.0.1:${ACCESS_HTTP_PORT:-8087}:8087"
+    volumes:
+      - mtls-access:/run/mtls:ro
+    depends_on:
+      access-migrate:
+        condition: service_completed_successfully
+      mtls-credentials-verify:
+        condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+
+  provisioning-migrate:
+    image: vpn-service/migrate:local
+    build:
+      context: .
+      dockerfile: tools/migrate/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      DATABASE_URL: postgres://provisioning_app:${PROVISIONING_DB_PASSWORD:?set PROVISIONING_DB_PASSWORD}@postgres:5432/provisioning_service?sslmode=disable
+      MIGRATIONS_DIR: /migrations/provisioning
+      MIGRATION_COMMAND: up
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+
+  provisioning-seed:
+    image: vpn-service/provisioning-service:local
+    build:
+      context: .
+      dockerfile: services/provisioning/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    command: ["seed"]
+    profiles: ["vpn"]
+    environment:
+      DATABASE_URL: postgres://provisioning_app:${PROVISIONING_DB_PASSWORD:?set PROVISIONING_DB_PASSWORD}@postgres:5432/provisioning_service?sslmode=disable
+      PROVISIONING_NODE_SEED_FILE: /run/xray/nodes.json
+    volumes:
+      - xray-provisioning:/run/xray:ro
+    depends_on:
+      provisioning-migrate:
+        condition: service_completed_successfully
+      xray-credentials-verify:
+        condition: service_completed_successfully
+    networks:
+      - backend
+
+  provisioning-service:
+    image: vpn-service/provisioning-service:local
+    build:
+      context: .
+      dockerfile: services/provisioning/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["vpn"]
+    environment:
+      <<: *otel-environment
+      APP_ENV: local
+      LOG_LEVEL: info
+      HTTP_ADDR: ":8088"
+      DATABASE_URL: postgres://provisioning_app:${PROVISIONING_DB_PASSWORD:?set PROVISIONING_DB_PASSWORD}@postgres:5432/provisioning_service?sslmode=disable
+      ACCESS_BASE_URL: https://access-service:8087
+      SUBSCRIPTION_BASE_URL: https://subscription-service:8086
+      INTERNAL_CLIENT_CERT_FILE: /run/mtls/provisioning-service.crt
+      INTERNAL_CLIENT_KEY_FILE: /run/mtls/provisioning-service.key
+      INTERNAL_SERVER_CA_FILE: /run/mtls/ca.crt
+      SERVER_TLS_CERT_FILE: /run/mtls/provisioning-service.crt
+      SERVER_TLS_KEY_FILE: /run/mtls/provisioning-service.key
+      HEALTHCHECK_CA_FILE: /run/mtls/ca.crt
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_CONSUMER_GROUP: provisioning-service-v1
+      PROVISIONING_WORKER_POLL_INTERVAL: 250ms
+      PROVISIONING_WORKER_RETRY_DELAY: 500ms
+      PROVISIONING_HEALTH_INTERVAL: 5s
+      PROVISIONING_HEALTH_STALE_AFTER: 20s
+      PROVISIONING_RECONCILIATION_INTERVAL: 10s
+    ports:
+      - "127.0.0.1:${PROVISIONING_HTTP_PORT:-8088}:8088"
+    volumes:
+      - mtls-provisioning:/run/mtls:ro
+    depends_on:
+      provisioning-migrate:
+        condition: service_completed_successfully
+      mtls-credentials-verify:
+        condition: service_completed_successfully
+      xray-credentials-verify:
+        condition: service_completed_successfully
+      access-service:
+        condition: service_healthy
+      subscription-service:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    networks:
+      - backend
+      - node-management
+
+  camouflage:
+    image: nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
+    profiles: ["vpn"]
+    volumes:
+      - ./deploy/local/xray/nginx.conf:/etc/nginx/nginx.conf:ro
+      - xray-camouflage:/run/xray:ro
+    depends_on:
+      camouflage-credentials-verify:
+        condition: service_completed_successfully
+    networks:
+      vpn-data:
+        aliases:
+          - camouflage.local
+
+  node-agent-primary:
+    image: vpn-service/node-agent:local
+    build:
+      context: .
+      dockerfile: services/node-agent/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["vpn"]
+    environment:
+      <<: *otel-environment
+      APP_ENV: local
+      LOG_LEVEL: info
+      NODE_ID: 61000000-0000-4000-8000-000000000001
+      NODE_HEALTH_CALLER_IDENTITY: node-health-primary
+      NODE_STATE_DIRECTORY: /var/lib/node-agent
+      NODE_OPERATION_JOURNAL_LIMIT: 2048
+      HTTP_ADDR: ":8443"
+      SERVER_TLS_CERT_FILE: /run/mtls/node-agent-primary.crt
+      SERVER_TLS_KEY_FILE: /run/mtls/node-agent-primary.key
+      CLIENT_CA_FILE: /run/mtls/ca.crt
+      MTLS_TRUST_DOMAIN: vpn-service
+      MTLS_NAMESPACE: local
+      HEALTHCHECK_CLIENT_CERT_FILE: /run/mtls/node-health-primary.crt
+      HEALTHCHECK_CLIENT_KEY_FILE: /run/mtls/node-health-primary.key
+      HEALTHCHECK_CA_FILE: /run/mtls/ca.crt
+      XRAY_BINARY: /usr/local/bin/xray
+      XRAY_CONFIG_DIRECTORY: /var/lib/xray
+      XRAY_LISTEN_ADDRESS: 0.0.0.0
+      XRAY_LISTEN_PORT: 443
+      XRAY_REALITY_PRIVATE_KEY_FILE: /run/xray/primary.key
+      XRAY_REALITY_TARGET: camouflage.local:443
+      XRAY_REALITY_SERVER_NAMES: camouflage.local
+      XRAY_REALITY_SHORT_IDS: 0123456789abcdef
+    ports:
+      - "127.0.0.1:${PRIMARY_NODE_AGENT_HTTP_PORT:-18443}:8443"
+      - "127.0.0.1:${PRIMARY_VPN_PORT:-1443}:443"
+    volumes:
+      - mtls-node-primary:/run/mtls:ro
+      - xray-node-primary:/run/xray:ro
+      - node-primary-state:/var/lib/node-agent
+      - node-primary-xray:/var/lib/xray
+    depends_on:
+      camouflage:
+        condition: service_started
+      mtls-credentials-verify:
+        condition: service_completed_successfully
+      xray-credentials-verify:
+        condition: service_completed_successfully
+    networks:
+      - node-management
+      - vpn-data
+
+  node-agent-failover:
+    image: vpn-service/node-agent:local
+    build:
+      context: .
+      dockerfile: services/node-agent/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["vpn"]
+    environment:
+      <<: *otel-environment
+      APP_ENV: local
+      LOG_LEVEL: info
+      NODE_ID: 61000000-0000-4000-8000-000000000002
+      NODE_HEALTH_CALLER_IDENTITY: node-health-failover
+      NODE_STATE_DIRECTORY: /var/lib/node-agent
+      NODE_OPERATION_JOURNAL_LIMIT: 2048
+      HTTP_ADDR: ":8443"
+      SERVER_TLS_CERT_FILE: /run/mtls/node-agent-failover.crt
+      SERVER_TLS_KEY_FILE: /run/mtls/node-agent-failover.key
+      CLIENT_CA_FILE: /run/mtls/ca.crt
+      MTLS_TRUST_DOMAIN: vpn-service
+      MTLS_NAMESPACE: local
+      HEALTHCHECK_CLIENT_CERT_FILE: /run/mtls/node-health-failover.crt
+      HEALTHCHECK_CLIENT_KEY_FILE: /run/mtls/node-health-failover.key
+      HEALTHCHECK_CA_FILE: /run/mtls/ca.crt
+      XRAY_BINARY: /usr/local/bin/xray
+      XRAY_CONFIG_DIRECTORY: /var/lib/xray
+      XRAY_LISTEN_ADDRESS: 0.0.0.0
+      XRAY_LISTEN_PORT: 443
+      XRAY_REALITY_PRIVATE_KEY_FILE: /run/xray/failover.key
+      XRAY_REALITY_TARGET: camouflage.local:443
+      XRAY_REALITY_SERVER_NAMES: camouflage.local
+      XRAY_REALITY_SHORT_IDS: fedcba9876543210
+    ports:
+      - "127.0.0.1:${FAILOVER_NODE_AGENT_HTTP_PORT:-28443}:8443"
+      - "127.0.0.1:${FAILOVER_VPN_PORT:-2443}:443"
+    volumes:
+      - mtls-node-failover:/run/mtls:ro
+      - xray-node-failover:/run/xray:ro
+      - node-failover-state:/var/lib/node-agent
+      - node-failover-xray:/var/lib/xray
+    depends_on:
+      camouflage:
+        condition: service_started
+      mtls-credentials-verify:
+        condition: service_completed_successfully
+      xray-credentials-verify:
+        condition: service_completed_successfully
+    networks:
+      - node-management
+      - vpn-data
+
+  notification-migrate:
+    image: vpn-service/migrate:local
+    build:
+      context: .
+      dockerfile: tools/migrate/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      DATABASE_URL: postgres://notification_app:${NOTIFICATION_DB_PASSWORD:?set NOTIFICATION_DB_PASSWORD}@postgres:5432/notification_service?sslmode=disable
+      MIGRATIONS_DIR: /migrations/notification
+      MIGRATION_COMMAND: up
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+
+  notification-service:
+    image: vpn-service/notification-service:local
+    build:
+      context: .
+      dockerfile: services/notification/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      <<: *otel-environment
+      APP_ENV: local
+      LOG_LEVEL: info
+      HTTP_ADDR: ":8091"
+      DATABASE_URL: postgres://notification_app:${NOTIFICATION_DB_PASSWORD:?set NOTIFICATION_DB_PASSWORD}@postgres:5432/notification_service?sslmode=disable
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_CONSUMER_GROUP: notification-service-v1
+      INTERNAL_AUTH_MODE: mtls
+      MTLS_TRUST_DOMAIN: vpn-service
+      MTLS_NAMESPACE: local
+      IDENTITY_BASE_URL: https://identity-service:8080
+      SUBSCRIPTION_BASE_URL: https://subscription-service:8086
+      ACCESS_BASE_URL: https://access-service:8087
+      TELEGRAM_BOT_BASE_URL: https://telegram-bot:8090
+      CONSENT_DOCUMENT_TYPE: terms
+      CONSENT_VERSION: terms-v1
+      CLIENT_TLS_CERT_FILE: /run/mtls/notification-service.crt
+      CLIENT_TLS_KEY_FILE: /run/mtls/notification-service.key
+      SERVER_CA_FILE: /run/mtls/ca.crt
+      SERVER_TLS_CERT_FILE: /run/mtls/notification-service.crt
+      SERVER_TLS_KEY_FILE: /run/mtls/notification-service.key
+      CLIENT_CA_FILE: /run/mtls/ca.crt
+      HEALTHCHECK_CLIENT_CERT_FILE: /run/mtls/notification-health.crt
+      HEALTHCHECK_CLIENT_KEY_FILE: /run/mtls/notification-health.key
+      HEALTHCHECK_CA_FILE: /run/mtls/ca.crt
+      NOTIFICATION_WORKER_POLL_INTERVAL: 250ms
+      NOTIFICATION_RETRY_BASE: 500ms
+      NOTIFICATION_WORKER_LEASE: 30s
+      NOTIFICATION_MAX_ATTEMPTS: 8
+    ports:
+      - "127.0.0.1:${NOTIFICATION_HTTP_PORT:-8091}:8091"
+    volumes:
+      - mtls-notification:/run/mtls:ro
+    depends_on:
+      notification-migrate:
+        condition: service_completed_successfully
+      mtls-credentials-verify:
+        condition: service_completed_successfully
+      identity-service:
+        condition: service_healthy
+      subscription-service:
+        condition: service_healthy
+      access-service:
+        condition: service_healthy
+      telegram-bot:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    networks:
+      - backend
+
+  admin-migrate:
+    image: vpn-service/migrate:local
+    build:
+      context: .
+      dockerfile: tools/migrate/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      DATABASE_URL: postgres://admin_migrator:${ADMIN_MIGRATOR_DB_PASSWORD:?set ADMIN_MIGRATOR_DB_PASSWORD}@postgres:5432/admin_service?sslmode=disable
+      MIGRATIONS_DIR: /migrations/admin
+      MIGRATION_COMMAND: up
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+
+  admin-bootstrap:
+    image: vpn-service/admin-service:local
+    build:
+      context: .
+      dockerfile: services/admin/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    entrypoint: ["/admin-bootstrap"]
+    profiles: ["app"]
+    environment:
+      APP_ENV: local
+      MTLS_TRUST_DOMAIN: vpn-service
+      DATABASE_URL: postgres://admin_migrator:${ADMIN_MIGRATOR_DB_PASSWORD:?set ADMIN_MIGRATOR_DB_PASSWORD}@postgres:5432/admin_service?sslmode=disable
+      ADMIN_SEED_FILE: /run/admin/principals.json
+    volumes:
+      - ./deploy/local/admin-principals.json:/run/admin/principals.json:ro
+    depends_on:
+      admin-migrate:
+        condition: service_completed_successfully
+    networks:
+      - backend
+
+  admin-service:
+    image: vpn-service/admin-service:local
+    build:
+      context: .
+      dockerfile: services/admin/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      <<: *otel-environment
+      APP_ENV: local
+      LOG_LEVEL: info
+      HTTP_ADDR: ":8092"
+      DATABASE_URL: postgres://admin_app:${ADMIN_DB_PASSWORD:?set ADMIN_DB_PASSWORD}@postgres:5432/admin_service?sslmode=disable
+      MTLS_TRUST_DOMAIN: vpn-service
+      IDENTITY_BASE_URL: https://identity-service:8080
+      BILLING_BASE_URL: https://billing-service:8084
+      SUBSCRIPTION_BASE_URL: https://subscription-service:8086
+      ACCESS_BASE_URL: https://access-service:8087
+      PROVISIONING_BASE_URL: https://provisioning-service:8088
+      NOTIFICATION_BASE_URL: https://notification-service:8091
+      CLIENT_TLS_CERT_FILE: /run/mtls/admin-service.crt
+      CLIENT_TLS_KEY_FILE: /run/mtls/admin-service.key
+      SERVER_CA_FILE: /run/mtls/ca.crt
+      SERVER_TLS_CERT_FILE: /run/mtls/admin-service.crt
+      SERVER_TLS_KEY_FILE: /run/mtls/admin-service.key
+      CLIENT_CA_FILE: /run/mtls/ca.crt
+      HEALTHCHECK_CLIENT_CERT_FILE: /run/mtls/admin-health.crt
+      HEALTHCHECK_CLIENT_KEY_FILE: /run/mtls/admin-health.key
+      HEALTHCHECK_CA_FILE: /run/mtls/ca.crt
+    ports:
+      - "127.0.0.1:${ADMIN_HTTP_PORT:-8092}:8092"
+    volumes:
+      - mtls-admin:/run/mtls:ro
+    depends_on:
+      admin-bootstrap:
+        condition: service_completed_successfully
+      mtls-credentials-verify:
+        condition: service_completed_successfully
+      notification-service:
+        condition: service_healthy
+      billing-service:
+        condition: service_healthy
+      subscription-service:
+        condition: service_healthy
+      access-service:
+        condition: service_healthy
+    networks:
+      - backend
+
+  telegram-api:
+    image: vpn-service/fake-telegram:local
+    build:
+      context: .
+      dockerfile: tools/fake-telegram/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      HTTP_ADDR: ":8082"
+      SEND_MESSAGE_DELAY: ${FAKE_TELEGRAM_SEND_DELAY:-250ms}
+    ports:
+      - "127.0.0.1:${TELEGRAM_API_HTTP_PORT:-8082}:8082"
+    networks:
+      - backend
+
+  telegram-bot:
+    image: vpn-service/telegram-bot:local
+    build:
+      context: .
+      dockerfile: services/telegram-bot/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["app"]
+    environment:
+      <<: *otel-environment
+      APP_ENV: local
+      LOG_LEVEL: info
+      HTTP_ADDR: ":8081"
+      INTERNAL_HTTP_ADDR: ":8090"
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+      REDIS_DB: 0
+      IDENTITY_BASE_URL: https://identity-service:8080
+      CATALOG_BASE_URL: https://catalog-service:8083
+      BILLING_BASE_URL: https://billing-service:8084
+      IDENTITY_AUTH_MODE: mtls
+      IDENTITY_CLIENT_CERT_FILE: /run/mtls/telegram-bot.crt
+      IDENTITY_CLIENT_KEY_FILE: /run/mtls/telegram-bot.key
+      IDENTITY_SERVER_CA_FILE: /run/mtls/ca.crt
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:?set TELEGRAM_WEBHOOK_SECRET}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN}
+      DELIVERY_AUTH_MODE: mtls
+      MTLS_TRUST_DOMAIN: vpn-service
+      MTLS_NAMESPACE: local
+      INTERNAL_SERVER_TLS_CERT_FILE: /run/mtls/telegram-bot.crt
+      INTERNAL_SERVER_TLS_KEY_FILE: /run/mtls/telegram-bot.key
+      INTERNAL_CLIENT_CA_FILE: /run/mtls/ca.crt
+      TELEGRAM_API_BASE_URL: http://telegram-api:8082
+      CONSENT_VERSION: terms-v1
+      TERMS_URL: ${TERMS_URL:-https://example.invalid/terms/terms-v1}
+    ports:
+      - "127.0.0.1:${TELEGRAM_HTTP_PORT:-8081}:8081"
+    volumes:
+      - mtls-telegram:/run/mtls:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      mtls-credentials-verify:
+        condition: service_completed_successfully
+      identity-service:
+        condition: service_healthy
+      catalog-service:
+        condition: service_healthy
+      billing-service:
+        condition: service_healthy
+      telegram-api:
+        condition: service_healthy
+    networks:
+      - backend
+
+  tempo:
+    image: vpn-service/tempo:local
+    build:
+      context: .
+      dockerfile: deploy/observability/tempo/Dockerfile
+    profiles: ["obs"]
+    command:
+      - -config.file=/etc/tempo/tempo.yml
+    volumes:
+      - ./deploy/observability/tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+      - tempo-data:/var/tempo
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "/bin/httphealth", "http://localhost:3200/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - observability
+
+  loki:
+    image: vpn-service/loki:local
+    build:
+      context: .
+      dockerfile: deploy/observability/loki/Dockerfile
+    profiles: ["obs"]
+    command:
+      - -config.file=/etc/loki/loki.yml
+    volumes:
+      - ./deploy/observability/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki-data:/var/loki
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "/bin/httphealth", "http://localhost:3100/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - observability
+
+  otel-collector:
+    image: vpn-service/otel-collector:local
+    build:
+      context: .
+      dockerfile: deploy/observability/otel-collector/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["obs"]
+    command:
+      - --config=/etc/otelcol/config.yml
+    volumes:
+      - ./deploy/observability/otel-collector/config.yml:/etc/otelcol/config.yml:ro
+      - mtls-collector:/run/mtls:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "/bin/httphealth", "http://localhost:13133/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    depends_on:
+      mtls-credentials-verify:
+        condition: service_completed_successfully
+      tempo:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    networks:
+      - backend
+      - node-management
+      - observability
+
+  prometheus:
+    image: vpn-service/prometheus:local
+    build:
+      context: .
+      dockerfile: deploy/observability/prometheus/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["obs"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+    ports:
+      - "127.0.0.1:${PROMETHEUS_HTTP_PORT:-9090}:9090"
+    volumes:
+      - ${PROMETHEUS_CONFIG_FILE:-./deploy/observability/prometheus/prometheus.yml}:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/observability/prometheus/rules:/etc/prometheus/rules:ro
+      - mtls-observability:/run/mtls:ro
+      - prometheus-data:/prometheus
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "/bin/promtool", "check", "ready", "--url=http://localhost:9090"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    depends_on:
+      mtls-credentials-verify:
+        condition: service_completed_successfully
+    networks:
+      - backend
+      - node-management
+      - observability
+
+  grafana:
+    image: vpn-service/grafana:local
+    build:
+      context: .
+      dockerfile: deploy/observability/grafana/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["obs"]
+    environment:
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_SECURITY_DISABLE_INITIAL_ADMIN_CREATION: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "127.0.0.1:${GRAFANA_HTTP_PORT:-3000}:3000"
+    volumes:
+      - ./deploy/observability/grafana/provisioning/datasources/prometheus.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro
+      - ./deploy/observability/grafana/provisioning/datasources/telemetry.yml:/etc/grafana/provisioning/datasources/telemetry.yml:ro
+      - ./deploy/observability/grafana/provisioning/dashboards/platform.yml:/etc/grafana/provisioning/dashboards/platform.yml:ro
+      - ./deploy/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/health | grep -q 'ok'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      tempo:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+      otel-collector:
+        condition: service_healthy
+    networks:
+      - backend
+      - observability
+
+  billing-retention:
+    image: vpn-service/billing-service:local
+    profiles: ["maintenance"]
+    entrypoint: ["/billing-retention"]
+    environment:
+      DATABASE_URL: postgres://billing_app:${BILLING_DB_PASSWORD:?set BILLING_DB_PASSWORD}@postgres:5432/billing_service?sslmode=disable
+      RETENTION_DRY_RUN: ${RETENTION_DRY_RUN:-true}
+      RETENTION_BATCH_SIZE: ${RETENTION_BATCH_SIZE:-500}
+      RETENTION_MAX_DELETE: ${RETENTION_MAX_DELETE:-5000}
+      BILLING_WEBHOOK_RETENTION_DAYS: ${BILLING_WEBHOOK_RETENTION_DAYS:-30}
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [backend]
+
+  access-retention:
+    image: vpn-service/access-service:local
+    profiles: ["maintenance"]
+    entrypoint: ["/access-retention"]
+    environment:
+      DATABASE_URL: postgres://access_app:${ACCESS_DB_PASSWORD:?set ACCESS_DB_PASSWORD}@postgres:5432/access_service?sslmode=disable
+      RETENTION_DRY_RUN: ${RETENTION_DRY_RUN:-true}
+      RETENTION_BATCH_SIZE: ${RETENTION_BATCH_SIZE:-500}
+      RETENTION_MAX_DELETE: ${RETENTION_MAX_DELETE:-5000}
+      ACCESS_SECURITY_AUDIT_RETENTION_DAYS: ${ACCESS_SECURITY_AUDIT_RETENTION_DAYS:-365}
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [backend]
+
+  provisioning-retention:
+    image: vpn-service/provisioning-service:local
+    profiles: ["maintenance"]
+    entrypoint: ["/provisioning-retention"]
+    environment:
+      DATABASE_URL: postgres://provisioning_app:${PROVISIONING_DB_PASSWORD:?set PROVISIONING_DB_PASSWORD}@postgres:5432/provisioning_service?sslmode=disable
+      RETENTION_DRY_RUN: ${RETENTION_DRY_RUN:-true}
+      RETENTION_BATCH_SIZE: ${RETENTION_BATCH_SIZE:-500}
+      RETENTION_MAX_DELETE: ${RETENTION_MAX_DELETE:-5000}
+      PROVISIONING_DIAGNOSTIC_RETENTION_DAYS: ${PROVISIONING_DIAGNOSTIC_RETENTION_DAYS:-30}
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [backend]
+
+  notification-retention:
+    image: vpn-service/notification-service:local
+    profiles: ["maintenance"]
+    entrypoint: ["/notification-retention"]
+    environment:
+      DATABASE_URL: postgres://notification_app:${NOTIFICATION_DB_PASSWORD:?set NOTIFICATION_DB_PASSWORD}@postgres:5432/notification_service?sslmode=disable
+      RETENTION_DRY_RUN: ${RETENTION_DRY_RUN:-true}
+      RETENTION_BATCH_SIZE: ${RETENTION_BATCH_SIZE:-500}
+      RETENTION_MAX_DELETE: ${RETENTION_MAX_DELETE:-5000}
+      NOTIFICATION_DLQ_RETENTION_DAYS: ${NOTIFICATION_DLQ_RETENTION_DAYS:-30}
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [backend]
+
+  admin-retention:
+    image: vpn-service/admin-service:local
+    profiles: ["maintenance"]
+    entrypoint: ["/admin-retention"]
+    environment:
+      DATABASE_URL: postgres://admin_migrator:${ADMIN_MIGRATOR_DB_PASSWORD:?set ADMIN_MIGRATOR_DB_PASSWORD}@postgres:5432/admin_service?sslmode=disable
+      RETENTION_DRY_RUN: ${RETENTION_DRY_RUN:-true}
+      RETENTION_BATCH_SIZE: ${RETENTION_BATCH_SIZE:-500}
+      RETENTION_MAX_DELETE: ${RETENTION_MAX_DELETE:-5000}
+      ADMIN_AUDIT_RETENTION_DAYS: ${ADMIN_AUDIT_RETENTION_DAYS:-365}
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [backend]
+
+  backup-tool:
+    image: vpn-service/backupctl:local
+    build:
+      context: .
+      dockerfile: tools/backupctl/Dockerfile
+      args:
+        GO_VERSION: "1.26.5"
+    profiles: ["maintenance"]
+    user: "${BACKUP_UID:-65532}:${BACKUP_GID:-65532}"
+    environment:
+      DATABASE_URL: ${BACKUP_DATABASE_URL:-postgres://invalid:invalid@invalid/invalid}
+    volumes:
+      - ${BACKUP_ARTIFACT_DIR:-./tmp/backup-artifacts}:/backups
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [backend]
+
+  restore-postgres:
+    image: postgres:18-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
+    profiles: ["maintenance"]
+    environment:
+      POSTGRES_USER: ${RESTORE_POSTGRES_USER:-restore_admin}
+      POSTGRES_PASSWORD: ${RESTORE_POSTGRES_PASSWORD:-restore-local-password}
+      POSTGRES_DB: ${RESTORE_POSTGRES_DB:-restore_control}
+      IDENTITY_DB_PASSWORD: ${IDENTITY_DB_PASSWORD:?set IDENTITY_DB_PASSWORD}
+      CATALOG_DB_PASSWORD: ${CATALOG_DB_PASSWORD:?set CATALOG_DB_PASSWORD}
+      BILLING_DB_PASSWORD: ${BILLING_DB_PASSWORD:?set BILLING_DB_PASSWORD}
+      SUBSCRIPTION_DB_PASSWORD: ${SUBSCRIPTION_DB_PASSWORD:?set SUBSCRIPTION_DB_PASSWORD}
+      ACCESS_DB_PASSWORD: ${ACCESS_DB_PASSWORD:?set ACCESS_DB_PASSWORD}
+      PROVISIONING_DB_PASSWORD: ${PROVISIONING_DB_PASSWORD:?set PROVISIONING_DB_PASSWORD}
+      NOTIFICATION_DB_PASSWORD: ${NOTIFICATION_DB_PASSWORD:?set NOTIFICATION_DB_PASSWORD}
+      ADMIN_DB_PASSWORD: ${ADMIN_DB_PASSWORD:?set ADMIN_DB_PASSWORD}
+      ADMIN_MIGRATOR_DB_PASSWORD: ${ADMIN_MIGRATOR_DB_PASSWORD:?set ADMIN_MIGRATOR_DB_PASSWORD}
+    tmpfs:
+      - /var/lib/postgresql:rw,noexec,nosuid,size=2g
+    volumes:
+      - ./deploy/local/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [backend]
 
 networks:
   backend:
     driver: bridge
+  node-management:
+    driver: bridge
+    internal: true
+  vpn-data:
+    driver: bridge
+  observability:
+    driver: bridge
+    internal: true
 
 volumes:
   postgres-data:
   kafka-data:
+  mtls-identity:
+  mtls-catalog:
+  mtls-billing:
+  mtls-subscription:
+  mtls-access:
+  mtls-provisioning:
+  mtls-node-primary:
+  mtls-node-failover:
+  mtls-notification:
+  mtls-admin:
+  mtls-telegram:
+  mtls-observability:
+  mtls-collector:
+  xray-provisioning:
+  xray-node-primary:
+  xray-node-failover:
+  xray-camouflage:
+  node-primary-state:
+  node-primary-xray:
+  node-failover-state:
+  node-failover-xray:
+  prometheus-data:
+  grafana-data:
+  tempo-data:
+  loki-data:

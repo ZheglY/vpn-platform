@@ -1,0 +1,25 @@
+#!/usr/sbin/nft -f
+table inet vpn_node
+flush table inet vpn_node
+
+table inet vpn_node {
+  chain input {
+    type filter hook input priority 0; policy drop;
+    ct state established,related accept
+    iifname "lo" accept
+    iifname "wg0" ip saddr {{ vpn_node_management_cidr }} tcp dport {{ vpn_node_ssh_port }} accept
+    udp dport {{ vpn_node_wireguard_port }} accept
+    tcp dport {{ vpn_node_xray_port }} accept
+    iifname "wg0" ip saddr {{ vpn_node_management_cidr }} tcp dport {{ vpn_node_agent_port }} accept
+    ip protocol icmp icmp type { destination-unreachable, time-exceeded, parameter-problem } accept
+    ip6 nexthdr ipv6-icmp icmpv6 type { destination-unreachable, packet-too-big, time-exceeded, parameter-problem, nd-neighbor-solicit, nd-neighbor-advert } accept
+  }
+
+  chain forward {
+    type filter hook forward priority 0; policy drop;
+  }
+
+  chain output {
+    type filter hook output priority 0; policy accept;
+  }
+}

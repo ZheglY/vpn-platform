@@ -1,0 +1,228 @@
+groups:
+  - name: vpn-sli-recording
+    interval: 30s
+    rules:
+      - record: vpn:sli:control_api_requests:rate5m
+        expr: |
+          sum(rate(vpn_platform_http_server_requests_total{
+            service=~"identity-service|catalog-service|billing-service|subscription-service|access-service|provisioning-service|notification-service|admin-service",
+            route!~"GET /(livez|readyz|version|metrics)"
+          }[5m]))
+      - record: vpn:sli:control_api_errors:rate5m
+        expr: |
+          sum(rate(vpn_platform_http_server_requests_total{
+            service=~"identity-service|catalog-service|billing-service|subscription-service|access-service|provisioning-service|notification-service|admin-service",
+            route!~"GET /(livez|readyz|version|metrics)",
+            status_class="5xx"
+          }[5m])) or vector(0)
+      - record: vpn:sli:control_api_error_ratio:rate5m
+        expr: vpn:sli:control_api_errors:rate5m / clamp_min(vpn:sli:control_api_requests:rate5m, 0.000000001)
+      - record: vpn:sli:control_api_errors:rate30m
+        expr: |
+          sum(rate(vpn_platform_http_server_requests_total{
+            service=~"identity-service|catalog-service|billing-service|subscription-service|access-service|provisioning-service|notification-service|admin-service",
+            route!~"GET /(livez|readyz|version|metrics)",
+            status_class="5xx"
+          }[30m])) or vector(0)
+      - record: vpn:sli:control_api_requests:rate30m
+        expr: |
+          sum(rate(vpn_platform_http_server_requests_total{
+            service=~"identity-service|catalog-service|billing-service|subscription-service|access-service|provisioning-service|notification-service|admin-service",
+            route!~"GET /(livez|readyz|version|metrics)"
+          }[30m]))
+      - record: vpn:sli:control_api_error_ratio:rate30m
+        expr: vpn:sli:control_api_errors:rate30m / clamp_min(vpn:sli:control_api_requests:rate30m, 0.000000001)
+      - record: vpn:sli:control_api_errors:rate1h
+        expr: |
+          sum(rate(vpn_platform_http_server_requests_total{
+            service=~"identity-service|catalog-service|billing-service|subscription-service|access-service|provisioning-service|notification-service|admin-service",
+            route!~"GET /(livez|readyz|version|metrics)",
+            status_class="5xx"
+          }[1h])) or vector(0)
+      - record: vpn:sli:control_api_requests:rate1h
+        expr: |
+          sum(rate(vpn_platform_http_server_requests_total{
+            service=~"identity-service|catalog-service|billing-service|subscription-service|access-service|provisioning-service|notification-service|admin-service",
+            route!~"GET /(livez|readyz|version|metrics)"
+          }[1h]))
+      - record: vpn:sli:control_api_error_ratio:rate1h
+        expr: vpn:sli:control_api_errors:rate1h / clamp_min(vpn:sli:control_api_requests:rate1h, 0.000000001)
+      - record: vpn:sli:control_api_errors:rate6h
+        expr: |
+          sum(rate(vpn_platform_http_server_requests_total{
+            service=~"identity-service|catalog-service|billing-service|subscription-service|access-service|provisioning-service|notification-service|admin-service",
+            route!~"GET /(livez|readyz|version|metrics)",
+            status_class="5xx"
+          }[6h])) or vector(0)
+      - record: vpn:sli:control_api_requests:rate6h
+        expr: |
+          sum(rate(vpn_platform_http_server_requests_total{
+            service=~"identity-service|catalog-service|billing-service|subscription-service|access-service|provisioning-service|notification-service|admin-service",
+            route!~"GET /(livez|readyz|version|metrics)"
+          }[6h]))
+      - record: vpn:sli:control_api_error_ratio:rate6h
+        expr: vpn:sli:control_api_errors:rate6h / clamp_min(vpn:sli:control_api_requests:rate6h, 0.000000001)
+
+      - record: vpn:sli:subscription_endpoint_requests:rate5m
+        expr: sum(rate(vpn_platform_http_server_requests_total{service="access-service",method="GET",route="GET /s/{token}"}[5m]))
+      - record: vpn:sli:subscription_endpoint_errors:rate5m
+        expr: sum(rate(vpn_platform_http_server_requests_total{service="access-service",method="GET",route="GET /s/{token}",status_class="5xx"}[5m])) or vector(0)
+      - record: vpn:sli:subscription_endpoint_error_ratio:rate5m
+        expr: vpn:sli:subscription_endpoint_errors:rate5m / clamp_min(vpn:sli:subscription_endpoint_requests:rate5m, 0.000000001)
+      - record: vpn:sli:subscription_endpoint_requests:rate30m
+        expr: sum(rate(vpn_platform_http_server_requests_total{service="access-service",method="GET",route="GET /s/{token}"}[30m]))
+      - record: vpn:sli:subscription_endpoint_errors:rate30m
+        expr: sum(rate(vpn_platform_http_server_requests_total{service="access-service",method="GET",route="GET /s/{token}",status_class="5xx"}[30m])) or vector(0)
+      - record: vpn:sli:subscription_endpoint_error_ratio:rate30m
+        expr: vpn:sli:subscription_endpoint_errors:rate30m / clamp_min(vpn:sli:subscription_endpoint_requests:rate30m, 0.000000001)
+      - record: vpn:sli:subscription_endpoint_requests:rate1h
+        expr: sum(rate(vpn_platform_http_server_requests_total{service="access-service",method="GET",route="GET /s/{token}"}[1h]))
+      - record: vpn:sli:subscription_endpoint_errors:rate1h
+        expr: sum(rate(vpn_platform_http_server_requests_total{service="access-service",method="GET",route="GET /s/{token}",status_class="5xx"}[1h])) or vector(0)
+      - record: vpn:sli:subscription_endpoint_error_ratio:rate1h
+        expr: vpn:sli:subscription_endpoint_errors:rate1h / clamp_min(vpn:sli:subscription_endpoint_requests:rate1h, 0.000000001)
+      - record: vpn:sli:subscription_endpoint_requests:rate6h
+        expr: sum(rate(vpn_platform_http_server_requests_total{service="access-service",method="GET",route="GET /s/{token}"}[6h]))
+      - record: vpn:sli:subscription_endpoint_errors:rate6h
+        expr: sum(rate(vpn_platform_http_server_requests_total{service="access-service",method="GET",route="GET /s/{token}",status_class="5xx"}[6h])) or vector(0)
+      - record: vpn:sli:subscription_endpoint_error_ratio:rate6h
+        expr: vpn:sli:subscription_endpoint_errors:rate6h / clamp_min(vpn:sli:subscription_endpoint_requests:rate6h, 0.000000001)
+
+      - record: vpn:sli:payment_provisioning_total:rate5m
+        expr: sum(rate(vpn_access_payment_access_fulfillment_started_total[5m])) or vector(0)
+      - record: vpn:sli:payment_provisioning_bad:rate5m
+        expr: sum(rate(vpn_access_payment_access_fulfillment_bad_total[5m])) or vector(0)
+      - record: vpn:sli:payment_provisioning_error_ratio:rate5m
+        expr: vpn:sli:payment_provisioning_bad:rate5m / clamp_min(vpn:sli:payment_provisioning_total:rate5m, 0.000000001)
+      - record: vpn:sli:payment_provisioning_total:rate30m
+        expr: sum(rate(vpn_access_payment_access_fulfillment_started_total[30m])) or vector(0)
+      - record: vpn:sli:payment_provisioning_bad:rate30m
+        expr: sum(rate(vpn_access_payment_access_fulfillment_bad_total[30m])) or vector(0)
+      - record: vpn:sli:payment_provisioning_error_ratio:rate30m
+        expr: vpn:sli:payment_provisioning_bad:rate30m / clamp_min(vpn:sli:payment_provisioning_total:rate30m, 0.000000001)
+      - record: vpn:sli:payment_provisioning_total:rate1h
+        expr: sum(rate(vpn_access_payment_access_fulfillment_started_total[1h])) or vector(0)
+      - record: vpn:sli:payment_provisioning_bad:rate1h
+        expr: sum(rate(vpn_access_payment_access_fulfillment_bad_total[1h])) or vector(0)
+      - record: vpn:sli:payment_provisioning_error_ratio:rate1h
+        expr: vpn:sli:payment_provisioning_bad:rate1h / clamp_min(vpn:sli:payment_provisioning_total:rate1h, 0.000000001)
+      - record: vpn:sli:payment_provisioning_total:rate6h
+        expr: sum(rate(vpn_access_payment_access_fulfillment_started_total[6h])) or vector(0)
+      - record: vpn:sli:payment_provisioning_bad:rate6h
+        expr: sum(rate(vpn_access_payment_access_fulfillment_bad_total[6h])) or vector(0)
+      - record: vpn:sli:payment_provisioning_error_ratio:rate6h
+        expr: vpn:sli:payment_provisioning_bad:rate6h / clamp_min(vpn:sli:payment_provisioning_total:rate6h, 0.000000001)
+
+      - record: vpn:sli:control_api_latency_p95_seconds:rate5m
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(vpn_platform_http_server_request_duration_seconds_bucket{
+            service=~"identity-service|catalog-service|billing-service|subscription-service|access-service|provisioning-service|notification-service|admin-service",
+            route!~"GET /(livez|readyz|version|metrics)"
+          }[5m])))
+      - record: vpn:sli:subscription_endpoint_latency_p95_seconds:rate5m
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(vpn_platform_http_server_request_duration_seconds_bucket{
+            service="access-service",method="GET",route="GET /s/{token}"
+          }[5m])))
+
+  - name: vpn-slo-burn-rate
+    interval: 30s
+    rules:
+      - alert: VPNControlAPIErrorBudgetFastBurn
+        expr: |
+          vpn:sli:control_api_error_ratio:rate1h > (14.4 * 0.001)
+          and vpn:sli:control_api_error_ratio:rate5m > (14.4 * 0.001)
+          and vpn:sli:control_api_requests:rate5m > 0
+        for: 2m
+        labels:
+          severity: critical
+          slo: control_api_availability
+        annotations:
+          summary: "Control API is rapidly consuming its availability budget"
+          description: "The 99.9% monthly availability objective is burning at more than 14.4x over both one-hour and five-minute windows."
+          runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#slo-budget-burn"
+      - alert: VPNControlAPIErrorBudgetSlowBurn
+        expr: |
+          vpn:sli:control_api_error_ratio:rate6h > (6 * 0.001)
+          and vpn:sli:control_api_error_ratio:rate30m > (6 * 0.001)
+          and vpn:sli:control_api_requests:rate30m > 0
+        for: 15m
+        labels:
+          severity: warning
+          slo: control_api_availability
+        annotations:
+          summary: "Control API is persistently consuming its availability budget"
+          description: "The 99.9% monthly availability objective is burning at more than 6x over both six-hour and thirty-minute windows."
+          runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#slo-budget-burn"
+      - alert: VPNSubscriptionEndpointErrorBudgetFastBurn
+        expr: |
+          vpn:sli:subscription_endpoint_error_ratio:rate1h > (14.4 * 0.0005)
+          and vpn:sli:subscription_endpoint_error_ratio:rate5m > (14.4 * 0.0005)
+          and vpn:sli:subscription_endpoint_requests:rate5m > 0
+        for: 2m
+        labels:
+          severity: critical
+          slo: subscription_endpoint_availability
+        annotations:
+          summary: "Subscription endpoint is rapidly consuming its availability budget"
+          description: "The 99.95% monthly availability objective is burning at more than 14.4x over both one-hour and five-minute windows."
+          runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#slo-budget-burn"
+      - alert: VPNSubscriptionEndpointErrorBudgetSlowBurn
+        expr: |
+          vpn:sli:subscription_endpoint_error_ratio:rate6h > (6 * 0.0005)
+          and vpn:sli:subscription_endpoint_error_ratio:rate30m > (6 * 0.0005)
+          and vpn:sli:subscription_endpoint_requests:rate30m > 0
+        for: 15m
+        labels:
+          severity: warning
+          slo: subscription_endpoint_availability
+        annotations:
+          summary: "Subscription endpoint is persistently consuming its availability budget"
+          description: "The 99.95% monthly availability objective is burning at more than 6x over both six-hour and thirty-minute windows."
+          runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#slo-budget-burn"
+      - alert: VPNPaymentProvisioningErrorBudgetFastBurn
+        expr: |
+          vpn:sli:payment_provisioning_error_ratio:rate1h > (14.4 * 0.01)
+          and vpn:sli:payment_provisioning_error_ratio:rate5m > (14.4 * 0.01)
+          and vpn:sli:payment_provisioning_total:rate5m > 0
+        for: 2m
+        labels:
+          severity: critical
+          slo: payment_to_provisioning
+        annotations:
+          summary: "Payment-to-provisioning latency is rapidly consuming its budget"
+          description: "More than the allowed share of successful payments take over 60 seconds to create the initial provisioning command or durably apply an extension."
+          runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#slo-budget-burn"
+      - alert: VPNPaymentProvisioningErrorBudgetSlowBurn
+        expr: |
+          vpn:sli:payment_provisioning_error_ratio:rate6h > (6 * 0.01)
+          and vpn:sli:payment_provisioning_error_ratio:rate30m > (6 * 0.01)
+          and vpn:sli:payment_provisioning_total:rate30m > 0
+        for: 15m
+        labels:
+          severity: warning
+          slo: payment_to_provisioning
+        annotations:
+          summary: "Payment-to-provisioning latency is persistently consuming its budget"
+          description: "The 99% payment-to-access fulfillment objective is burning at more than 6x over both six-hour and thirty-minute windows."
+          runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#slo-budget-burn"
+      - alert: VPNControlAPIP95LatencySLOMiss
+        expr: vpn:sli:control_api_latency_p95_seconds:rate5m > 0.3
+        for: 15m
+        labels:
+          severity: warning
+          slo: control_api_latency
+        annotations:
+          summary: "Control API p95 latency exceeds 300 ms"
+          description: "The control API latency SLI has remained above its initial objective for fifteen minutes."
+          runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#slo-budget-burn"
+      - alert: VPNSubscriptionEndpointP95LatencySLOMiss
+        expr: vpn:sli:subscription_endpoint_latency_p95_seconds:rate5m > 0.2
+        for: 15m
+        labels:
+          severity: warning
+          slo: subscription_endpoint_latency
+        annotations:
+          summary: "Subscription endpoint p95 latency exceeds 200 ms"
+          description: "Warm subscription document generation has remained above its initial p95 objective for fifteen minutes."
+          runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#slo-budget-burn"

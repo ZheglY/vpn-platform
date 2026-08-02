@@ -18,9 +18,10 @@ Allowed data:
 - Consent document type, version, accepted time, and source.
 - Orders, payments, and refund records required for financial correctness.
 - Subscription state and period ledger.
-- Access credential records and token lookup hashes.
+- AES-256-GCM-encrypted access credential records, token lookup HMACs, and client-facing endpoint snapshots.
 - Aggregate bytes by credential/node.
 - Node state, load, active credential count, health snapshots, config revision.
+- Provisioning operation/allocation metadata and sanitized Kafka dead-letter coordinates with payload SHA-256 only.
 - Security/admin audit records.
 
 Forbidden data:
@@ -34,18 +35,33 @@ Forbidden data:
 - Full YooKassa webhook/provider payloads unless a later ADR proves necessity, redaction, and retention.
 - Subscription URL/token in plaintext storage, logs, metrics, traces, or support views.
 - VLESS UUIDs and REALITY private keys in logs, metrics, traces, or support views.
+- Happ Provider ID or HWID/device identifiers in Stage 5.
 
 ## Sandbox Retention
 
 | Data class | Retention |
 |---|---:|
 | Application logs | 14 days |
-| Security/admin audit | 365 days |
+| Security/admin audit, including provisioning-material read metadata without credential payload | 365 days |
 | Diagnostic data | 30 days |
+| Node health snapshots and sanitized dead-letter metadata | 30 days in sandbox; operator replay must complete first |
 | Aggregate traffic statistics | 30 days |
 | Payment records | No automatic deletion until legal requirements are known |
 
 Retention must be configurable.
+
+## Executable Sandbox Retention
+
+Stage 8 owner-local maintenance commands enforce only the approved subset:
+
+- Billing deletes processed normalized webhook inbox rows after 30 days only when no active legal hold protects the scope. Orders, payments, refunds, reconciliation, idempotency, and outbox records are never auto-deleted.
+- Access deletes security audit events after 365 days.
+- Provisioning deletes node health snapshots after 30 days and sanitized dead letters after 30 days only when replay is complete.
+- Notification deletes sanitized dead letters after 30 days only when replay is complete.
+- Admin audit deletion after 365 days requires the separate migrator identity; the runtime identity remains append-only.
+- Identity, Catalog, and Subscription have no automatic deletion dataset in this slice.
+
+Every command defaults to dry-run, has bounded batches and a per-run maximum, and reports aggregate counts without identifiers. Production schedules, legal-hold custody, periods, and deletion approval are still unresolved. See ADR 0031 and the data-retention runbook.
 
 ## User-Facing Workflows Required Later
 

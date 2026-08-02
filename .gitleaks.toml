@@ -1,0 +1,5 @@
+[allowlist]
+description = "Generated local development mTLS certificates and keys"
+paths = [
+  '''secrets/dev-mtls/.*''',
+]

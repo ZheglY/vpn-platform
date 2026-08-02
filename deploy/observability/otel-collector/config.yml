@@ -1,0 +1,68 @@
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+        tls:
+          cert_file: /run/mtls/otel-collector.crt
+          key_file: /run/mtls/otel-collector.key
+          client_ca_file: /run/mtls/ca.crt
+          min_version: "1.3"
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 192
+    spike_limit_mib: 48
+  transform/privacy:
+    error_mode: propagate
+    trace_statements:
+      - keep_keys(resource.attributes, ["service.name", "service.namespace", "deployment.environment.name"])
+      - keep_keys(span.attributes, ["http.request.method", "http.route", "http.response.status_code", "messaging.system", "messaging.operation.name"])
+    log_statements:
+      - replace_pattern(log.body, "(?i)Bearer\\s+[^\\s]+", "Bearer [REDACTED]")
+      - replace_pattern(log.body, "/s/[A-Za-z0-9_-]+", "/s/[REDACTED]")
+      - replace_pattern(log.body, "(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "[REDACTED_UUID]")
+      - keep_keys(resource.attributes, ["service.name", "service.namespace", "deployment.environment.name"])
+      - keep_keys(scope.attributes, [])
+      - keep_keys(log.attributes, ["request_id", "method", "status", "duration", "route", "panic_type", "stack", "error_type", "go_error_type", "topic", "partition", "offset", "addr"])
+  batch:
+    send_batch_size: 512
+    timeout: 1s
+
+exporters:
+  otlp_http/tempo:
+    endpoint: http://tempo:4318
+    compression: gzip
+    sending_queue:
+      enabled: true
+      queue_size: 2048
+    retry_on_failure:
+      enabled: true
+  otlp_http/loki:
+    endpoint: http://loki:3100/otlp
+    compression: gzip
+    sending_queue:
+      enabled: true
+      queue_size: 2048
+    retry_on_failure:
+      enabled: true
+
+service:
+  extensions: [health_check]
+  telemetry:
+    logs:
+      level: warn
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, transform/privacy, batch]
+      exporters: [otlp_http/tempo]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, transform/privacy, batch]
+      exporters: [otlp_http/loki]

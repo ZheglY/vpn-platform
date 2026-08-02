@@ -32,7 +32,7 @@ Rules:
 - key has bounded length and accepted character set;
 - key is scoped to subject, operation, and request hash;
 - token issue/rotation keys are scoped to authenticated service subject and subscription;
-- repeated same key and same payload returns the original result;
+- repeated same key and same payload returns the original result, except one-time secret delivery where ADR 0016 requires `409 idempotency_response_unavailable` rather than retaining plaintext;
 - same key and different payload returns conflict;
 - TTL is documented per operation;
 - idempotency storage is durable when it protects money or access effects.
@@ -58,6 +58,7 @@ Every Kafka message has:
 - `causation_id` when applicable;
 - `aggregate_type`;
 - `aggregate_id`;
+- producer-owned monotonic `aggregate_sequence` when a contract spans topics or requires aggregate ordering;
 - stable `partition_key`;
 - data schema;
 - owner;
@@ -75,6 +76,8 @@ Compatibility:
 - Credential operation commands/results use `credential:{credential_id}` as partition key.
 - Billing, subscription, and user-delivery readiness events use `user:{user_id}` as partition key.
 - `subscription.activated.v1` means entitlement activation only; user-facing VPN readiness uses `access.ready.v1`.
+
+Pre-production Stage 5 correction: the four lifecycle v1 schemas now require `aggregate_sequence`, and Access-owned command/readiness v1 schemas expose their credential sequence. These draft contracts had no released external consumers. ADR 0022 records the exception, database migrations backfill unpublished outbox envelopes, and contract tests prevent sequence removal. Any later required-field change uses a new schema/topic version.
 
 ## Schema Files
 

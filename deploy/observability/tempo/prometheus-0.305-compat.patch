@@ -1,0 +1,20 @@
+diff --git a/modules/generator/storage/config.go b/modules/generator/storage/config.go
+index 0fe8813..788f5a1 100644
+--- a/modules/generator/storage/config.go
++++ b/modules/generator/storage/config.go
+@@ -8 +7,0 @@
+-	"github.com/prometheus/common/model"
+@@ -37,2 +36,4 @@
+-		if err := cfg.RemoteWrite[i].Validate(model.UTF8Validation); err != nil {
+-			return fmt.Errorf("invalid remote write config %q: %w", cfg.RemoteWrite[i].Name, err)
++		for _, relabelConfig := range cfg.RemoteWrite[i].WriteRelabelConfigs {
++			if err := relabelConfig.Validate(); err != nil {
++				return fmt.Errorf("invalid remote write config %q: %w", cfg.RemoteWrite[i].Name, err)
++			}
+diff --git a/modules/generator/storage/instance.go b/modules/generator/storage/instance.go
+index a1a482b..f82af06 100644
+--- a/modules/generator/storage/instance.go
++++ b/modules/generator/storage/instance.go
+@@ -99 +99 @@
+-	remoteStorage := remote.NewStorage(logger.With("component", "remote"), reg, startTimeCallback, walDir, cfg.RemoteWriteFlushDeadline, &noopScrapeManager{}, false)
++	remoteStorage := remote.NewStorage(logger.With("component", "remote"), reg, startTimeCallback, walDir, cfg.RemoteWriteFlushDeadline, &noopScrapeManager{})

@@ -1,0 +1,157 @@
+rule_files:
+  - /etc/prometheus/rules/operations.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: PostgreSQL pool remains saturated
+    interval: 1m
+    input_series:
+      - series: 'vpn_platform_postgres_pool_connections{service="billing-service",state="acquired"}'
+        values: '10+0x13'
+      - series: 'vpn_platform_postgres_pool_connections{service="billing-service",state="max"}'
+        values: '10+0x13'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: VPNPostgresPoolSaturated
+        exp_alerts:
+          - exp_labels:
+              service: billing-service
+              severity: warning
+            exp_annotations:
+              summary: "PostgreSQL pool is saturated for billing-service"
+              description: "More than 90% of the owning service pool has been acquired for ten minutes."
+              runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#postgresql-pool-saturation"
+
+  - name: durable backlog remains old and nonempty
+    interval: 1m
+    input_series:
+      - series: 'vpn_platform_message_oldest_age_seconds{service="notification-service",kind="notification",state="retry"}'
+        values: '600+0x13'
+      - series: 'vpn_platform_message_backlog{service="notification-service",kind="notification",state="retry"}'
+        values: '2+0x13'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: VPNDurableBacklogStuck
+        exp_alerts:
+          - exp_labels:
+              service: notification-service
+              kind: notification
+              state: retry
+              severity: warning
+            exp_annotations:
+              summary: "Durable workflow backlog is stuck for notification-service"
+              description: "The oldest notification/retry item has exceeded five minutes."
+              runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#kafka-and-durable-backlog"
+
+  - name: recently observed Kafka records remain delayed
+    interval: 1m
+    input_series:
+      - series: 'vpn_platform_kafka_consumer_lag_seconds{service="subscription-service",topic="billing.payment.succeeded.v1"}'
+        values: '300+0x13'
+      - series: 'vpn_platform_kafka_consumer_last_observed_timestamp_seconds{service="subscription-service",topic="billing.payment.succeeded.v1"}'
+        values: '0+60x13'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: VPNKafkaConsumerLagHigh
+        exp_alerts:
+          - exp_labels:
+              service: subscription-service
+              topic: billing.payment.succeeded.v1
+              severity: warning
+            exp_annotations:
+              summary: "Kafka processing lag is high for subscription-service"
+              description: "The newest handled record on an allowlisted topic is more than two minutes old."
+              runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#kafka-and-durable-backlog"
+
+  - name: durable payment SLI snapshot remains unavailable
+    interval: 1m
+    input_series:
+      - series: 'vpn_access_payment_access_fulfillment_snapshot_success{service="access-service"}'
+        values: '0+0x7'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: VPNOperationalSnapshotFailed
+        exp_alerts:
+          - exp_labels:
+              service: access-service
+              severity: warning
+            exp_annotations:
+              summary: "Operational metrics snapshot failed for access-service"
+              description: "An owner-local bounded metrics query has failed for five minutes."
+              runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#metrics-snapshot-failure"
+
+  - name: subscription scheduler remains delayed
+    interval: 1m
+    input_series:
+      - series: 'vpn_subscription_scheduler_due{service="subscription-service"}'
+        values: '1+0x13'
+      - series: 'vpn_subscription_scheduler_lag_seconds{service="subscription-service"}'
+        values: '300+0x13'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: VPNSubscriptionSchedulerLagHigh
+        exp_alerts:
+          - exp_labels:
+              service: subscription-service
+              severity: warning
+            exp_annotations:
+              summary: "Subscription lifecycle scheduler is delayed"
+              description: "At least one lifecycle transition has been due for more than two minutes."
+              runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#owner-scheduler-lag"
+
+  - name: node heartbeat remains stale
+    interval: 1m
+    input_series:
+      - series: 'vpn_provisioning_node_heartbeat_age_seconds{service="provisioning-service",status="active"}'
+        values: '120+0x7'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: VPNNodeHeartbeatStale
+        exp_alerts:
+          - exp_labels:
+              service: provisioning-service
+              status: active
+              severity: critical
+            exp_annotations:
+              summary: "VPN node heartbeat is stale"
+              description: "The oldest active-node heartbeat has been stale for more than one minute."
+              runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#node-capacity-and-health"
+
+  - name: Xray remains unhealthy
+    interval: 1m
+    input_series:
+      - series: 'vpn_node_xray_healthy{service="node-agent",job="vpn-nodes",instance="node-agent-primary:8443"}'
+        values: '0+0x4'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: VPNXrayUnhealthy
+        exp_alerts:
+          - exp_labels:
+              service: node-agent
+              job: vpn-nodes
+              instance: node-agent-primary:8443
+              severity: critical
+            exp_annotations:
+              summary: "Xray is unhealthy on node-agent-primary:8443"
+              description: "The node-agent supervisor reports that its Xray process is not healthy."
+              runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#xray-reload-failure"
+
+  - name: recent Xray reload failure is reported
+    interval: 1m
+    input_series:
+      - series: 'vpn_node_xray_last_reload_failure_timestamp_seconds{service="node-agent",job="vpn-nodes",instance="node-agent-failover:8443"}'
+        values: '0 60 60'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: VPNXrayReloadFailed
+        exp_alerts:
+          - exp_labels:
+              service: node-agent
+              job: vpn-nodes
+              instance: node-agent-failover:8443
+              severity: warning
+            exp_annotations:
+              summary: "Xray reload failed on node-agent-failover:8443"
+              description: "A reload failed validation or required rollback during the last ten minutes."
+              runbook_url: "https://github.com/ZheglY/vpn-platform/blob/main/docs/runbooks/observability.md#xray-reload-failure"

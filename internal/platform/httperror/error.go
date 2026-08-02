@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/yarik/vpn-service/internal/platform/requestid"
+	"github.com/ZheglY/vpn-platform/internal/platform/requestid"
 )
 
 type Response struct {

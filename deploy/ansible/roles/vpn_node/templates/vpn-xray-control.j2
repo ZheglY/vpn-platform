@@ -1,0 +1,35 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+  reload)
+    test -d /run/vpn-node-control
+    umask 007
+    request="$(mktemp /run/vpn-node-control/.request.XXXXXX)"
+    trap 'rm -f "$request"' EXIT HUP INT TERM
+    request_id="${request##*.request.}"
+    printf '%s\n' "$request_id" >"$request"
+    mv "$request" "/run/vpn-node-control/request-$request_id"
+    trap - EXIT HUP INT TERM
+    attempts=0
+    while [ "$attempts" -lt 80 ]; do
+      if [ -r /run/vpn-node-control/completed ]; then
+        read -r completed_id outcome </run/vpn-node-control/completed || true
+        if [ "${completed_id:-}" = "$request_id" ]; then
+          [ "${outcome:-}" = success ]
+          exit $?
+        fi
+      fi
+      attempts=$((attempts + 1))
+      sleep 0.1
+    done
+    rm -f "/run/vpn-node-control/request-$request_id"
+    exit 1
+    ;;
+  status)
+    test -f /run/vpn-xray-health/active
+    ;;
+  *)
+    exit 64
+    ;;
+esac

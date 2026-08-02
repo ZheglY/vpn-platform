@@ -1,0 +1,85 @@
+{
+  "format_version": 1,
+  "environment": "production",
+  "source_commit": "<required:40-character-reviewed-commit>",
+  "release_images": {
+    "credentialstage": "<required:sha256-digest>",
+    "migrate": "<required:sha256-digest>",
+    "backupctl": "<required:sha256-digest>",
+    "identity-service": "<required:sha256-digest>",
+    "catalog-service": "<required:sha256-digest>",
+    "billing-service": "<required:sha256-digest>",
+    "subscription-service": "<required:sha256-digest>",
+    "access-service": "<required:sha256-digest>",
+    "provisioning-service": "<required:sha256-digest>",
+    "node-agent": "<required:sha256-digest>",
+    "telegram-bot": "<required:sha256-digest>",
+    "notification-service": "<required:sha256-digest>",
+    "admin-service": "<required:sha256-digest>",
+    "admin-cli": "<required:sha256-digest>",
+    "prometheus": "<required:sha256-digest>",
+    "grafana": "<required:sha256-digest>",
+    "otel-collector": "<required:sha256-digest>",
+    "tempo": "<required:sha256-digest>",
+    "loki": "<required:sha256-digest>"
+  },
+  "identity": {
+    "trust_domain": "<required:production-trust-domain>",
+    "namespace": "production"
+  },
+  "public": {
+    "telegram_webhook_url": "https://<required:telegram-domain>/webhooks/telegram",
+    "billing_webhook_url": "https://<required:billing-domain>/webhooks/yookassa",
+    "subscription_base_url": "https://<required:subscription-domain>",
+    "admin_base_url": "https://<required:private-admin-domain>",
+    "payment_return_url": "https://<required:public-domain>/payment-return",
+    "terms_url": "https://<required:legal-domain>/terms",
+    "support_url": "https://<required:support-domain>/support"
+  },
+  "config_references": {
+    "postgres_topology": "configref://<required:production-postgres-topology>",
+    "kafka_topology": "configref://<required:production-kafka-topology>",
+    "redis_topology": "configref://<required:production-redis-topology>",
+    "registry": "configref://<required:production-registry>",
+    "backup_repository": "configref://<required:production-backup-repository>",
+    "observability": "configref://<required:production-observability>",
+    "alert_routing": "configref://<required:production-alert-routing>",
+    "wireguard_network": "configref://<required:production-wireguard-network>",
+    "node_inventory": "configref://<required:production-node-inventory>",
+    "edge_policy": "configref://<required:production-edge-policy>"
+  },
+  "credential_references": {
+    "secrets": {
+      "database_runtime": "secretref://<required:production-database-runtime>",
+      "redis_password": "secretref://<required:production-redis-password>",
+      "telegram_bot_token": "secretref://<required:production-telegram-bot-token>",
+      "telegram_webhook_secret": "secretref://<required:production-telegram-webhook-secret>",
+      "yookassa_credentials": "secretref://<required:production-yookassa-credentials>"
+    },
+    "keys": {
+      "access_credential_encryption": "keyref://<required:production-access-credential-key>",
+      "access_token_hmac": "keyref://<required:production-access-token-key>",
+      "backup_encryption": "keyref://<required:production-backup-key>",
+      "pki_issuing": "keyref://<required:production-pki-key>",
+      "reality_private": "keyref://<required:production-reality-key>",
+      "wireguard_private": "keyref://<required:production-wireguard-keys>"
+    },
+    "certificates": {
+      "admin_client": "certref://<required:production-admin-client>",
+      "edge_tls": "certref://<required:production-edge-tls>",
+      "kafka_clients": "certref://<required:production-kafka-clients>",
+      "observability_clients": "certref://<required:production-observability-clients>",
+      "service_mesh": "certref://<required:production-service-certificates>"
+    }
+  },
+  "operations": {
+    "primary_oncall": "contactref://<required:production-primary-oncall>",
+    "secondary_oncall": "contactref://<required:production-secondary-oncall>",
+    "rpo_minutes": 0,
+    "rto_minutes": 0,
+    "canary_percent": 0,
+    "minimum_nodes_per_region": 0,
+    "reserve_percent": 0,
+    "regions": ["<required:production-region>"]
+  }
+}

@@ -1,0 +1,114 @@
+{
+  "format_version": 1,
+  "reviewed_at": "2026-07-26",
+  "review_owner": "Platform/Security",
+  "publication_decision": "NO-GO",
+  "allowed_exact_spdx_expressions": [
+    "0BSD",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BlueOak-1.0.0",
+    "ISC",
+    "MIT",
+    "PostgreSQL",
+    "Python-2.0"
+  ],
+  "images": [
+    {
+      "name": "credentialstage",
+      "status": "blocked",
+      "reason": "Repository distribution license and complete binary notices are not approved."
+    },
+    {
+      "name": "migrate",
+      "status": "blocked",
+      "reason": "Repository distribution license and complete binary notices are not approved."
+    },
+    {
+      "name": "backupctl",
+      "status": "blocked",
+      "reason": "Repository distribution license and complete binary notices are not approved."
+    },
+    {
+      "name": "identity-service",
+      "status": "blocked",
+      "reason": "Repository distribution license and complete binary notices are not approved."
+    },
+    {
+      "name": "catalog-service",
+      "status": "blocked",
+      "reason": "Repository distribution license and complete binary notices are not approved."
+    },
+    {
+      "name": "billing-service",
+      "status": "blocked",
+      "reason": "Repository distribution license and complete binary notices are not approved."
+    },
+    {
+      "name": "subscription-service",
+      "status": "blocked",
+      "reason": "Repository distribution license and complete binary notices are not approved."
+    },
+    {
+      "name": "access-service",
+      "status": "blocked",
+      "reason": "Repository distribution license and complete binary notices are not approved."
+    },
+    {
+      "name": "provisioning-service",
+      "status": "blocked",
+      "reason": "Repository distribution license and complete binary notices are not approved."
+    },
+    {
+      "name": "node-agent",
+      "status": "requires_counsel",
+      "reason": "Includes an MPL-2.0 Xray-core security rebuild and repository-owned code with no approved distribution license."
+    },
+    {
+      "name": "telegram-bot",
+      "status": "blocked",
+      "reason": "Repository distribution license and complete binary notices are not approved."
+    },
+    {
+      "name": "notification-service",
+      "status": "blocked",
+      "reason": "Repository distribution license and complete binary notices are not approved."
+    },
+    {
+      "name": "admin-service",
+      "status": "blocked",
+      "reason": "Repository distribution license and complete binary notices are not approved."
+    },
+    {
+      "name": "admin-cli",
+      "status": "blocked",
+      "reason": "Repository distribution license and complete binary notices are not approved."
+    },
+    {
+      "name": "prometheus",
+      "status": "approved",
+      "reason": "Apache-2.0 source rebuild includes upstream LICENSE and NOTICE; final SBOM still remains subject to the publication gate."
+    },
+    {
+      "name": "grafana",
+      "status": "requires_counsel",
+      "reason": "Grafana OSS is AGPL-3.0; deployment and distribution obligations require professional review."
+    },
+    {
+      "name": "otel-collector",
+      "status": "blocked",
+      "reason": "Apache-2.0 Collector/contrib licenses are present, but the image also includes repository-owned httphealth code with no approved distribution license."
+    },
+    {
+      "name": "tempo",
+      "status": "requires_counsel",
+      "reason": "Tempo is AGPL-3.0; security rebuild distribution and network-use obligations require professional review."
+    },
+    {
+      "name": "loki",
+      "status": "requires_counsel",
+      "reason": "Loki is AGPL-3.0; security rebuild distribution and network-use obligations require professional review."
+    }
+  ]
+}

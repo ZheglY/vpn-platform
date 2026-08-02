@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+
+overall=0
+while :; do
+  set -- /run/vpn-node-control/request-*
+  [ -e "$1" ] || break
+  request="$1"
+  request_id="${request##*/request-}"
+  outcome=failure
+  trap 'rm -f "$request"' EXIT HUP INT TERM
+
+  if /bin/systemctl restart xray.service &&
+     /bin/sleep 1 &&
+     /bin/systemctl is-active --quiet xray.service; then
+    outcome=success
+  else
+    overall=1
+  fi
+
+  response="/run/vpn-node-control/.completed-$request_id"
+  printf '%s %s\n' "$request_id" "$outcome" >"$response"
+  mv -f "$response" /run/vpn-node-control/completed
+  rm -f "$request"
+  trap - EXIT HUP INT TERM
+done
+exit "$overall"

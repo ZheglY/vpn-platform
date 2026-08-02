@@ -1,0 +1,19 @@
+{
+  "event_id": "12121212-1212-4212-8212-121212121212",
+  "event_type": "subscription.expired.v1",
+  "schema_version": 1,
+  "occurred_at": "2026-08-17T01:02:03Z",
+  "producer": "subscription-service",
+  "correlation_id": "12121212-1212-4212-8212-121212121212",
+  "causation_id": null,
+  "aggregate_type": "subscription",
+  "aggregate_id": "99999999-9999-4999-8999-999999999999",
+  "aggregate_sequence": 3,
+  "partition_key": "user:33333333-3333-4333-8333-333333333333",
+  "data": {
+    "subscription_id": "99999999-9999-4999-8999-999999999999",
+    "user_id": "33333333-3333-4333-8333-333333333333",
+    "reason": "expired",
+    "effective_at": "2026-08-17T01:02:03Z"
+  }
+}

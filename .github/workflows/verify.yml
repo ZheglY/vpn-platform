@@ -11,7 +11,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 180
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -31,5 +31,19 @@ jobs:
         run: npm ci
       - name: Verify
         run: make verify
-      - name: Compose smoke
-        run: make compose-smoke
+      - name: Native Linux credential and 8-target observability smoke
+        run: make observability-smoke
+      - name: Native Linux credential and 11-target Stage 7 smoke
+        run: make stage7-smoke
+      - name: Forced-failure backup cleanup and ignored filesystem scan
+        run: make backup-cleanup-test filesystem-secret-scan
+      - name: Encrypted database-per-service backup and clean restore drill
+        run: make backup-restore-drill
+      - name: Disposable Debian node hardening and idempotence
+        run: make node-hardening-test
+      - name: Secret overlap, cutover, and rollback drill
+        run: make secret-rotation-drill
+      - name: Bounded load and dependency failure recovery drill
+        run: make resilience-drill
+      - name: Build scanned release inventory and SPDX bundle
+        run: make release-bundle

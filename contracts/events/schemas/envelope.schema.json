@@ -57,6 +57,11 @@
       "type": "string",
       "format": "uuid"
     },
+    "aggregate_sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Producer-owned monotonic sequence for ordered aggregate events when required by the message contract."
+    },
     "partition_key": {
       "type": "string",
       "minLength": 1,

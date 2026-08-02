@@ -6,11 +6,17 @@
   "scripts": {
     "lint:openapi": "redocly lint contracts/http/openapi.yaml",
     "lint:asyncapi": "node scripts/validate-asyncapi.mjs",
-    "lint:contracts": "npm run lint:openapi && npm run lint:asyncapi"
+    "lint:events": "node scripts/validate-event-schemas.mjs",
+    "lint:contracts": "npm run lint:openapi && npm run lint:asyncapi && npm run lint:events"
   },
   "devDependencies": {
     "@asyncapi/parser": "3.6.0",
     "@redocly/cli": "2.38.0",
-    "js-yaml": "5.2.1"
+    "ajv": "8.20.0",
+    "ajv-formats": "2.1.1",
+    "js-yaml": "5.2.2"
+  },
+  "overrides": {
+    "minimatch": "10.2.5"
   }
 }

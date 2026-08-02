@@ -15,12 +15,12 @@ Use mTLS as the concrete authentication mechanism for all internal service-to-se
 Rules:
 
 - Internal HTTP APIs require client certificates issued by a platform CA.
-- Service authorization is based on certificate subject/SAN mapped to a service identity such as `telegram-bot`, `billing-service`, `access-service`, or `provisioning-service`.
+- Service authorization is based on strict SPIFFE URI identities from verified certificate chains, as clarified in ADR 0018, mapped to a service identity such as `telegram-bot`, `billing-service`, `access-service`, or `provisioning-service`.
 - A private network is defense in depth, not authentication.
 - Spoofable headers such as `X-Internal` are never sufficient.
 - Endpoint allowlists define which service identities may call each operation.
 - Admin CLI/internal admin API also uses mTLS, with admin certificate identity mapped to RBAC roles and audited actions.
-- Local development may use generated development CA/certificates, but the same identity checks must remain active.
+- Local development uses generated development CA/certificates in the default Compose path, so the same identity checks remain active.
 
 Public ingress exceptions:
 

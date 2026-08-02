@@ -1,0 +1,23 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/ZheglY/vpn-platform/security/vex/tempo-2.10.5-cve-2026-42151",
+  "author": "VPN Platform maintainers",
+  "role": "Document Creator",
+  "timestamp": "2026-07-25T17:25:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "@id": "CVE-2026-42151"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/prometheus/prometheus@v0.305.5"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "Prometheus 3.5.5 LTS contains the upstream fix: Azure AD OAuth ClientSecret uses the redacting config_util.Secret type. The Tempo build asserts that exact field before compilation; Trivy's linear module range omits the patched 3.5 LTS branch."
+    }
+  ]
+}

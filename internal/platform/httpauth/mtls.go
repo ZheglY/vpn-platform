@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 
-	"github.com/yarik/vpn-service/internal/platform/httperror"
+	"github.com/ZheglY/vpn-platform/internal/platform/httperror"
 )
 
 type ServiceIdentity struct {
@@ -17,6 +18,15 @@ type ServiceIdentity struct {
 	Namespace   string
 	Name        string
 }
+
+type AdminIdentity struct {
+	TrustDomain string
+	Environment string
+	Principal   string
+	SPIFFEID    string
+}
+
+var adminPrincipalPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 type contextKey struct{}
 
@@ -61,6 +71,31 @@ func IdentityFromTLS(state *tls.ConnectionState, trustDomain, namespace string) 
 		}
 	}
 	return ServiceIdentity{}, false
+}
+
+func AdminIdentityFromTLS(state *tls.ConnectionState, trustDomain, environment string) (AdminIdentity, bool) {
+	if state == nil || trustDomain == "" || environment == "" || len(state.VerifiedChains) == 0 || len(state.VerifiedChains[0]) == 0 {
+		return AdminIdentity{}, false
+	}
+	var found *AdminIdentity
+	for _, uri := range state.VerifiedChains[0][0].URIs {
+		if uri == nil || uri.Scheme != "spiffe" || uri.Host != trustDomain || uri.User != nil || uri.RawQuery != "" || uri.Fragment != "" || uri.RawPath != "" {
+			continue
+		}
+		parts := strings.Split(strings.Trim(uri.Path, "/"), "/")
+		if len(parts) != 4 || parts[0] != "ns" || parts[1] != environment || parts[2] != "admin" || !adminPrincipalPattern.MatchString(parts[3]) {
+			continue
+		}
+		if found != nil {
+			return AdminIdentity{}, false
+		}
+		identity := AdminIdentity{TrustDomain: trustDomain, Environment: environment, Principal: parts[3], SPIFFEID: uri.String()}
+		found = &identity
+	}
+	if found == nil {
+		return AdminIdentity{}, false
+	}
+	return *found, true
 }
 
 func identityFromSPIFFEURI(uri *url.URL, trustDomain, namespace string) (ServiceIdentity, bool) {

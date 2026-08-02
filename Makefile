@@ -6,7 +6,7 @@ TRIVY_IMAGE ?= aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a
 export GOVULNCHECK_VERSION
 export GITLEAKS_VERSION
 
-.PHONY: fmt fmt-check tidy-check test race vet lint vuln secret-scan npm-audit contracts openapi asyncapi docker-build image-scan compose-config compose-smoke compose-up compose-down diff-check verify
+.PHONY: fmt fmt-check tidy-check test race vet lint vuln secret-scan filesystem-secret-scan npm-audit contracts openapi asyncapi license-review-check license-publication-gate production-readiness production-preflight production-preflight-check docker-build image-scan compose-config compose-smoke vpn-smoke stage7-smoke observability-validate observability-smoke backup-restore-drill backup-cleanup-test node-hardening-test secret-rotation-drill resilience-drill release-bundle compose-up compose-down diff-check verify
 
 fmt:
 	go fmt ./...
@@ -22,11 +22,15 @@ tidy-check:
 	go mod tidy -diff
 
 test:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1
+else
 	go test ./...
+endif
 
 race:
 ifeq ($(OS),Windows_NT)
-	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/race.ps1
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Race
 else
 	CGO_ENABLED=1 go test -race ./...
 endif
@@ -55,6 +59,13 @@ else
 	fi
 endif
 
+filesystem-secret-scan:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/filesystem-secret-scan.ps1
+else
+	bash scripts/filesystem-secret-scan.sh
+endif
+
 npm-audit:
 ifeq ($(OS),Windows_NT)
 	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/npm-audit.ps1
@@ -74,18 +85,44 @@ asyncapi:
 	npm run lint:asyncapi
 
 contracts: openapi asyncapi
+	npm run lint:events
+
+license-review-check:
+	node --test scripts/validate-license-policy.test.mjs
+	node scripts/validate-license-policy.mjs
+
+license-publication-gate:
+ifndef RELEASE_OUTPUT_DIR
+	$(error RELEASE_OUTPUT_DIR is required)
+endif
+	node scripts/validate-license-policy.mjs --publication --output="$(RELEASE_OUTPUT_DIR)"
+
+production-readiness: license-review-check
+	node --test scripts/validate-production-readiness.test.mjs
+	node scripts/validate-production-readiness.mjs
+
+production-preflight:
+ifndef ENVIRONMENT_CONFIG
+	$(error ENVIRONMENT_CONFIG is required)
+endif
+	go run -mod=readonly ./tools/productionpreflight --config "$(ENVIRONMENT_CONFIG)" --environment "$(or $(DEPLOY_ENVIRONMENT),production)" --source-commit "$(or $(SOURCE_COMMIT),$(shell git rev-parse HEAD))"
+
+production-preflight-check:
+	go test ./tools/productionpreflight ./internal/platform/config ./internal/platform/kafka ./internal/platform/redis
 
 docker-build:
-	docker build -f services/identity/Dockerfile -t vpn-service/identity-service:local .
+	go run -mod=readonly ./tools/releasectl local-build --inventory deploy/release/images.json
 
 image-scan:
-	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/identity-service:local
+	go run -mod=readonly ./tools/releasectl local-scan --inventory deploy/release/images.json
 
 compose-config:
 ifeq ($(OS),Windows_NT)
 	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/compose-config.ps1
 else
-	POSTGRES_USER=vpn_local POSTGRES_PASSWORD=local-compose-password REDIS_PASSWORD=local-compose-redis docker compose --profile core --profile app config --quiet
+	bash scripts/dev-mtls.sh
+	bash scripts/dev-xray.sh
+	POSTGRES_USER=vpn_local POSTGRES_PASSWORD=local-compose-password POSTGRES_DB=vpn_platform REDIS_PASSWORD=local-compose-redis KAFKA_PORT=9094 IDENTITY_DB_PASSWORD=local-compose-identity CATALOG_DB_PASSWORD=local-compose-catalog BILLING_DB_PASSWORD=local-compose-billing SUBSCRIPTION_DB_PASSWORD=local-compose-subscription ACCESS_DB_PASSWORD=local-compose-access PROVISIONING_DB_PASSWORD=local-compose-provisioning NOTIFICATION_DB_PASSWORD=local-compose-notification ADMIN_DB_PASSWORD=local-compose-admin ADMIN_MIGRATOR_DB_PASSWORD=local-compose-admin-migrator ACCESS_CREDENTIAL_KEY_BASE64=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY= ACCESS_TOKEN_HMAC_KEY_BASE64=ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA= SUBSCRIPTION_PUBLIC_BASE_URL=https://127.0.0.1:8087 TELEGRAM_WEBHOOK_SECRET=local-compose-webhook-secret TELEGRAM_BOT_TOKEN=local-compose-fake-bot-token FAKE_TELEGRAM_SEND_DELAY=250ms TERMS_URL=https://example.invalid/terms/terms-v1 YOOKASSA_SHOP_ID=test-shop YOOKASSA_SECRET_KEY=local-compose-yookassa-key PAYMENT_RETURN_URL=https://example.invalid/payment-return docker compose --profile core --profile app --profile vpn --profile obs --profile maintenance config --quiet
 endif
 
 compose-smoke:
@@ -95,7 +132,82 @@ else
 	bash scripts/compose-smoke.sh
 endif
 
+vpn-smoke:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/vpn-smoke.ps1
+else
+	bash scripts/vpn-smoke.sh
+endif
+
+stage7-smoke:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stage7-smoke.ps1
+else
+	bash scripts/stage7-smoke.sh
+endif
+
+observability-validate:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/observability-validate.ps1
+else
+	bash scripts/observability-validate.sh
+endif
+
+observability-smoke:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/observability-smoke.ps1
+else
+	bash scripts/observability-smoke.sh
+endif
+
+backup-restore-drill:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/backup-restore-drill.ps1
+else
+	bash scripts/backup-restore-drill.sh
+endif
+
+backup-cleanup-test:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/backup-cleanup-test.ps1
+else
+	bash scripts/backup-cleanup-test.sh
+endif
+
+node-hardening-test:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/node-hardening-test.ps1
+else
+	bash scripts/node-hardening-test.sh
+endif
+
+secret-rotation-drill:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/secret-rotation-drill.ps1
+else
+	bash scripts/secret-rotation-drill.sh
+endif
+
+resilience-drill:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/resilience-drill.ps1
+else
+	bash scripts/resilience-drill.sh
+endif
+
+release-bundle:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-bundle.ps1
+else
+	bash scripts/release-bundle.sh
+endif
+
 compose-up:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-mtls.ps1
+else
+	bash scripts/dev-mtls.sh
+endif
 	docker compose --profile core --profile app up --build
 
 compose-down:
@@ -104,4 +216,4 @@ compose-down:
 diff-check:
 	git diff --exit-code
 
-verify: fmt-check tidy-check vet test race lint vuln secret-scan npm-audit contracts docker-build image-scan compose-config diff-check
+verify: fmt-check tidy-check vet test race lint vuln secret-scan filesystem-secret-scan npm-audit contracts production-readiness production-preflight-check observability-validate docker-build image-scan compose-config diff-check

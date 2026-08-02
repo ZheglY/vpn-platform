@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vpn-platform.invalid/schemas/access.revoke.succeeded.v1.schema.json",
+  "type": "object",
+  "required": ["event_id", "event_type", "schema_version", "occurred_at", "producer", "correlation_id", "causation_id", "aggregate_type", "aggregate_id", "aggregate_sequence", "partition_key", "data"],
+  "additionalProperties": false,
+  "properties": {
+    "event_id": {"type": "string", "format": "uuid"}, "event_type": {"const": "access.revoke.succeeded.v1"}, "schema_version": {"const": 1},
+    "occurred_at": {"type": "string", "format": "date-time"}, "producer": {"const": "provisioning-service"},
+    "correlation_id": {"type": "string", "format": "uuid"}, "causation_id": {"type": ["string", "null"], "format": "uuid"},
+    "aggregate_type": {"const": "credential"}, "aggregate_id": {"type": "string", "format": "uuid"}, "aggregate_sequence": {"type": "integer", "minimum": 1},
+    "partition_key": {"type": "string", "pattern": "^credential:[0-9a-fA-F-]{36}$"}, "data": {"$ref": "#/$defs/result"}
+  },
+  "$defs": {"result": {"type": "object", "required": ["operation_id", "credential_id", "desired_revision", "allocation_revision", "all_assigned_nodes_removed", "node_ids", "revoked_at"], "additionalProperties": false, "properties": {
+    "operation_id": {"type": "string", "format": "uuid"}, "credential_id": {"type": "string", "format": "uuid"}, "desired_revision": {"type": "integer", "minimum": 1},
+    "allocation_revision": {"type": "integer", "minimum": 0}, "all_assigned_nodes_removed": {"const": true},
+    "node_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "format": "uuid"}}, "revoked_at": {"type": "string", "format": "date-time"}
+  }}}
+}

@@ -1,0 +1,30 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    environment: local
+
+rule_files:
+  - /etc/prometheus/rules/platform.yml
+  - /etc/prometheus/rules/operations.yml
+  - /etc/prometheus/rules/slo.yml
+
+scrape_configs:
+  - job_name: vpn-control-plane
+    scheme: https
+    metrics_path: /metrics
+    tls_config:
+      ca_file: /run/mtls/ca.crt
+      cert_file: /run/mtls/observability.crt
+      key_file: /run/mtls/observability.key
+      min_version: TLS13
+    static_configs:
+      - targets:
+          - identity-service:8080
+          - catalog-service:8083
+          - billing-service:8084
+          - subscription-service:8086
+          - access-service:8087
+          - notification-service:8091
+          - admin-service:8092
+          - telegram-bot:8090
