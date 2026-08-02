@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -94,26 +95,66 @@ func TestLoadProbeRejectsPlainHTTPAndUnsafeURLs(t *testing.T) {
 	}
 }
 
-func TestLoadProbeRejectsRedirectDowngrade(t *testing.T) {
-	var plaintextRequests atomic.Int32
-	plaintext := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		plaintextRequests.Add(1)
-	}))
-	defer plaintext.Close()
-	tlsServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, plaintext.URL, http.StatusFound)
-	}))
-	defer tlsServer.Close()
-	client, err := newClient(writeServerCA(t, tlsServer))
+func TestLoadProbeNeverFollowsRedirects(t *testing.T) {
+	tests := []struct {
+		name     string
+		location func(source, destination *httptest.Server) string
+	}{
+		{name: "HTTPS to HTTP downgrade", location: func(_ *httptest.Server, destination *httptest.Server) string {
+			return strings.Replace(destination.URL, "https://", "http://", 1)
+		}},
+		{name: "different host", location: func(_ *httptest.Server, destination *httptest.Server) string { return destination.URL }},
+		{name: "changed port", location: func(_ *httptest.Server, destination *httptest.Server) string { return destination.URL }},
+		{name: "userinfo", location: func(_ *httptest.Server, destination *httptest.Server) string {
+			return strings.Replace(destination.URL, "https://", "https://user@", 1)
+		}},
+		{name: "fragment", location: func(_ *httptest.Server, destination *httptest.Server) string {
+			return destination.URL + "/next#fragment"
+		}},
+		{name: "relative", location: func(*httptest.Server, *httptest.Server) string { return "/relative" }},
+		{name: "loop", location: func(source, _ *httptest.Server) string { return source.URL }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var destinationRequests atomic.Int32
+			destination := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				destinationRequests.Add(1)
+			}))
+			defer destination.Close()
+			var source *httptest.Server
+			source = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, tt.location(source, destination), http.StatusFound)
+			}))
+			defer source.Close()
+			client, err := newClient(writeServerCA(t, source))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.CloseIdleConnections()
+			err = probe(context.Background(), client, source.URL, []int{http.StatusOK})
+			if err == nil || err.Error() != "unexpected status" {
+				t.Fatalf("redirect error = %v, want privacy-safe unexpected status", err)
+			}
+			if strings.Contains(err.Error(), source.URL) || strings.Contains(err.Error(), destination.URL) {
+				t.Fatal("redirect error disclosed a URL")
+			}
+			if got := destinationRequests.Load(); got != 0 {
+				t.Fatalf("redirect target received %d requests", got)
+			}
+		})
+	}
+}
+
+func TestLoadProbeNormalizesTransportErrors(t *testing.T) {
+	client, err := newClient("")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer client.CloseIdleConnections()
-	if _, err := client.Get(tlsServer.URL); err == nil {
-		t.Fatal("HTTPS-to-HTTP redirect unexpectedly succeeded")
-	}
-	if got := plaintextRequests.Load(); got != 0 {
-		t.Fatalf("plaintext redirect target received %d requests", got)
+	target := "https://127.0.0.1:1/private-path?token=secret"
+	err = probe(context.Background(), client, target, []int{http.StatusOK})
+	if err == nil || err.Error() != "load probe request failed" || strings.Contains(err.Error(), target) || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("transport error is not privacy-safe: %v", err)
 	}
 }
 

@@ -242,8 +242,8 @@ func newClient(caFile string) (*http.Client, error) {
 	return &http.Client{
 		Transport: transport,
 		Timeout:   5 * time.Second,
-		CheckRedirect: func(request *http.Request, _ []*http.Request) error {
-			return validateTargetURL(request.URL.String())
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
 		},
 	}, nil
 }
@@ -255,7 +255,7 @@ func probe(ctx context.Context, client *http.Client, target string, expectedStat
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return err
+		return fmt.Errorf("load probe request failed")
 	}
 	if _, err := io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10)); err != nil {
 		_ = response.Body.Close()
