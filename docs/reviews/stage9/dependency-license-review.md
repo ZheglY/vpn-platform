@@ -131,7 +131,9 @@ inventory and machine-readable policy and requires `NO-GO` while any image is
 blocked or requires counsel.
 
 `make license-publication-gate RELEASE_OUTPUT_DIR=<bundle>` additionally
-requires an overall `GO`, every image approved, every SBOM present, and exact
-allowlisted license assertions for every package. It is expected to fail at this
-review baseline. It must not be added to a green deployment path by weakening
-the allowlist.
+first verifies the exact 19-image release bundle and its checksums, requires its
+source commit to equal current `HEAD`, then requires an overall `GO`, every image
+approved, non-empty SPDX packages, and independently allowlisted exact declared
+and concluded license assertions for every package. It is expected to fail at
+this review baseline. It must not be added to a green deployment path by
+weakening the allowlist.

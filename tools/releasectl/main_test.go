@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,6 +67,19 @@ func TestValidateSBOMAndReleaseDetectTampering(t *testing.T) {
 	if err := verifyRelease(output, spec); err != nil {
 		t.Fatalf("expected valid release: %v", err)
 	}
+	manifest.Images[0].SBOMSHA256 = strings.Repeat("0", 64)
+	rewriteReleaseMetadata(t, output, manifest)
+	if err := verifyRelease(output, spec); err == nil || !strings.Contains(err.Error(), "SBOM checksum mismatch") {
+		t.Fatalf("expected wrong manifest checksum to be rejected, got %v", err)
+	}
+	manifest.Images[0].SBOMSHA256 = digest
+	manifest.Version = "../bad"
+	rewriteReleaseMetadata(t, output, manifest)
+	if err := verifyRelease(output, spec); err == nil || !strings.Contains(err.Error(), "metadata is invalid") {
+		t.Fatalf("expected bad release version to be rejected, got %v", err)
+	}
+	manifest.Version = "1.0.0"
+	rewriteReleaseMetadata(t, output, manifest)
 	wrongSubject := filepath.Join(output, "wrong-subject.spdx.json")
 	writeTestJSON(t, wrongSubject, map[string]any{
 		"spdxVersion":       "SPDX-2.3",
@@ -100,6 +115,12 @@ func TestValidateSBOMAndReleaseDetectTampering(t *testing.T) {
 	}
 }
 
+func TestVerifyReleaseRejectsMissingManifest(t *testing.T) {
+	if err := verifyRelease(t.TempDir(), inventory{}); err == nil || !strings.Contains(err.Error(), "read release manifest") {
+		t.Fatalf("expected missing manifest to be rejected, got %v", err)
+	}
+}
+
 func TestRepositoryReleaseInventoryIsComplete(t *testing.T) {
 	workingDirectory, err := os.Getwd()
 	if err != nil {
@@ -119,6 +140,61 @@ func TestRepositoryReleaseInventoryIsComplete(t *testing.T) {
 	}
 	if len(spec.Images) != 19 {
 		t.Fatalf("release inventory has %d images, want 19", len(spec.Images))
+	}
+	foundMigrate := false
+	for _, item := range spec.Images {
+		foundMigrate = foundMigrate || item.Name == "migrate"
+	}
+	if !foundMigrate {
+		t.Fatal("release inventory is missing migrate")
+	}
+	runner := &recordingRunner{}
+	if err := runLocalBuild([]string{"--inventory", "deploy/release/images.json"}, runner); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.calls) != 19 || !runner.hasImage("vpn-service/migrate:local") {
+		t.Fatalf("local build calls = %d, migrate = %t", len(runner.calls), runner.hasImage("vpn-service/migrate:local"))
+	}
+	runner.calls = nil
+	if err := runLocalScan([]string{"--inventory", "deploy/release/images.json"}, runner); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.calls) != 19 || !runner.hasImage("vpn-service/migrate:local") || !runner.hasArgument("--vex") {
+		t.Fatalf("local scan calls = %d, migrate = %t, vex = %t", len(runner.calls), runner.hasImage("vpn-service/migrate:local"), runner.hasArgument("--vex"))
+	}
+}
+
+func TestLoadInventoryRejectsUnclassifiedDockerfile(t *testing.T) {
+	root := t.TempDir()
+	for _, directory := range []string{"services/covered", "services/unclassified", "tools", "deploy/observability"} {
+		if err := os.MkdirAll(filepath.Join(root, filepath.FromSlash(directory)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"services/covered/Dockerfile", "services/unclassified/Dockerfile"} {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(name)), []byte("FROM scratch\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inventoryPath := filepath.Join(root, "images.json")
+	writeTestJSON(t, inventoryPath, inventory{
+		FormatVersion: 1, SourceRepository: "https://github.com/example/project",
+		Toolchain: toolchain{
+			SyftImage:  "anchore/syft:v1@sha256:" + strings.Repeat("a", 64),
+			TrivyImage: "aquasec/trivy:v1@sha256:" + strings.Repeat("b", 64),
+		},
+		Images: []image{{Name: "covered", Dockerfile: "services/covered/Dockerfile"}},
+	})
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(workingDirectory) }()
+	if _, err := loadInventory(inventoryPath); err == nil {
+		t.Fatal("expected unclassified Dockerfile to be rejected")
 	}
 }
 
@@ -194,4 +270,52 @@ func writeTestJSON(t *testing.T, path string, value any) {
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func rewriteReleaseMetadata(t *testing.T, output string, manifest releaseManifest) {
+	t.Helper()
+	for _, name := range []string{manifestFilename, "SHA256SUMS"} {
+		if err := os.Remove(filepath.Join(output, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writeJSON(filepath.Join(output, manifestFilename), manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeChecksums(output, manifest); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type recordedCall struct {
+	name string
+	args []string
+}
+
+type recordingRunner struct {
+	calls []recordedCall
+}
+
+func (r *recordingRunner) Run(_ context.Context, name string, args []string, _ io.Writer) error {
+	r.calls = append(r.calls, recordedCall{name: name, args: append([]string(nil), args...)})
+	return nil
+}
+
+func (*recordingRunner) Output(context.Context, string, ...string) (string, error) {
+	return "", nil
+}
+
+func (r *recordingRunner) hasImage(image string) bool {
+	return r.hasArgument(image)
+}
+
+func (r *recordingRunner) hasArgument(argument string) bool {
+	for _, call := range r.calls {
+		for _, item := range call.args {
+			if item == argument {
+				return true
+			}
+		}
+	}
+	return false
 }

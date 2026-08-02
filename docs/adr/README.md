@@ -42,3 +42,5 @@ ADRs are immutable decision records. If a decision changes after implementation 
 | [0036](0036-stage8-resilience-budgets-and-failure-drills.md) | Stage 8 resilience budgets and failure drills | Accepted for Stage 8 implementation |
 | [0037](0037-stage8-release-sbom-and-provenance.md) | Stage 8 release SBOM and provenance | Accepted for Stage 8 implementation |
 | [0038](0038-stage9-production-readiness-evidence.md) | Stage 9 production-readiness evidence and fail-closed gates | Accepted for Stage 9 review |
+| [0039](0039-stage9-xray-first-boot-and-control.md) | Stage 9 Xray first boot and fixed systemd control | Accepted for Stage 9 remediation |
+| [0040](0040-stage9-release-inventory-and-license-gate.md) | Stage 9 release inventory and license publication gate | Accepted for Stage 9 remediation |

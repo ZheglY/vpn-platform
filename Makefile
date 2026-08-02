@@ -88,6 +88,7 @@ contracts: openapi asyncapi
 	npm run lint:events
 
 license-review-check:
+	node --test scripts/validate-license-policy.test.mjs
 	node scripts/validate-license-policy.mjs
 
 license-publication-gate:
@@ -100,44 +101,10 @@ production-readiness: license-review-check
 	node scripts/validate-production-readiness.mjs
 
 docker-build:
-	docker build -f tools/credentialstage/Dockerfile -t vpn-service/credentialstage:local .
-	docker build -f tools/backupctl/Dockerfile -t vpn-service/backupctl:local .
-	docker build -f services/identity/Dockerfile -t vpn-service/identity-service:local .
-	docker build -f services/catalog/Dockerfile -t vpn-service/catalog-service:local .
-	docker build -f services/billing/Dockerfile -t vpn-service/billing-service:local .
-	docker build -f services/subscription/Dockerfile -t vpn-service/subscription-service:local .
-	docker build -f services/access/Dockerfile -t vpn-service/access-service:local .
-	docker build -f services/provisioning/Dockerfile -t vpn-service/provisioning-service:local .
-	docker build -f services/node-agent/Dockerfile -t vpn-service/node-agent:local .
-	docker build -f services/telegram-bot/Dockerfile -t vpn-service/telegram-bot:local .
-	docker build -f services/notification/Dockerfile -t vpn-service/notification-service:local .
-	docker build -f services/admin/Dockerfile -t vpn-service/admin-service:local .
-	docker build -f services/admin/Dockerfile.cli -t vpn-service/admin-cli:local .
-	docker build -f deploy/observability/prometheus/Dockerfile -t vpn-service/prometheus:local .
-	docker build -f deploy/observability/grafana/Dockerfile -t vpn-service/grafana:local .
-	docker build -f deploy/observability/otel-collector/Dockerfile -t vpn-service/otel-collector:local .
-	docker build -f deploy/observability/tempo/Dockerfile -t vpn-service/tempo:local .
-	docker build -f deploy/observability/loki/Dockerfile -t vpn-service/loki:local .
+	go run -mod=readonly ./tools/releasectl local-build --inventory deploy/release/images.json
 
 image-scan:
-	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/credentialstage:local
-	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/backupctl:local
-	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/identity-service:local
-	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/catalog-service:local
-	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/billing-service:local
-	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/subscription-service:local
-	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/access-service:local
-	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/provisioning-service:local
-	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/node-agent:local
-	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/telegram-bot:local
-	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/notification-service:local
-	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/admin-service:local
-	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/admin-cli:local
-	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/prometheus:local
-	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/grafana:local
-	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/otel-collector:local
-	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy -v "$(CURDIR):/workspace:ro" $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress --show-suppressed --vex /workspace/deploy/observability/tempo/tempo.openvex.json vpn-service/tempo:local
-	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v vpn-service-trivy-cache:/root/.cache/trivy $(TRIVY_IMAGE) image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --no-progress vpn-service/loki:local
+	go run -mod=readonly ./tools/releasectl local-scan --inventory deploy/release/images.json
 
 compose-config:
 ifeq ($(OS),Windows_NT)

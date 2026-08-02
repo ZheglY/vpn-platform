@@ -135,16 +135,80 @@ func main() {
 
 func run(args []string, runner commandRunner) error {
 	if len(args) == 0 {
-		return errors.New("expected build or verify command")
+		return errors.New("expected build, verify, local-build, or local-scan command")
 	}
 	switch args[0] {
 	case "build":
 		return runBuild(args[1:], runner)
 	case "verify":
 		return runVerify(args[1:])
+	case "local-build":
+		return runLocalBuild(args[1:], runner)
+	case "local-scan":
+		return runLocalScan(args[1:], runner)
 	default:
-		return errors.New("expected build or verify command")
+		return errors.New("expected build, verify, local-build, or local-scan command")
 	}
+}
+
+func runLocalBuild(args []string, runner commandRunner) error {
+	flags := flag.NewFlagSet("local-build", flag.ContinueOnError)
+	inventoryPath := flags.String("inventory", "deploy/release/images.json", "release inventory")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("local-build accepts no positional arguments")
+	}
+	spec, err := loadInventory(*inventoryPath)
+	if err != nil {
+		return err
+	}
+	for _, item := range spec.Images {
+		arguments := []string{"build", "--file", item.Dockerfile, "--tag", "vpn-service/" + item.Name + ":local", "."}
+		if err := runner.Run(context.Background(), "docker", arguments, os.Stdout); err != nil {
+			return fmt.Errorf("build local image %s: %w", item.Name, err)
+		}
+	}
+	return nil
+}
+
+func runLocalScan(args []string, runner commandRunner) error {
+	flags := flag.NewFlagSet("local-scan", flag.ContinueOnError)
+	inventoryPath := flags.String("inventory", "deploy/release/images.json", "release inventory")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("local-scan accepts no positional arguments")
+	}
+	spec, err := loadInventory(*inventoryPath)
+	if err != nil {
+		return err
+	}
+	repositoryRoot, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("resolve repository root: %w", err)
+	}
+	for _, item := range spec.Images {
+		arguments := []string{
+			"run", "--rm", "-v", "/var/run/docker.sock:/var/run/docker.sock",
+			"-v", "vpn-service-trivy-cache:/root/.cache/trivy",
+		}
+		if item.VEX != "" {
+			arguments = append(arguments, "-v", repositoryRoot+":/workspace:ro")
+		}
+		arguments = append(arguments, spec.Toolchain.TrivyImage, "image", "--scanners", "vuln",
+			"--severity", "HIGH,CRITICAL", "--exit-code", "1", "--no-progress")
+		if item.VEX != "" {
+			arguments = append(arguments, "--show-suppressed", "--vex", "/workspace/"+item.VEX)
+		}
+		arguments = append(arguments, "vpn-service/"+item.Name+":local")
+		if err := runner.Run(context.Background(), "docker", arguments, os.Stdout); err != nil {
+			return fmt.Errorf("scan local image %s: %w", item.Name, err)
+		}
+	}
+	return nil
 }
 
 func runBuild(args []string, runner commandRunner) error {
@@ -525,7 +589,7 @@ func verifyRelease(outputDir string, spec inventory) error {
 		return fmt.Errorf("read release manifest: %w", err)
 	}
 	var manifest releaseManifest
-	if err := json.Unmarshal(body, &manifest); err != nil {
+	if err := decodeStrictJSON(body, &manifest); err != nil {
 		return fmt.Errorf("decode release manifest: %w", err)
 	}
 	if manifest.FormatVersion != 1 || !commitPattern.MatchString(manifest.SourceCommit) ||

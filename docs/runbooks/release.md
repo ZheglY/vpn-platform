@@ -4,6 +4,16 @@ This runbook creates a Stage 8 release candidate. It does not publish or deploy 
 
 ## Local Candidate
 
+Ordinary local image gates use the same inventory as the release candidate:
+
+```powershell
+make docker-build
+make image-scan
+```
+
+Both commands cover all 19 classified images, including `migrate`; adding an
+unclassified production Dockerfile fails before a build or scan starts.
+
 The worktree must be clean:
 
 ```powershell
@@ -20,6 +30,23 @@ The command:
 6. verifies inventory completeness, each SPDX container subject against the immutable image ID, report structure, the exact artifact set, and all SHA-256 bindings.
 
 Output is ignored under `tmp/release-<commit>/`. It contains metadata and SBOMs, not credentials or production configuration. Treat a failed scan, missing package inventory, changed checksum, or dirty tree as a release failure.
+
+## License Publication Gate
+
+After legal/product approval changes the reviewed policy to `GO`, publication
+still requires the exact bundle for current `HEAD`:
+
+```powershell
+make license-publication-gate RELEASE_OUTPUT_DIR=<bundle>
+```
+
+The command first runs the complete `releasectl verify` bundle check. It then
+requires manifest `source_commit` to equal current `HEAD`, all 19 image policies
+to be approved, non-empty SPDX 2.3 packages, and independently allowlisted exact
+`licenseDeclared` and `licenseConcluded` values for every package.
+`NOASSERTION`, `NONE`, `LicenseRef-*`, unknown expressions, missing artifacts,
+wrong subjects, checksum changes, and extra files fail closed. The command is
+expected to remain red while `license-policy.json` truthfully says `NO-GO`.
 
 ## Keyless CI Attestation
 

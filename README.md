@@ -90,7 +90,7 @@ Catalog, billing, subscription, and access listen on `https://localhost:8083`, `
 
 Maintenance commands are isolated behind the `maintenance` profile. Retention defaults to dry-run and must follow [the retention runbook](docs/runbooks/data-retention.md). `make backup-restore-drill` creates disposable local encryption material, restores all eight owner databases into an empty PostgreSQL instance, validates integrity and ownership, then removes the artifacts and volumes; see [the backup runbook](docs/runbooks/backup-restore.md).
 
-`make node-hardening-test`, `make secret-rotation-drill`, and `make resilience-drill` exercise the remaining local Stage 8 operational controls. `make release-bundle` requires a clean commit, builds the complete release inventory, binds every SPDX/Trivy report to an immutable image ID, and verifies the exact checksummed artifact set; the manual `release-attest` workflow adds repository-bound keyless provenance without publishing or deploying images.
+`make node-hardening-test`, `make secret-rotation-drill`, and `make resilience-drill` exercise the remaining local Stage 8 operational controls. `make docker-build`, `make image-scan`, and `make release-bundle` share the same complete 19-image inventory. The release bundle requires a clean commit, binds every SPDX/Trivy report to an immutable image ID, and verifies the exact checksummed artifact set; the manual `release-attest` workflow adds repository-bound keyless provenance without publishing or deploying images.
 
 `make production-readiness` validates that every required Stage 9 review,
 runbook, hard gate, owner, evidence reference, and license decision agrees. A

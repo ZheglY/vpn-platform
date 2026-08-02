@@ -6,6 +6,7 @@
 - Security impact: High
 - Contract impact: release metadata and CI only
 - Extends: ADR 0013, ADR 0027, and ADR 0029
+- Amended by: ADR 0040
 
 ## Context
 
