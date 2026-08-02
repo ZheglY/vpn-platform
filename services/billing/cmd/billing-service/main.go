@@ -115,7 +115,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	kafkaClient, err := platformkafka.NewClient(cfg.KafkaBrokers, serviceName, kgo.RequiredAcks(kgo.AllISRAcks()), kgo.WithHooks(kafkaMetrics))
+	kafkaClient, err := platformkafka.NewClientForEnvironment(cfg.Environment, cfg.KafkaBrokers, serviceName, kgo.RequiredAcks(kgo.AllISRAcks()), kgo.WithHooks(kafkaMetrics))
 	if err != nil {
 		return err
 	}
@@ -179,6 +179,7 @@ type appConfig struct {
 func loadConfig() (appConfig, error) {
 	var fields []config.FieldError
 	environment := config.String("APP_ENV", "local")
+	fields = append(fields, config.ValidateDeploymentEnvironment(environment)...)
 	required := func(name string) string {
 		value, err := config.RequiredString(name)
 		fields = config.Append(fields, name, err)

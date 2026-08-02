@@ -130,7 +130,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	kafkaClient, err := platformkafka.NewClient(cfg.KafkaBrokers, serviceName,
+	kafkaClient, err := platformkafka.NewClientForEnvironment(cfg.Environment, cfg.KafkaBrokers, serviceName,
 		kgo.ConsumerGroup(cfg.ConsumerGroup),
 		kgo.ConsumeTopics("access.provision.request.v1", "access.revoke.request.v1"),
 		kgo.DisableAutoCommit(), kgo.BlockRebalanceOnPoll(), kgo.RequiredAcks(kgo.AllISRAcks()), kgo.WithHooks(kafkaMetrics),
@@ -259,7 +259,7 @@ func runReplay(ctx context.Context, args []string) error {
 		return err
 	}
 	brokers := splitCSV(config.String("KAFKA_BROKERS", ""))
-	client, err := platformkafka.NewClient(brokers, serviceName+"-dlq-replay", kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{args[0]: {int32(partitionValue): kgo.NewOffset().At(offset)}}), kgo.DisableAutoCommit(), kgo.RequiredAcks(kgo.AllISRAcks()))
+	client, err := platformkafka.NewClientForEnvironment(config.String("APP_ENV", "local"), brokers, serviceName+"-dlq-replay", kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{args[0]: {int32(partitionValue): kgo.NewOffset().At(offset)}}), kgo.DisableAutoCommit(), kgo.RequiredAcks(kgo.AllISRAcks()))
 	if err != nil {
 		return err
 	}
@@ -312,6 +312,7 @@ type appConfig struct {
 func loadConfig() (appConfig, error) {
 	var fields []config.FieldError
 	environment := config.String("APP_ENV", "local")
+	fields = append(fields, config.ValidateDeploymentEnvironment(environment)...)
 	required := func(name string) string {
 		value, err := config.RequiredString(name)
 		fields = config.Append(fields, name, err)

@@ -153,6 +153,7 @@ func loadConfig() (appConfig, error) {
 	}
 
 	environment := config.String("APP_ENV", "local")
+	fields = append(fields, config.ValidateDeploymentEnvironment(environment)...)
 	internalAuthMode := config.String("INTERNAL_AUTH_MODE", "mtls")
 	if internalAuthMode != "mtls" && internalAuthMode != "dev-insecure" {
 		fields = config.Append(fields, "INTERNAL_AUTH_MODE", fmt.Errorf("must be mtls or dev-insecure"))

@@ -128,6 +128,7 @@ func loadConfig() (appConfig, error) {
 		return value
 	}
 	environment := config.String("APP_ENV", "local")
+	fields = append(fields, config.ValidateDeploymentEnvironment(environment)...)
 	databaseURL := required("DATABASE_URL")
 	owners := owner.Config{
 		IdentityBaseURL: required("IDENTITY_BASE_URL"), BillingBaseURL: required("BILLING_BASE_URL"),

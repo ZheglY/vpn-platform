@@ -111,6 +111,7 @@ type appConfig struct {
 func loadConfig(seedOnly bool) (appConfig, error) {
 	var fields []config.FieldError
 	environment := config.String("APP_ENV", "local")
+	fields = append(fields, config.ValidateDeploymentEnvironment(environment)...)
 	databaseURL, err := config.RequiredString("DATABASE_URL")
 	fields = config.Append(fields, "DATABASE_URL", err)
 	maxBody, err := config.Int("HTTP_MAX_BODY_BYTES", 64<<10)

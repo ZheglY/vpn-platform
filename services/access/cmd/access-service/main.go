@@ -97,7 +97,10 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	redisClient := platformredis.NewClient(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
+	redisClient, err := platformredis.NewClientForEnvironment(cfg.Environment, cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
+	if err != nil {
+		return err
+	}
 	defer func() { _ = redisClient.Close() }()
 	if err := platformredis.Ping(ctx, redisClient); err != nil {
 		return err
@@ -115,7 +118,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	kafkaClient, err := platformkafka.NewClient(cfg.KafkaBrokers, serviceName,
+	kafkaClient, err := platformkafka.NewClientForEnvironment(cfg.Environment, cfg.KafkaBrokers, serviceName,
 		kgo.ConsumerGroup(cfg.ConsumerGroup),
 		kgo.ConsumeTopics(
 			"billing.payment.succeeded.v1",
@@ -202,6 +205,7 @@ type appConfig struct {
 func loadConfig() (appConfig, error) {
 	var fields []config.FieldError
 	environment := config.String("APP_ENV", "local")
+	fields = append(fields, config.ValidateDeploymentEnvironment(environment)...)
 	required := func(name string) string {
 		value, err := config.RequiredString(name)
 		fields = config.Append(fields, name, err)

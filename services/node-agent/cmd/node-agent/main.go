@@ -174,6 +174,7 @@ func loadConfig() (appConfig, error) {
 		return value
 	}
 	environment := config.String("APP_ENV", "local")
+	fields = append(fields, config.ValidateDeploymentEnvironment(environment)...)
 	serverNames := splitCSV(required("XRAY_REALITY_SERVER_NAMES"))
 	shortIDs := splitCSV(required("XRAY_REALITY_SHORT_IDS"))
 	if len(serverNames) == 0 {

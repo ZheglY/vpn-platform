@@ -75,7 +75,10 @@ func run(ctx context.Context) error {
 		_ = logger.Sync()
 	}()
 
-	redisClient := platformredis.NewClient(appCfg.RedisAddr, appCfg.RedisPassword, appCfg.RedisDB)
+	redisClient, err := platformredis.NewClientForEnvironment(appCfg.Environment, appCfg.RedisAddr, appCfg.RedisPassword, appCfg.RedisDB)
+	if err != nil {
+		return err
+	}
 	defer func() {
 		_ = redisClient.Close()
 	}()
@@ -222,6 +225,7 @@ func loadConfig() (appConfig, error) {
 	internalHTTPCfg := httpserver.DefaultConfig()
 	internalHTTPCfg.Addr = config.String("INTERNAL_HTTP_ADDR", ":8090")
 	environment := config.String("APP_ENV", "local")
+	fields = append(fields, config.ValidateDeploymentEnvironment(environment)...)
 
 	var err error
 	httpCfg.ReadHeaderTimeout, err = config.Duration("HTTP_READ_HEADER_TIMEOUT", httpCfg.ReadHeaderTimeout)
