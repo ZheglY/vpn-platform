@@ -34,11 +34,19 @@ func TestStageAndVerify(t *testing.T) {
 	}
 	uid, gid := testOwner()
 	manifest := testManifest(uid, gid)
+	t.Cleanup(func() {
+		if err := removeStagedTestCredentials(destination, manifest); err != nil {
+			t.Errorf("clean staged credentials: %v", err)
+		}
+	})
 	if err := Stage(manifest, source, destination, "service"); err != nil {
 		t.Fatalf("Stage() error = %v", err)
 	}
 	if err := Verify(manifest, destination, "service"); err != nil {
 		t.Fatalf("Verify() error = %v", err)
+	}
+	if err := removeStagedTestCredentials(destination, manifest); err != nil {
+		t.Fatalf("remove staged credentials after verification: %v", err)
 	}
 }
 
@@ -71,4 +79,14 @@ func testManifest(uid, gid int) Manifest {
 			{Source: "private.key", Destination: "service/private.key", Mode: "0400", UID: uid, GID: gid, Group: "service"},
 		},
 	}
+}
+
+func removeStagedTestCredentials(root string, manifest Manifest) error {
+	for _, directory := range manifest.Directories {
+		path := filepath.Join(root, directory.Path)
+		if err := os.Chmod(path, 0o700); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return os.RemoveAll(root)
 }
