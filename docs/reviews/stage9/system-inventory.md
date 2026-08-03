@@ -89,7 +89,7 @@ The release inventory contains 19 custom images: 10 service runtimes, `admin-cli
 
 GitHub workflows:
 
-- `verify.yml`: source, contract, image, scan, Linux credential, and smoke validation.
+- `verify.yml`: source, contract, image, scan, Linux credential, and smoke validation; the isolated runner reclaims build-only cache after verification while retaining tagged smoke images.
 - `release-attest.yml`: manually approved keyless metadata attestation without registry or deployment permission.
 
 Production registry, immutable OCI digest publication, per-image signatures/attestations, approval identity, canary deployment, and digest rollback are unresolved.

@@ -31,6 +31,14 @@ jobs:
         run: npm ci
       - name: Verify
         run: make verify
+      - name: Reclaim verification build cache
+        run: |
+          df -h /
+          docker system df
+          docker builder prune --all --force
+          docker image prune --force
+          docker system df
+          df -h /
       - name: Native Linux credential and 8-target observability smoke
         run: make observability-smoke
       - name: Native Linux credential and 11-target Stage 7 smoke
