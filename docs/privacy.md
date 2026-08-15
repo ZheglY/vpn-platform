@@ -4,7 +4,7 @@ This is an engineering privacy document for the sandbox/MVP. It is not a legal p
 
 ## Current Status
 
-- Portfolio/sandbox only.
+- Production product; committed environments and credentials are development-only until launch approval.
 - No real sales.
 - No final production jurisdiction.
 - No production legal privacy policy yet.

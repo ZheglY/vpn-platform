@@ -4,7 +4,7 @@
 - Owner: Architecture
 - Accepted baseline: `76f5624e664c556c3ec598055524319eab0af1f3`
 - Stage 9 reviewed candidate: `dfee5bc44cadc8138e6ebe115cb7bf1ddab61b2a`
-- Environment represented: local portfolio/sandbox only
+- Environment represented: local development and validation only
 - Production claim: none
 
 ## Bounded Contexts and Durable Stores

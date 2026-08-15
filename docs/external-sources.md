@@ -6,7 +6,6 @@ These sources record the official material re-checked for architecture and imple
 
 | Area | Official source | Stage 0 finding |
 |---|---|---|
-| Codex instructions | https://developers.openai.com/codex/guides/agents-md | Codex reads repository `AGENTS.md` as project guidance, so this repository keeps rules compact and points to detailed docs. |
 | Telegram Bot API | https://core.telegram.org/bots/api | Stage 7 re-checked the current official Bot API on 2026-07-19: `sendMessage` requires `chat_id` and 1-4096 characters after entity parsing; Stage 7 fixes HTML parse mode and escapes all dynamic values. |
 | Telegram Bot API response envelope | https://core.telegram.org/bots/api | Stage 7 re-checked `ok`, `result`, `error_code`, `description`, and optional `ResponseParameters.retry_after` before implementing retry/permanent error classification. Telegram does not provide an application idempotency key for `sendMessage`, so ADR 0025 does not claim exactly-once delivery. |
 | Go `net/url` error type | https://pkg.go.dev/net/url#Error | Stage 2 re-checked that `url.Error` carries the request URL, so Telegram client errors must not wrap it when the URL contains the bot token. |

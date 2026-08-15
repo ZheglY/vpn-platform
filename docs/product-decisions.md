@@ -4,7 +4,7 @@ Accepted on 2026-07-12 for Stage 0 and future MVP planning.
 
 | ID | Decision | Status | Notes |
 |---|---|---|---|
-| PD-001 | Project is portfolio/sandbox only. No real sales yet. | Accepted | Jurisdiction and target countries are deferred until legal review. |
+| PD-001 | The production product remains pre-launch; no real sales until launch gates pass. | Accepted | Jurisdiction and target countries are deferred until legal review. |
 | PD-002 | First version uses prepaid one-time periods only. | Accepted | No saved payment method and no recurring billing. |
 | PD-003 | MVP has one test plan: 30 days, no hard traffic cap, one selected region, one primary node, one failover, 24h grace. | Accepted | Price and currency come from seed configuration, not domain constants. |
 | PD-004 | Purchase during active subscription extends from `current_period_end`; purchase after expiry starts from confirmed payment time. | Accepted | Must be covered by boundary-time tests in Stage 4. |

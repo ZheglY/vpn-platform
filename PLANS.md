@@ -8,8 +8,8 @@ Stage 8 was explicitly accepted by the product owner on 2026-07-26 after the acc
 
 ### Stage 9 Remediation And Production Enablement Plan
 
-Approved scope: close provider-independent technical findings on branch
-`codex/stage9-remediation-production-enablement`. Production deployment,
+Approved scope: close provider-independent technical findings in the Stage 9
+remediation branch. Production deployment,
 registry publication, release/tag creation, real provider access, DNS changes,
 customer data, and license/legal decisions remain prohibited.
 
@@ -41,7 +41,7 @@ customer data, and license/legal decisions remain prohibited.
 ### Goals
 
 - Initialize a local Git repository.
-- Preserve the source specification in `docs/CODEX_VPN_PLATFORM_SPEC.md`.
+- Preserve the source specification in `docs/VPN_PLATFORM_SPEC.md`.
 - Record product decisions, unresolved questions, risks, and assumptions.
 - Establish architecture, threat model, contract versioning, ADRs, and Definition of Done.
 - Fix the Go repository layout conflict from the original specification.
@@ -58,7 +58,7 @@ customer data, and license/legal decisions remain prohibited.
 
 ### Deliverables
 
-- `AGENTS.md`
+- `CONTRIBUTING.md`
 - `PLANS.md`
 - `docs/architecture.md`
 - `docs/threat-model.md`
@@ -127,7 +127,7 @@ Non-goals:
 
 ### Stage 2 - Identity and Telegram onboarding
 
-Status: accepted baseline; pushed to GitHub branch `codex/stage2-identity-telegram`.
+Status: accepted baseline and merged to GitHub.
 
 Depends on Stage 1. Adds identity service, Telegram webhook adapter, update dedupe, Redis FSM, consent versioning, local mTLS for bot-to-identity calls, and fake Telegram tests.
 
@@ -166,7 +166,7 @@ Notes:
 
 ### Stage 3 - Catalog, Billing, and YooKassa sandbox
 
-Status: accepted after acceptance-review remediation on `codex/stage3-catalog-billing`.
+Status: accepted after acceptance-review remediation.
 
 Depends on Stage 2 and sandbox payment decisions. Adds immutable plan/order snapshots, YooKassa sandbox adapter, payment idempotency, webhook inbox, verification, reconciliation, and fake provider tests.
 
@@ -195,7 +195,7 @@ Notes:
 
 Depends on Stage 3 payment events. Adds entitlement state machine, extension/expiry/revocation logic, scheduler/reconciler, inbox, and time-boundary tests.
 
-Status: accepted. Hardening implementation and required verification completed on `codex/stage4-subscription-lifecycle` after review of commit `3ab6bdc`; the user explicitly approved beginning the next milestone on 2026-07-18.
+Status: accepted. Hardening implementation and required verification completed after review of commit `3ab6bdc`; the product owner explicitly approved beginning the next milestone on 2026-07-18.
 
 Acceptance criteria:
 
@@ -219,7 +219,7 @@ Non-goals:
 
 Depends on Stage 4. Adds token generation/hash/rotation, subscription endpoint, VLESS + REALITY URI rendering, Happ compatibility tests, no-store responses, and redaction tests.
 
-Status: accepted on 2026-07-19 after review remediation and required verification on `codex/stage5-access-happ`.
+Status: accepted on 2026-07-19 after review remediation and required verification.
 
 Acceptance criteria:
 
@@ -259,7 +259,7 @@ Verification completed for the Stage 5 remediation on 2026-07-19:
 
 Depends on Stage 5 and threat review. Adds node registry, allocation, mTLS protocol, idempotent desired revision, Xray validation, atomic reload, rollback, and local real-Xray e2e tests.
 
-Status: accepted by the product owner on 2026-07-19 after acceptance-review remediation and complete verification on `codex/stage6-provisioning-node-agent`.
+Status: accepted by the product owner on 2026-07-19 after acceptance-review remediation and complete verification.
 
 Implementation plan:
 
@@ -317,7 +317,7 @@ Verification completed for the Stage 6 acceptance-review remediation on 2026-07-
 
 Depends on lifecycle events. Adds durable Telegram notifications, admin CLI/internal API, RBAC, and audit.
 
-Status: accepted by the product owner on 2026-07-23 after acceptance-review remediation on `codex/stage7-notifications-admin`.
+Status: accepted by the product owner on 2026-07-23 after acceptance-review remediation.
 
 Implementation plan:
 
@@ -351,7 +351,7 @@ Verification completed on 2026-07-23:
 
 Depends on working services. Adds dashboards, alerts, runbooks, backup/restore drill, node hardening, secret rotation, privacy retention jobs, SBOM, and signing.
 
-Status: accepted by the product owner on 2026-07-26 after final acceptance-review remediation and complete verification on `codex/stage8-observability-hardening` at commit `4ab8dff621c27c8766efaf3ecf5217dbaea77383`.
+Status: accepted by the product owner on 2026-07-26 after final acceptance-review remediation and complete verification at commit `4ab8dff621c27c8766efaf3ecf5217dbaea77383`.
 
 Implementation plan:
 
@@ -455,8 +455,7 @@ Tenth-slice acceptance:
 
 Depends on previous milestones. Performs architecture, security, legal/payment, license, incident, backup, and rollback reviews before any real launch.
 
-Status: technically complete as a Stage 9 review on
-`codex/stage9-remediation-production-enablement`. Five review defects are fixed;
+Status: technically complete as a Stage 9 review. Five review defects are fixed;
 provider-neutral schemas, identity bindings, startup guards, secure
 PostgreSQL/Kafka/Redis requirements, offline preflight, and operations contracts
 are implemented. The full local verification and required disposable drills are

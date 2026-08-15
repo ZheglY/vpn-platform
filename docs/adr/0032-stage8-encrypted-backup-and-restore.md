@@ -25,7 +25,7 @@ No production key custodian, off-host storage provider, or recovery target has b
 5. Restore streams age plaintext directly to `pg_restore --clean --if-exists --single-transaction --no-owner --no-acl --role <owner>` for an explicitly named empty target database. Database roles and empty databases are provisioned separately by infrastructure; global roles and passwords are not backed up.
 6. `inspect` records exact row counts for every public table and verifies public relation ownership. `compare` requires the restored inspection to match the source inspection exactly and refuses any owner violation. Reports contain table names and counts only, never row data or identifiers.
 7. The local clean-room drill covers all eight owner databases, starts a second PostgreSQL instance on tmpfs, restores every encrypted artifact, compares row counts and ownership, and removes its volumes and temporary artifacts on success or failure.
-8. Temporary Stage 8 evidence targets are RPO at most 24 hours and restore RTO at most 30 minutes for the local eight-database drill. The command timeout is 30 minutes. These are portfolio acceptance targets, not approved production commitments.
+8. Temporary Stage 8 evidence targets are RPO at most 24 hours and restore RTO at most 30 minutes for the local eight-database drill. The command timeout is 30 minutes. These are local validation targets, not approved production commitments.
 9. Production scheduling, off-host immutable storage, retention, key custody/rotation, access audit, HA/PITR, and approved RPO/RTO remain production-readiness blockers. A production private key must not be stored beside its backups.
 
 ## Consequences
