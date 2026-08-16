@@ -3,7 +3,8 @@
 - Review date: 2026-08-02
 - Owner: Architecture
 - Accepted baseline: `76f5624e664c556c3ec598055524319eab0af1f3`
-- Environment represented: local portfolio/sandbox only
+- Stage 9 reviewed candidate: `dfee5bc44cadc8138e6ebe115cb7bf1ddab61b2a`
+- Environment represented: local development and validation only
 - Production claim: none
 
 ## Bounded Contexts and Durable Stores
@@ -88,7 +89,7 @@ The release inventory contains 19 custom images: 10 service runtimes, `admin-cli
 
 GitHub workflows:
 
-- `verify.yml`: source, contract, image, scan, Linux credential, and smoke validation.
+- `verify.yml`: source, contract, image, scan, Linux credential, and smoke validation; the isolated runner reclaims build-only cache after verification while retaining tagged smoke images.
 - `release-attest.yml`: manually approved keyless metadata attestation without registry or deployment permission.
 
 Production registry, immutable OCI digest publication, per-image signatures/attestations, approval identity, canary deployment, and digest rollback are unresolved.

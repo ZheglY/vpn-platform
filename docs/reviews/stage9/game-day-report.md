@@ -1,8 +1,8 @@
 # Stage 9 Game-Day Report
 
-Report date: 2026-07-26
+Report date: 2026-08-02
 Execution owner: Platform / Operations
-Source commit: `f4c7d1eb500944b80d6b8749e69a8427468dbd2d`
+Source commit: `dfee5bc44cadc8138e6ebe115cb7bf1ddab61b2a`
 Environment: local/disposable Docker Compose only
 Overall result: **incomplete; production decision NO-GO**
 
@@ -214,8 +214,8 @@ artifacts remain ignored and are checksum-indexed by the release bundle.
 - Rollback: destroy isolated cluster, identities, artifacts and volumes.
 - Actual result: passed locally through `make backup-cleanup-test` and
   `make backup-restore-drill`: eight encrypted artifacts restored with matching
-  checksums, table row counts, and relation owners. Observed RPO was 13.843
-  seconds and RTO was 52.057 seconds.
+  checksums, table row counts, and relation owners. The final repeated drill
+  observed RPO 9.037 seconds and RTO 36.911 seconds.
 - Budget: local RPO <= 24 hours and RTO <= 30 minutes.
 - Evidence: backup metadata/checksum and aggregate comparison output.
 - Residual risk: off-host immutable storage, PITR and production custody blocked.

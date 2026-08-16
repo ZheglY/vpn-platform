@@ -7,6 +7,7 @@ ARG PROMETHEUS_COMMIT=73ff57ce2b8161059ac7fe5188f03f1c3d22b29a
 ARG PROMETHEUS_SOURCE_SHA256=322276709c16cb3c22a4d01d244beb91f0380a257699358d2a20ac7086d7256c
 ARG PROMETHEUS_WEB_UI_SHA256=2194bfbb5d36457df2b8f480037ce89786ee32f03b5ee6ad5597989f14deafb0
 ARG PROMETHEUS_GRPC_VERSION=v1.82.1
+ARG PROMETHEUS_X_TEXT_VERSION=v0.40.0
 
 FROM golang:${GO_VERSION}-alpine@${GO_BUILDER_DIGEST} AS build
 ARG PROMETHEUS_VERSION
@@ -14,6 +15,7 @@ ARG PROMETHEUS_COMMIT
 ARG PROMETHEUS_SOURCE_SHA256
 ARG PROMETHEUS_WEB_UI_SHA256
 ARG PROMETHEUS_GRPC_VERSION
+ARG PROMETHEUS_X_TEXT_VERSION
 WORKDIR /src/prometheus
 RUN apk add --no-cache bash coreutils findutils gzip
 RUN wget -q -O /tmp/prometheus.tar.gz "https://github.com/prometheus/prometheus/archive/${PROMETHEUS_COMMIT}.tar.gz" \
@@ -26,7 +28,7 @@ RUN wget -q -O /tmp/prometheus-web-ui.tar.gz \
     && tar -xzf /tmp/prometheus-web-ui.tar.gz -C web/ui \
     && rm /tmp/prometheus-web-ui.tar.gz \
     && PREBUILT_ASSETS_STATIC_DIR=web/ui/static scripts/compress_assets.sh
-RUN go mod edit -require="google.golang.org/grpc@${PROMETHEUS_GRPC_VERSION}" \
+RUN go mod edit -require="google.golang.org/grpc@${PROMETHEUS_GRPC_VERSION}" -require="golang.org/x/text@${PROMETHEUS_X_TEXT_VERSION}" \
     && go mod tidy \
     && go mod verify
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -tags="netgo,builtinassets" \

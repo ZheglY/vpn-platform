@@ -1,7 +1,7 @@
 # Stage 9 Dependency and License Review
 
-Review date: 2026-07-26
-Review baseline: `76f5624e664c556c3ec598055524319eab0af1f3`
+Review date: 2026-08-02
+Review baseline: `dfee5bc44cadc8138e6ebe115cb7bf1ddab61b2a`
 Review owner: Platform / Security
 Legal status: technical inventory only; not legal advice
 Publication decision: **NO-GO**
@@ -12,6 +12,11 @@ The 19-image release inventory is complete and integrity-pinned. Go module
 verification, npm lockfile inspection, source-build pins, image SBOM generation,
 Trivy scanning, and release-manifest validation provide a reproducible technical
 inventory.
+
+The final 19-image rebuild resolves `CVE-2026-56852` by pinning
+`golang.org/x/text v0.40.0` in every affected security rebuild. The complete
+HIGH/CRITICAL image gate passes; Tempo's documented exact OpenVEX exception is
+still shown and independently scope-checked.
 
 Publication is blocked because:
 
@@ -63,16 +68,16 @@ publication until reviewed.
 | subscription-service | repository commit | repository code + Go graph | approve terms and complete binary notices | SPDX/scan | blocked |
 | access-service | repository commit | repository code + Go graph | same | SPDX/scan | blocked |
 | provisioning-service | repository commit | repository code + Go graph | same | SPDX/scan | blocked |
-| node-agent | repository commit; Xray 26.3.27 at `d2758a0...` | repository code; Xray MPL-2.0 | preserve MPL notices; make covered modified source available as required; counsel must classify linked/build output | pinned source SHA, SPDX/scan | requires_counsel |
+| node-agent | repository commit; Xray 26.3.27 at `d2758a0...`; reviewed `x/crypto`, `x/net`, `x/text`, and gRPC security overrides | repository code; Xray MPL-2.0; Go dependencies under their upstream licenses | preserve MPL notices; make covered modified source available as required; counsel must classify linked/build output | pinned source SHA, SPDX/scan | requires_counsel |
 | telegram-bot | repository commit | repository code + Go graph | approve terms/notices; Bot API terms are a provider gate | SPDX/scan | blocked |
 | notification-service | repository commit | repository code + Go graph | approve terms and complete binary notices | SPDX/scan | blocked |
 | admin-service | repository commit | repository code + Go graph | same | SPDX/scan | blocked |
 | admin-cli | repository commit | repository code + Go graph | same | SPDX/scan | blocked |
-| prometheus | 3.13.1 at `73ff57c...` | Apache-2.0 | retain LICENSE/NOTICE and modification/source metadata | LICENSE and NOTICE copied; pinned source; SPDX/scan | approved technically |
-| grafana | 13.1.1 at `a9cee6e...` | AGPL-3.0 upstream image/security rebuild | network/distribution and corresponding-source obligations require counsel; bundled UI assets inherit upstream inventory | upstream base + pinned source; SPDX/scan | requires_counsel |
+| prometheus | 3.13.1 at `73ff57c...`; reviewed gRPC and `x/text` security overrides | Apache-2.0 | retain LICENSE/NOTICE and modification/source metadata | LICENSE and NOTICE copied; pinned source; SPDX/scan | approved technically |
+| grafana | 13.1.1 at `a9cee6e...`; reviewed gRPC, `kin-openapi`, and `x/text` security overrides | AGPL-3.0 upstream image/security rebuild | network/distribution and corresponding-source obligations require counsel; bundled UI assets inherit upstream inventory | upstream base + pinned source; SPDX/scan | requires_counsel |
 | otel-collector | 0.157.0 at `4908404...` plus repository-owned `httphealth` | Apache-2.0 upstream; repository license unresolved | retain Collector/contrib licenses and notices; approve repository-code distribution | both upstream LICENSE files copied; SPDX/scan | blocked |
-| tempo | 2.10.5 at `991ce39...` | AGPL-3.0 | modified security rebuild and network use require counsel and corresponding-source procedure | LICENSE/LICENSING copied; source SHA; SPDX/scan/VEX | requires_counsel |
-| loki | 3.7.2 at `7486c4a...` | AGPL-3.0 | modified security rebuild and network use require counsel and corresponding-source procedure | LICENSE/LICENSING copied; source SHA; SPDX/scan | requires_counsel |
+| tempo | 2.10.5 at `991ce39...`; reviewed dependency overrides including `x/text v0.40.0` | AGPL-3.0 | modified security rebuild and network use require counsel and corresponding-source procedure | LICENSE/LICENSING copied; source SHA; SPDX/scan/VEX | requires_counsel |
+| loki | 3.7.2 at `7486c4a...`; reviewed dependency overrides including `x/text v0.40.0` | AGPL-3.0 | modified security rebuild and network use require counsel and corresponding-source procedure | LICENSE/LICENSING copied; source SHA; SPDX/scan | requires_counsel |
 
 “Approved technically” means the repository contains the expected upstream
 license material and no known custom license blocker. It is not counsel approval

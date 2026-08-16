@@ -10,11 +10,11 @@ Happ is only the user client. It is not the VPN provider. User VPN traffic must 
 
 Stage 7 adds durable user notifications and bounded administrator operations. `notification-service` owns Kafka inbox/cursors, causal delivery stream/sequence barriers, business deduplication, typed template versions, durable delivery jobs, leases, retries, and sanitized dead-letter metadata in its own PostgreSQL database. `admin-service` owns principals, role grants, fenced owner attempts, recoverable unknown outcomes, idempotent action requests, and append-only audit in another database; it reaches fixed owning-service APIs over mTLS and has no credentials for their databases. Stage 8 added protected privacy-safe telemetry, durable SLI/SLO alerts, owner-local retention, encrypted recovery, Debian node hardening, secret rotation, bounded resilience drills, and release SBOM/provenance controls. It was accepted by the product owner on 2026-07-26 after final review remediation. Stage 9 is an evidence-driven production-readiness review and does not authorize a production deployment.
 
-The current environment is portfolio/sandbox only. It does not use real YooKassa credentials, issue receipts, initiate provider refunds, enroll production VPS hosts, or carry real user traffic. Normal Compose smoke keeps a contract-injected provisioning result for the Stage 5 delivery path. The `vpn` profile runs the full Access command, Kafka, Provisioning, two-node Xray, outcome, Happ delivery, and revoke path with real local VLESS + REALITY traffic. `stage7-smoke` extends that path with fake Telegram failures and local development administrator identities. Production certificate issuance, key custody, alert delivery, off-host backup storage, and VPS deployment remain Stage 9 approval gates.
+The repository contains the production platform; the committed Compose environment is for local validation only. It does not use real YooKassa credentials, issue receipts, initiate provider refunds, enroll production VPS hosts, or carry real user traffic. Normal Compose smoke keeps a contract-injected provisioning result for the Stage 5 delivery path. The `vpn` profile runs the full Access command, Kafka, Provisioning, two-node Xray, outcome, Happ delivery, and revoke path with real local VLESS + REALITY traffic. `stage7-smoke` extends that path with fake Telegram failures and local development administrator identities. Production certificate issuance, key custody, alert delivery, off-host backup storage, and VPS deployment remain Stage 9 approval gates.
 
 ## Product Decisions Already Accepted
 
-- Portfolio/sandbox project only. No real sales until legal review.
+- Production product with deployment blocked until legal and operational approval.
 - One prepaid 30-day MVP plan seeded by configuration.
 - No hard traffic cap in v1.
 - One selected region, one primary node, and one failover node.
@@ -78,7 +78,7 @@ Use this layout instead:
 
 ```text
 .
-├── AGENTS.md
+├── CONTRIBUTING.md
 ├── PLANS.md
 ├── go.mod
 ├── internal/

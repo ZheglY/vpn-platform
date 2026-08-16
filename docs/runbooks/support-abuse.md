@@ -1,8 +1,8 @@
-# Support and Abuse Runbook Placeholder
+# Support and Abuse Runbook
 
-Status: Placeholder for sandbox.
+Status: Production launch blocker.
 
-Real support and abuse contacts are not required for the sandbox portfolio environment, but production must define them before launch.
+Real support and abuse contacts must be defined before production launch. Local validation uses no external support channel.
 
 ## Required Before Production
 
@@ -17,7 +17,7 @@ Real support and abuse contacts are not required for the sandbox portfolio envir
 - Audit requirements for every operator action.
 - Privacy-safe support view that does not reveal subscription tokens, VLESS UUIDs, REALITY private keys, destination IPs, DNS history, or packet contents.
 
-## Sandbox Defaults
+## Local Defaults
 
 - No real customer support channel.
 - No real abuse mailbox.

@@ -32,7 +32,7 @@ Alertmanager configuration is needed for validation and routing semantics, but n
 
 - Availability and asynchronous delay now have explicit numerators, denominators, budgets, and actionable multi-window alerts.
 - The payment-to-provisioning metric measures the locally observable durable command boundary. It does not claim that Xray has applied the credential or that a notification was delivered.
-- An inert receiver prevents accidental notification delivery from a portfolio environment while keeping the production routing shape reviewable.
+- An inert receiver prevents accidental notification delivery from the local validation environment while keeping the production routing shape reviewable.
 - Monthly reporting and production paging remain deployment responsibilities; the short windows are budget-burn detectors, not a substitute for a monthly report.
 
 ## Rejected alternatives

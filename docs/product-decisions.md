@@ -4,7 +4,7 @@ Accepted on 2026-07-12 for Stage 0 and future MVP planning.
 
 | ID | Decision | Status | Notes |
 |---|---|---|---|
-| PD-001 | Project is portfolio/sandbox only. No real sales yet. | Accepted | Jurisdiction and target countries are deferred until legal review. |
+| PD-001 | The production product remains pre-launch; no real sales until launch gates pass. | Accepted | Jurisdiction and target countries are deferred until legal review. |
 | PD-002 | First version uses prepaid one-time periods only. | Accepted | No saved payment method and no recurring billing. |
 | PD-003 | MVP has one test plan: 30 days, no hard traffic cap, one selected region, one primary node, one failover, 24h grace. | Accepted | Price and currency come from seed configuration, not domain constants. |
 | PD-004 | Purchase during active subscription extends from `current_period_end`; purchase after expiry starts from confirmed payment time. | Accepted | Must be covered by boundary-time tests in Stage 4. |
@@ -39,7 +39,7 @@ Accepted on 2026-07-12 for Stage 0 and future MVP planning.
 | PD-033 | Subscription URL is issued only after provisioning readiness through a synchronous one-time bot call. | Accepted | Kafka never carries the URL or token. |
 | PD-034 | Provisioning fetches credential material from access-service over mTLS. | Accepted | Kafka carries only credential ID, operation ID, and revision. |
 | PD-035 | Revoke lifecycle has explicit request, succeeded, failed events and reconciliation. | Accepted | Access remains `revoking` until assigned nodes confirm removal. |
-| PD-036 | Stage 6 pins official Xray-core 26.3.27 source by commit and archive SHA-256, rebuilds it on pinned Go with fixed security dependencies, and validates with `xray run -test -config`. | Accepted | The rebuild overrides `x/crypto`, `x/net`, and, after the 2026-07-23 advisory, gRPC-Go 1.82.1; re-check release/security notes before production rollout; ADR 0023. |
+| PD-036 | Stage 6 pins official Xray-core 26.3.27 source by commit and archive SHA-256, rebuilds it on pinned Go with fixed security dependencies, and validates with `xray run -test -config`. | Accepted | The rebuild overrides `x/crypto`, `x/net`, `x/text`, and gRPC-Go at reviewed fixed versions; re-check release/security notes before production rollout; ADR 0023. |
 | PD-037 | Stage 6 placement is exactly one primary and one distinct failover below the 80% threshold. | Accepted | Primary success may produce `degraded` only after bounded failover retries. |
 | PD-038 | Stage 7 administrator authentication uses short-lived mTLS certificates with verified `spiffe://vpn-service/ns/{environment}/admin/{principal}` identities. | Accepted | No web-admin/password login; production issuance and hardware backing remain Stage 8/9. |
 | PD-039 | Stage 7 RBAC has support-readonly, operations, security, and finance-readonly roles with explicit permissions and no superadmin wildcard. | Accepted | Security and finance remain read-only in Stage 7. |

@@ -24,7 +24,7 @@ The sandbox privacy policy requires bounded retention for audit, diagnostics, no
 6. Admin audit may be deleted after 365 days only by the separate `admin_migrator` maintenance identity with a transaction-local retention guard. Runtime `admin_app` remains unable to update, delete, or truncate audit history.
 7. Identity, Catalog, and Subscription have no automatically eligible dataset in this slice. Consent, immutable catalog versions, entitlement ledgers, source-payment links, scheduler barriers, inbox, and outbox state remain durable.
 8. Fresh rows, unresolved dead letters, outbox/inbox correctness barriers, payment records, and held rows are protected in PostgreSQL integration tests. Dry-run and deletion bounds are unit tested.
-9. A production scheduler, production data-retention periods, legal authority, hold-management identity, and approval workflow are not inherited from local Compose. Local service database roles are a portfolio topology; production role grants must separate runtime, migration, retention, and legal-hold custody.
+9. A production scheduler, production data-retention periods, legal authority, hold-management identity, and approval workflow are not inherited from local Compose. Local service database roles are a development topology; production role grants must separate runtime, migration, retention, and legal-hold custody.
 
 ## Consequences
 

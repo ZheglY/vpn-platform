@@ -1,7 +1,7 @@
 # Stage 9 Security and Privacy Review
 
-Review date: 2026-07-26
-Review baseline: `76f5624e664c556c3ec598055524319eab0af1f3`
+Review date: 2026-08-02
+Review baseline: `dfee5bc44cadc8138e6ebe115cb7bf1ddab61b2a`
 Review owner: Security / Privacy
 Environment: repository and local/disposable test topology only
 
@@ -26,9 +26,9 @@ corresponding gates are closed.
 | Internal service HTTP | TLS 1.3 mTLS with exact SPIFFE identities | per-route identity allowlist | dev CA and Compose tests | issuing CA/HSM, revocation, inventory, expiry alerting |
 | Admin API | TLS 1.3 mTLS admin SPIFFE identity | enabled principal plus explicit RBAC permission | Admin security/PostgreSQL tests | operator device and certificate custody/revocation |
 | Node management | WireGuard reachability plus TLS 1.3 mTLS | exact provisioning SPIFFE; health identity is read-only | Compose and disposable Debian host | approved VPS, production PKI and enrollment |
-| Kafka | private Compose network | owner topics, schema/cursor checks in application | contract and replay tests | broker authentication and per-principal ACL |
-| PostgreSQL | per-service credentials | database-per-service | eight isolated local databases | split runtime/migrator/backup roles and HA |
-| Redis | password and private network | ephemeral keys only | Compose/outage tests | production topology, TLS/auth rotation |
+| Kafka | local private network; TLS 1.3 mTLS required by staging/production guard | owner topics/groups, schema/cursor checks | contract, identity-binding and replay tests | real broker principals, ACL deny tests and recovery |
+| PostgreSQL | per-service credentials; `verify-full` required outside local/test | database-per-service | eight isolated local databases and strict preflight | exact production grants, HA/PITR and role deny tests |
+| Redis | local password; TLS 1.3 server verification required outside local/test | ephemeral keys only | Compose/outage and startup-guard tests | production topology, client identity and rotation |
 | Metrics/OTLP | private TLS 1.3 mTLS identities | exact observability identity/allowlist | 8/11-target and trace/log smoke | production tenancy, storage, receiver auth |
 | Operator CLI | TLS client certificate | server RBAC and output guard | typed CLI tests | managed workstation, short-lived credential, break-glass |
 | CI/release | commit-pinned actions; GitHub OIDC only in manual workflow | no registry/deploy permission | release manifest/SBOM/scan tests | protected environment, registry IAM, production approval |
@@ -207,6 +207,10 @@ blocked in the Stage 9 legal checklist.
 - All seven findings remain blocked until provider selection, real identities,
   deny/revocation tests, human alert acknowledgement, legal approval, and
   production-like staging evidence exist.
+- Repository, filesystem, telemetry, and logger scans found no production path
+  that emits a bearer token, VPN credential, provider payload, destination, DNS
+  history, or packet content. The only sensitive logger matches are deliberate
+  redaction tests.
 
 The repository-level security/privacy review is complete for the baseline and
 has no open P0/P1. All seven P2 findings are launch blockers because no explicit

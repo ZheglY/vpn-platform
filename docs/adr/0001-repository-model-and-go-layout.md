@@ -6,7 +6,7 @@ Date: 2026-07-12
 
 ## Context
 
-The platform is a portfolio-grade microservice system. A monorepository simplifies local development, CI, contract review, and documentation. The original specification suggested a root `cmd/` directory with service code under `services/<service>/internal/`, but Go `internal` import rules would prevent root commands from importing sibling service internals.
+The platform is a production microservice system. A monorepository simplifies local development, CI, contract review, and documentation. The original specification suggested a root `cmd/` directory with service code under `services/<service>/internal/`, but Go `internal` import rules would prevent root commands from importing sibling service internals.
 
 ## Decision
 

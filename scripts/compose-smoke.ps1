@@ -29,6 +29,8 @@ $cacheRoot = if (-not [string]::IsNullOrWhiteSpace($env:VPN_PLATFORM_CACHE_ROOT)
 } else {
     Join-Path (Split-Path $repo -Parent) ".cache\vpn-platform"
 }
+$smokeTemp = Join-Path $repo "tmp"
+[System.IO.Directory]::CreateDirectory($smokeTemp) | Out-Null
 $fallbackTemp = if (-not [string]::IsNullOrWhiteSpace($env:TEMP)) { $env:TEMP } else { Join-Path $repo "tmp" }
 
 Set-DefaultEnv "POSTGRES_USER" "vpn_local"
@@ -84,7 +86,7 @@ $vpnClientName = "$composeProject-stage6-client"
 $vpnClientImage = "ghcr.io/xtls/xray-core:26.3.27@sha256:592ec4d11f656db95598d01e76dbcc6e002d67360b96a5436500a938230f52c7"
 
 $goImage = "golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2"
-$vpnClientConfig = Join-Path $repo "tmp\$composeProject-stage6-client.json"
+$vpnClientConfig = Join-Path $smokeTemp "$composeProject-stage6-client.json"
 
 function Invoke-MTLSProbe([string[]]$arguments) {
     $mappedArguments = foreach ($argument in $arguments) {
@@ -674,8 +676,8 @@ try {
         throw "access issue endpoint did not return a subscription URL"
     }
     Invoke-MTLSProbe @("POST", "https://127.0.0.1:8087/internal/v1/subscriptions/$subscriptionID/subscription-url/issue", "secrets/dev-mtls/telegram-bot.crt", "secrets/dev-mtls/telegram-bot.key", "secrets/dev-mtls/ca.crt", "409", "Idempotency-Key", "smoke-issue-0001") | Out-Null
-    $profileHeaders = Join-Path (Resolve-Path "tmp") "stage5-profile-headers.txt"
-    $profileBody = Join-Path (Resolve-Path "tmp") "stage5-profile-body.txt"
+    $profileHeaders = Join-Path $smokeTemp "stage5-profile-headers.txt"
+    $profileBody = Join-Path $smokeTemp "stage5-profile-body.txt"
     $profileStatus = & curl.exe -sS -D $profileHeaders -o $profileBody -w "%{http_code}" --cacert "secrets/dev-mtls/ca.crt" --ssl-no-revoke $issuedURL
     if ($profileStatus -ne "200" -or !(Select-String -Path $profileHeaders -Pattern '^Cache-Control: no-store' -Quiet) -or !(Select-String -Path $profileHeaders -Pattern '^profile-title: VPN Platform' -Quiet) -or !(Select-String -Path $profileBody -Pattern '^vless://' -Quiet)) {
         throw "Happ subscription response was not compatible or no-store"
@@ -695,8 +697,8 @@ try {
 
     $subscriptionBase = $issuedURL.Substring(0, $issuedURL.LastIndexOf('/'))
     foreach ($malformedPath in @("$subscriptionBase", "$subscriptionBase/", "$subscriptionBase/a/b")) {
-        $malformedHeaders = Join-Path (Resolve-Path "tmp") "stage5-malformed-headers.txt"
-        $malformedBody = Join-Path (Resolve-Path "tmp") "stage5-malformed-body.txt"
+        $malformedHeaders = Join-Path $smokeTemp "stage5-malformed-headers.txt"
+        $malformedBody = Join-Path $smokeTemp "stage5-malformed-body.txt"
         $malformedStatus = & curl.exe -sS -D $malformedHeaders -o $malformedBody -w "%{http_code}" --cacert "secrets/dev-mtls/ca.crt" --ssl-no-revoke $malformedPath
         if ($malformedStatus -ne "404" -or !(Select-String -Path $malformedHeaders -Pattern '^Cache-Control: no-store' -Quiet) -or (Get-Content -Raw $malformedBody) -ne "subscription unavailable`n") {
             throw "malformed subscription path did not use the generic no-store 404"

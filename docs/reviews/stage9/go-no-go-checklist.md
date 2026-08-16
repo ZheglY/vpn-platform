@@ -28,7 +28,7 @@ Local evidence is not promoted to production or staging evidence.
 | DB-01 | PostgreSQL HA/PITR and least-privilege roles verified | DBA / Platform | ACR-001, INF-DB-01 and GD-03 | blocked | P1 | expiring | 2026-08-02 | 2026-08-30 | yes |
 | KAFKA-01 | Production Kafka quorum, ACL and recovery verified | Platform | Local replay passes but INF-KAFKA-01 production topology is unresolved | blocked | P1 | expiring | 2026-08-02 | 2026-08-30 | yes |
 | BACKUP-01 | Encrypted off-host immutable backup configured | DBA / Security | INF-BACKUP-01 is unresolved | blocked | P1 | expiring | 2026-08-02 | 2026-08-30 | yes |
-| RESTORE-01 | All eight owner databases restored with integrity and ownership checks | DBA / Platform | EV-07: eight encrypted databases restored at f4c7d1eb500944b80d6b8749e69a8427468dbd2d; checksum, row-count and owner checks passed | passed | P1 | expiring | 2026-08-02 | 2026-08-09 | yes |
+| RESTORE-01 | All eight owner databases restored with integrity and ownership checks | DBA / Platform | EV-07: eight encrypted databases restored at dfee5bc44cadc8138e6ebe115cb7bf1ddab61b2a; checksum, row-count and owner checks passed; RPO 9.037 s and RTO 36.911 s | passed | P1 | expiring | 2026-08-02 | 2026-08-09 | yes |
 | GAME-01 | Incident game day passed | Operations / Security | GD-03, GD-07, GD-08 and GD-11 remain staging blockers | blocked | P1 | expiring | 2026-08-02 | 2026-08-30 | yes |
 | ALERT-01 | Real alert receiver and escalation tested | SRE | SPR-006 and OPS-ALERT-01; local receiver is inert | blocked | P1 | expiring | 2026-08-02 | 2026-08-30 | yes |
 | EDGE-01 | Domains, DNS, TLS, edge and bearer-path redaction approved | Platform / Security | SPR-002 and INF-DNS-01 through INF-EDGE-01 | blocked | P1 | expiring | 2026-08-02 | 2026-08-30 | yes |
@@ -37,7 +37,7 @@ Local evidence is not promoted to production or staging evidence.
 | CAPACITY-01 | Control-plane and per-region VPN reserve approved | Platform / Operations / Finance | INF-CAP-01; no production load/region/provider selected | blocked | P1 | expiring | 2026-08-02 | 2026-08-30 | yes |
 | OPERATIONS-01 | Abuse, support, breach and lawful-request processes assigned | Product owner / Legal / Support | OPS-LEGAL-01 through OPS-LEGAL-06 are unresolved | blocked | P1 | expiring | 2026-08-02 | 2026-08-30 | yes |
 | ROLLBACK-01 | Critical N/N-1 rollback and disaster recovery drill passed | Platform / Operations | ACR-002, GD-11 and docs/runbooks/production-rollback.md | blocked | P1 | expiring | 2026-08-02 | 2026-08-30 | yes |
-| CI-01 | All required local CI, security, smoke, restore, node, rotation, resilience and release checks green | Platform / Security | EV-02 through EV-11 passed at f4c7d1eb500944b80d6b8749e69a8427468dbd2d; EV-01 and EV-12 passed at 12fef12063b657639fd4d4ef377bba29c4b1633e; production-only gates remain separately blocked | passed | P1 | expiring | 2026-08-02 | 2026-08-09 | yes |
+| CI-01 | All required local CI, security, smoke, restore, node, rotation, resilience and release checks green | Platform / Security | EV-02 through EV-11, EV-13 and EV-14 passed at dfee5bc44cadc8138e6ebe115cb7bf1ddab61b2a; EV-01 and EV-12 passed at e7f5f4a57be9b9fc66ebd91b5050d417861aeb8c; production-only gates remain separately blocked | passed | P1 | expiring | 2026-08-02 | 2026-08-09 | yes |
 
 ## Decision rationale
 
